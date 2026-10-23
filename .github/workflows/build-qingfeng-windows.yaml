@@ -37,6 +37,20 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
+      # 与安卓 workflow 同一步：子模块里的 ca-certificates.crt 是 0 字节
+      # 占位文件，不拉真包则 Windows 核心内嵌空证书包，HTTPS 校验无根证书。
+      - name: Fetch CA certificates
+        shell: pwsh
+        env:
+          CA_BUNDLE: cacert-2026-09-25.pem
+          CA_BUNDLE_SHA256: a41b5d356aea97a529fe27e0f7316d2f9d946d75927476cf9cf1b90637d00505
+        run: |
+          $bundle = "core/Clash.Meta/component/ca/ca-certificates.crt"
+          curl.exe -fsSL --retry 3 -o $bundle "https://curl.se/ca/$env:CA_BUNDLE"
+          if ($LASTEXITCODE -ne 0) { throw "CA bundle download failed" }
+          $hash = (Get-FileHash $bundle -Algorithm SHA256).Hash.ToLower()
+          if ($hash -ne $env:CA_BUNDLE_SHA256) { throw "CA bundle hash mismatch: $hash" }
+
       - name: Build and package Windows (official setup.dart)
         shell: pwsh
         run: dart setup.dart windows --env stable
