@@ -227,11 +227,7 @@ class _QfActionButtonState extends State<QfActionButton> {
         ? Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const SizedBox(
-                width: 16,
-                height: 16,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
+              const CommonCircleLoading(size: 16),
               const SizedBox(width: 8),
               Text(widget.busyLabel),
             ],
