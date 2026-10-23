@@ -347,7 +347,7 @@ class _QfOwnerUsersPageState extends State<QfOwnerUsersPage> {
           const SizedBox(height: 8),
           Expanded(
             child: _loading
-                ? const Center(child: CircularProgressIndicator())
+                ? const Center(child: CommonCircleLoading.page())
                 : _error != null
                 ? Center(child: Text(_error!))
                 : _users.isEmpty
@@ -526,6 +526,7 @@ class _QfOwnerUserPageState extends State<QfOwnerUserPage> {
         ],
       ),
     );
+    controller.dispose();
     if (newPw == null || newPw.length < 8 || newPw.length > 72) {
       if (newPw != null && mounted) qfToast(context, '新密码长度须为 8 至 72 位。');
       return;
@@ -571,6 +572,7 @@ class _QfOwnerUserPageState extends State<QfOwnerUserPage> {
         ],
       ),
     );
+    controller.dispose();
     if (nick == null || nick.isEmpty || !mounted) return;
     await _ownerSensitive(
       context,
@@ -612,6 +614,7 @@ class _QfOwnerUserPageState extends State<QfOwnerUserPage> {
         ],
       ),
     );
+    controller.dispose();
     if (mail == null || mail.isEmpty || !mounted) return;
     await _ownerSensitive(
       context,
@@ -683,7 +686,11 @@ class _QfOwnerUserPageState extends State<QfOwnerUserPage> {
         ),
       ),
     );
-    if (go != true || !mounted) return;
+    if (go != true || !mounted) {
+      days.dispose();
+      reason.dispose();
+      return;
+    }
     await _ownerSensitive(
       context,
       session,
@@ -707,6 +714,8 @@ class _QfOwnerUserPageState extends State<QfOwnerUserPage> {
         return '已执行封禁。';
       },
     );
+    days.dispose();
+    reason.dispose();
   }
 
   Future<void> _unban() async {
@@ -787,7 +796,7 @@ class _QfOwnerUserPageState extends State<QfOwnerUserPage> {
         body: _error != null
             ? Center(child: Text(_error!))
             : b == null
-            ? const Center(child: CircularProgressIndicator())
+            ? const Center(child: CommonCircleLoading.page())
             : Column(
                 children: [
                   Padding(
@@ -1161,7 +1170,7 @@ class _OwnerAsyncTabState extends State<_OwnerAsyncTab>
   Widget build(BuildContext context) {
     super.build(context);
     if (_error != null) return Center(child: Text(_error!));
-    if (_data == null) return const Center(child: CircularProgressIndicator());
+    if (_data == null) return const Center(child: CommonCircleLoading.page());
     return widget.build(_data!);
   }
 }
@@ -1475,7 +1484,7 @@ class _QfOwnerReviewsPageState extends State<QfOwnerReviewsPage> {
           ),
           Expanded(
             child: _loading
-                ? const Center(child: CircularProgressIndicator())
+                ? const Center(child: CommonCircleLoading.page())
                 : _rows.isEmpty
                 ? const Center(child: Text('暂无待处理条目。'))
                 : ListView(padding: const EdgeInsets.all(12), children: _rows),
@@ -1527,7 +1536,7 @@ class _QfOwnerAuditPageState extends State<QfOwnerAuditPage> {
     return Scaffold(
       appBar: AppBar(title: const Text('管理审计（我的操作）')),
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? const Center(child: CommonCircleLoading.page())
           : _rows.isEmpty
           ? const Center(child: Text('暂无管理操作记录。'))
           : ListView.builder(
