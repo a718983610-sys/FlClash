@@ -2051,46 +2051,33 @@ class _QfRevealCodeDialogState extends State<_QfRevealCodeDialog> {
         setState(() => _busy = false);
         qfToast(
           context,
-          e.code == 'PASSKEY_NOT_ENROLLED' ? '您尚未创建通行密钥，请使用账户密码验证' : e.message,
+          e.code == 'PASSKEY_NOT_ENROLLED'
+              ? '您尚未创建通行密钥，请使用账户密码验证'
+              : qfAccountErrorMessage(e),
         );
       }
-    } catch (_) {
+    } catch (e) {
       if (mounted) {
         setState(() => _busy = false);
-        qfToast(context, '通行密钥验证未完成，请重试或改用账户密码验证');
+        qfToast(context, qfPasskeyFailureText(e));
       }
     }
   }
 
   @override
   void dispose() {
-    _cooldownTimer?.cancel();
     _maskTimer?.cancel();
     _password.dispose();
     _code.dispose();
     super.dispose();
   }
 
-  Future<void> _requestCode() async {
-    try {
-      await widget.session.redeemCodeRequest(widget.orderId);
-      if (!mounted) return;
+  Future<int?> _requestCode() async {
+    await widget.session.redeemCodeRequest(widget.orderId);
+    if (mounted) {
       qfToast(context, '一次性验证码已发送至账号绑定邮箱，10 分钟内有效');
-      setState(() => _cooldown = 60);
-      _cooldownTimer?.cancel();
-      _cooldownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
-        if (!mounted) {
-          timer.cancel();
-          return;
-        }
-        setState(() {
-          _cooldown -= 1;
-          if (_cooldown <= 0) timer.cancel();
-        });
-      });
-    } on QfApiException catch (e) {
-      if (mounted) qfToast(context, e.message);
     }
+    return null;
   }
 
   Future<void> _reveal() async {

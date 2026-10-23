@@ -355,5 +355,53 @@ void main() {
       expect(find.text(QfCopy.googleNotConfiguredHint), findsOneWidget);
     });
 
+    testWidgets('passkey login surfaces the network reason', (tester) async {
+      tester.view.physicalSize = const Size(1080, 2600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      SharedPreferences.setMockInitialValues({});
+      final session = _FakeAccountSession();
+      session.passkeyOptionsError = const QfApiException(
+        0,
+        'NETWORK',
+        '网络连接失败，请检查网络后重试',
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(body: QfLoginForm(session: session)),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+      // The form's init manifest refresh recomputes the proxy decision
+      // from the host environment; pin the direct decision before the tap.
+      QfHttpClient.lastDecision = const QfProxyDecision(
+        'DIRECT',
+        QfProxySource.direct,
+      );
+      await tester.tap(find.widgetWithText(OutlinedButton, '使用通行密钥登录'));
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
+      expect(find.text(QfCopy.networkAccountNeedsProxy), findsOneWidget);
+    });
+
+    test('passkey failure translator gives explicit reasons', () {
+      expect(
+        qfPasskeyFailureText(MissingPluginException('no plugin')),
+        contains('不支持通行密钥'),
+      );
+      expect(
+        qfPasskeyFailureText(PlatformException(code: 'NotAllowedError')),
+        contains('已取消'),
+      );
+      expect(
+        qfPasskeyFailureText(PlatformException(code: 'NotSupportedError')),
+        contains('不支持通行密钥'),
+      );
+      expect(
+        qfPasskeyFailureText(PlatformException(code: 'UnknownError')),
+        contains('UnknownError'),
+      );
+    });
   });
 }

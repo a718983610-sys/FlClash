@@ -267,9 +267,9 @@ class _QfSecurityPageState extends State<QfSecurityPage> {
       if (mounted) qfToast(context, '通行密钥已创建');
       await _load();
     } on QfApiException catch (e) {
-      if (mounted) qfToast(context, e.message);
-    } catch (_) {
-      if (mounted) qfToast(context, '通行密钥创建未完成，请重试');
+      if (mounted) qfToast(context, qfAccountErrorMessage(e));
+    } catch (e) {
+      if (mounted) qfToast(context, qfPasskeyFailureText(e));
     }
   }
 
@@ -471,14 +471,14 @@ class _QfIdentityVerifyDialogState extends State<_QfIdentityVerifyDialog> {
           _busy = false;
           _error = e.code == 'PASSKEY_NOT_ENROLLED'
               ? '您尚未创建通行密钥，请使用账户密码验证。'
-              : e.message;
+              : qfAccountErrorMessage(e);
         });
       }
-    } catch (_) {
+    } catch (e) {
       if (mounted) {
         setState(() {
           _busy = false;
-          _error = '通行密钥验证未完成，请重试或改用账户密码验证。';
+          _error = qfPasskeyFailureText(e);
         });
       }
     }
@@ -571,14 +571,14 @@ class _QfDeleteAccountDialogState extends State<_QfDeleteAccountDialog> {
           _busy = false;
           _error = e.code == 'PASSKEY_NOT_ENROLLED'
               ? '您尚未创建通行密钥，请使用账户密码验证。'
-              : e.message;
+              : qfAccountErrorMessage(e);
         });
       }
-    } catch (_) {
+    } catch (e) {
       if (mounted) {
         setState(() {
           _busy = false;
-          _error = '通行密钥验证未完成，请重试或改用账户密码验证。';
+          _error = qfPasskeyFailureText(e);
         });
       }
     }
@@ -720,10 +720,10 @@ class _QfChangePasswordDialogState extends State<_QfChangePasswordDialog> {
               : e.message,
         );
       }
-    } catch (_) {
+    } catch (e) {
       if (mounted) {
         setState(() => _busy = false);
-        qfToast(context, '通行密钥验证未完成，请重试或改用其他验证方式');
+        qfToast(context, qfPasskeyFailureText(e));
       }
     }
   }
@@ -1482,10 +1482,68 @@ class _QfAppealPageState extends State<QfAppealPage> {
         setState(() {
           _checking = false;
           _remaining = null;
-          _quotaError = e.message;
+          _quotaError = qfAccountErrorMessage(e);
         });
       }
       return false;
+    }
+  }
+
+  Future<void> _queryStatus({bool byPasskey = false}) async {
+    final identifier = _account.text.trim();
+    if (identifier.isEmpty || (!byPasskey && _password.text.isEmpty)) {
+      setState(
+        () => _statusError = '请先填写账户 ID 或邮箱${byPasskey ? '' : '与登录密码'}，再查询申诉结果',
+      );
+      return;
+    }
+    setState(() {
+      _statusBusy = true;
+      _statusError = null;
+    });
+    try {
+      Map<String, dynamic> body;
+      if (byPasskey) {
+        final optionsData = await QfHttp.send(
+          'POST',
+          '${widget.serverBaseUrl}/appeals/passkey/options',
+          body: {'identifier': identifier},
+        );
+        final rawOptions = optionsData['options'];
+        final options = rawOptions is Map
+            ? Map<String, dynamic>.from(rawOptions)
+            : optionsData;
+        final assertion = await QfPasskeyCeremony.authenticate(options);
+        body = {'identifier': identifier, 'passkeyAssertion': assertion};
+      } else {
+        body = {'identifier': identifier, 'password': _password.text};
+      }
+      final data = await QfHttp.send(
+        'POST',
+        '${widget.serverBaseUrl}/appeals/status',
+        body: body,
+      );
+      if (mounted) {
+        setState(() {
+          _appealStatus = qfParseAppealStatus(data);
+          _statusQueried = true;
+          _statusBusy = false;
+        });
+      }
+    } on QfApiException catch (e) {
+      if (mounted) {
+        setState(() {
+          _statusBusy = false;
+          _statusError = qfAccountErrorMessage(e);
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _statusBusy = false;
+          _statusError = qfPasskeyFailureText(e);
+        });
+      }
     }
   }
 
