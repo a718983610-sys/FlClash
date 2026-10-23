@@ -244,13 +244,40 @@ class _QfLoginFormState extends State<QfLoginForm> {
     } on QfApiException catch (e) {
       if (mounted) {
         if (e.code == 'ACCOUNT_BANNED') {
+          final reason = (e.data['reason'] ?? '').toString();
           await showDialog<void>(
             context: context,
             builder: (dialogContext) {
               return AlertDialog(
                 title: const Text('账户已被封禁'),
-                content: Text(QfSessionController.formatBanNotice(e.data)),
+                content: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(QfSessionController.formatBanNotice(e.data)),
+                    if (reason.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 8),
+                        child: Text('封禁原因：$reason'),
+                      ),
+                  ],
+                ),
                 actions: [
+                  TextButton(
+                    onPressed: () {
+                      Navigator.of(dialogContext).pop();
+                      Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => QfAppealPage(
+                            serverBaseUrl: widget.session.serverBaseUrl,
+                            initialAccount: _email.text.trim(),
+                            permanent: e.data['permanent'] == true,
+                          ),
+                        ),
+                      );
+                    },
+                    child: const Text('申诉'),
+                  ),
                   FilledButton(
                     onPressed: () => Navigator.of(dialogContext).pop(),
                     child: const Text('我知道了'),

@@ -708,6 +708,163 @@ class QfMinorUpdateDialog extends StatelessWidget {
   }
 }
 
+
+class QfAppealPage extends StatefulWidget {
+  final String serverBaseUrl;
+  final String initialAccount;
+  final bool permanent;
+
+  const QfAppealPage({
+    super.key,
+    required this.serverBaseUrl,
+    this.initialAccount = '',
+    this.permanent = false,
+  });
+
+  @override
+  State<QfAppealPage> createState() => _QfAppealPageState();
+}
+
+class _QfAppealPageState extends State<QfAppealPage> {
+  final _account = TextEditingController();
+  final _password = TextEditingController();
+  final _content = TextEditingController();
+  int? _remaining;
+  bool _checking = false;
+  bool _busy = false;
+
+  bool get _exhausted => _remaining != null && _remaining! <= 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _account.text = widget.initialAccount;
+    if (_account.text.isNotEmpty) {
+      _checkQuota();
+    }
+  }
+
+  @override
+  void dispose() {
+    _account.dispose();
+    _password.dispose();
+    _content.dispose();
+    super.dispose();
+  }
+
+  Future<void> _checkQuota() async {
+    final account = _account.text.trim();
+    if (account.isEmpty) return;
+    setState(() => _checking = true);
+    try {
+      final data = await QfHttp.send(
+        'GET',
+        '${widget.serverBaseUrl}/appeals/quota'
+            '?account=${Uri.encodeQueryComponent(account)}',
+      );
+      if (mounted) {
+        setState(() {
+          final remaining = data['remaining'];
+          _remaining = remaining is num ? remaining.toInt() : null;
+          _checking = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) setState(() => _checking = false);
+    }
+  }
+
+  Future<void> _submit() async {
+    if (_account.text.trim().isEmpty ||
+        _password.text.isEmpty ||
+        _content.text.trim().isEmpty) {
+      qfToast(context, '请完整填写账户、密码与申诉说明');
+      return;
+    }
+    await _checkQuota();
+    if (_exhausted) return;
+    setState(() => _busy = true);
+    try {
+      final result = await QfHttp.send(
+        'POST',
+        '${widget.serverBaseUrl}/appeals',
+        body: {
+          'account': _account.text.trim(),
+          'password': _password.text,
+          'content': _content.text.trim(),
+        },
+      );
+      if (mounted) {
+        Navigator.of(context).pop();
+        qfToast(context, (result['message'] ?? '申诉已经提交').toString());
+      }
+    } on QfApiException catch (e) {
+      if (mounted) qfToast(context, e.message);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('封禁申诉')),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          const Text('请填写被封禁的账户与登录密码进行身份核验，并说明申诉理由。密码仅用于核验，不会被保存。'),
+          const SizedBox(height: 16),
+          TextField(
+            controller: _account,
+            decoration: const InputDecoration(labelText: '账户 ID 或邮箱'),
+            onSubmitted: (_) => _checkQuota(),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _password,
+            obscureText: true,
+            decoration: const InputDecoration(labelText: '登录密码'),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _content,
+            maxLines: 6,
+            maxLength: 1000,
+            decoration: const InputDecoration(
+              labelText: '申诉说明',
+              alignLabelWithHint: true,
+            ),
+          ),
+          const SizedBox(height: 8),
+          if (_checking)
+            const Text('正在查询剩余申诉次数……')
+          else if (_remaining != null)
+            Text(
+              '剩余申诉次数：$_remaining（${widget.permanent ? '永久封禁共 2 次' : '共 3 次'}）',
+            )
+          else
+            const Text('填写账户后将自动查询剩余申诉次数'),
+          if (_exhausted)
+            const Padding(
+              padding: EdgeInsets.only(top: 8),
+              child: Text(
+                '申诉次数已用完，无法再次申诉。',
+                style: TextStyle(color: Colors.red),
+              ),
+            ),
+          const SizedBox(height: 16),
+          FilledButton(
+            onPressed: _busy || _exhausted ? null : _submit,
+            child: const Text('提交申诉'),
+          ),
+          const SizedBox(height: 12),
+          const Text('也可通过邮箱 a718983610@gmail.com 进行申诉。'),
+        ],
+      ),
+    );
+  }
+}
+
 class QfLoginGuidePage extends StatelessWidget {
   final String title;
   final VoidCallback onLogin;

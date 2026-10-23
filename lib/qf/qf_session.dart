@@ -100,38 +100,33 @@ class QfSessionController extends ChangeNotifier {
   bool get isGuest => mode == QfMode.guest;
 
   String? banNotice;
+  String banReason = '';
+  String banAccount = '';
 
   void consumeBanNotice() {
     banNotice = null;
+    banReason = '';
+    banAccount = '';
   }
 
   static String formatBanNotice(Map<String, dynamic> data) {
-    final buffer = StringBuffer();
     if (data['permanent'] == true) {
-      buffer.write('该账户已被永久封禁');
-    } else {
-      final until = (data['bannedUntil'] as num?)?.toInt();
-      if (until != null && until > 0) {
-        final time = DateTime.fromMillisecondsSinceEpoch(until * 1000);
-        String two(int v) => v.toString().padLeft(2, '0');
-        buffer.write(
-          '该账户已被封禁，解除时间：${time.year}-${two(time.month)}-${two(time.day)} '
-          '${two(time.hour)}:${two(time.minute)}',
-        );
-      } else {
-        buffer.write('该账户已被封禁');
-      }
+      return '该用户已被永久封禁';
     }
-    final reason = (data['reason'] ?? '').toString();
-    if (reason.isNotEmpty) {
-      buffer.write('（$reason）');
+    final until = (data['bannedUntil'] as num?)?.toInt();
+    if (until != null && until > 0) {
+      final time = DateTime.fromMillisecondsSinceEpoch(until * 1000);
+      String two(int v) => v.toString().padLeft(2, '0');
+      return '该账户已被封禁，解除时间：${time.year}-${two(time.month)}-${two(time.day)} '
+          '${two(time.hour)}:${two(time.minute)}';
     }
-    buffer.write('\n如有疑问，可通过意见反馈或邮箱 a718983610@gmail.com 申诉。');
-    return buffer.toString();
+    return '该账户已被封禁';
   }
 
   Future<void> handleBanned(QfApiException e) async {
     banNotice = formatBanNotice(e.data);
+    banReason = (e.data['reason'] ?? '').toString();
+    banAccount = email ?? '';
     stopHeartbeat();
     await _clearUserSession();
     final prefs = await SharedPreferences.getInstance();
@@ -242,6 +237,7 @@ class QfSessionController extends ChangeNotifier {
     String method,
     String path, {
     Map<String, dynamic>? body,
+    Map<String, String>? headers,
   }) async {
     await _refreshIfNeeded();
     try {
@@ -250,6 +246,7 @@ class QfSessionController extends ChangeNotifier {
         '$serverBaseUrl$path',
         body: body,
         bearer: _accessToken,
+        headers: headers,
       );
     } on QfApiException catch (e) {
       if (e.code == 'ACCOUNT_BANNED') {
@@ -264,6 +261,7 @@ class QfSessionController extends ChangeNotifier {
             '$serverBaseUrl$path',
             body: body,
             bearer: _accessToken,
+            headers: headers,
           );
         }
         await _clearUserSession();
@@ -615,20 +613,29 @@ class QfSessionController extends ChangeNotifier {
     return entries is List ? entries : const [];
   }
 
-  Future<Map<String, dynamic>> pointsRules() {
-    return QfHttp.send('GET', '$serverBaseUrl/points/rules');
+  Future<Map<String, dynamic>> pointsRules() async {
+    return QfHttp.send(
+      'GET',
+      '$serverBaseUrl/points/rules',
+      headers: await QfProofHeaders.collect(),
+    );
   }
 
   Future<Map<String, dynamic>> redeemProducts() {
     return authed('GET', '/redeem/products');
   }
 
-  Future<Map<String, dynamic>> redeemCreate(int productId) {
-    return authed('POST', '/redeem/orders', body: {
-      'productId': productId,
-      'idempotencyKey':
-          'qf-${DateTime.now().millisecondsSinceEpoch}-$productId',
-    });
+  Future<Map<String, dynamic>> redeemCreate(int productId) async {
+    return authed(
+      'POST',
+      '/redeem/orders',
+      body: {
+        'productId': productId,
+        'idempotencyKey':
+            'qf-${DateTime.now().millisecondsSinceEpoch}-$productId',
+      },
+      headers: await QfProofHeaders.collect(),
+    );
   }
 
   Future<List<dynamic>> myOrders() async {
