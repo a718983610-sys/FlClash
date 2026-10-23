@@ -3,6 +3,8 @@ import 'dart:math';
 
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/enum/enum.dart';
+import 'package:fl_clash/qf/qf_config.dart';
+import 'package:fl_clash/qf/qf_qr.dart';
 import 'package:fl_clash/manager/theme_manager.dart';
 import 'package:fl_clash/plugins/app.dart';
 import 'package:fl_clash/state.dart';
@@ -59,6 +61,7 @@ class _ScanPageState extends ConsumerState<ScanPage>
 
   StreamSubscription<BarcodeCapture>? _subscription;
   Timer? _invalidHintTimer;
+  bool _cameraSupported = qfCameraScanSupported();
   bool _disableAnimations = false;
   bool _completed = false;
   bool _picking = false;
@@ -85,7 +88,9 @@ class _ScanPageState extends ConsumerState<ScanPage>
   // Android binds the camera on the platform thread, which the UI shares.
   @override
   void didSettleRoute() {
-    unawaited(_start());
+    if (_cameraSupported) {
+      unawaited(_start());
+    }
   }
 
   void _syncEffect() {
@@ -111,6 +116,12 @@ class _ScanPageState extends ConsumerState<ScanPage>
           'Failed to start the scanner: ${compactError(error)}',
           logLevel: LogLevel.warning,
         );
+      }
+    } on MissingPluginException {
+      // No scanner implementation on this platform: fall back to the
+      // image-import UI instead of surfacing an uncaught error.
+      if (mounted) {
+        setState(() => _cameraSupported = false);
       }
     }
   }
@@ -202,6 +213,36 @@ class _ScanPageState extends ConsumerState<ScanPage>
 
   @override
   Widget build(BuildContext context) {
+    if (!_cameraSupported) {
+      return Scaffold(
+        appBar: AppBar(
+          title: const Text('扫一扫'),
+          leading: IconButton(
+            icon: const Icon(Icons.close),
+            onPressed: () => Navigator.of(context).pop(),
+          ),
+        ),
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  QfCopy.qrCameraUnsupported,
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 16),
+                FilledButton(
+                  onPressed: _pickFromAlbum,
+                  child: const Text('导入二维码图片'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
     final theme = watchAppTheme(ref, Brightness.dark);
     final appLocalizations = context.appLocalizations;
     final glass = LiquidGlassScope.of(context);

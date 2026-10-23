@@ -194,6 +194,58 @@ HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settin
     });
   });
 
+  group('W3-03 pure Dart QR decoding', () {
+    (Int32List, int, int) renderQr(String content) {
+      final code = Encoder.encode(content, ErrorCorrectionLevel.m);
+      final matrix = code.matrix!;
+      const scale = 6;
+      const quiet = 4;
+      final width = (matrix.width + quiet * 2) * scale;
+      final height = (matrix.height + quiet * 2) * scale;
+      final pixels = Int32List(width * height)..fillRange(0, width * height, 0xFFFFFFFF);
+      for (var y = 0; y < matrix.height; y++) {
+        for (var x = 0; x < matrix.width; x++) {
+          if (matrix.get(x, y) != 1) continue;
+          for (var dy = 0; dy < scale; dy++) {
+            for (var dx = 0; dx < scale; dx++) {
+              final px = (x + quiet) * scale + dx;
+              final py = (y + quiet) * scale + dy;
+              pixels[py * width + px] = 0xFF000000;
+            }
+          }
+        }
+      }
+      return (pixels, width, height);
+    }
+
+    test('decodes a rendered QR code from pixels and from PNG bytes', () {
+      const content = 'https://example.com/sub?token=abc123';
+      final (pixels, width, height) = renderQr(content);
+      expect(qfDecodeQrPixels(width, height, pixels), content);
+      final image = img.Image(width: width, height: height);
+      for (var i = 0; i < pixels.length; i++) {
+        final argb = pixels[i];
+        image.setPixelRgba(
+          i % width,
+          i ~/ width,
+          (argb >> 16) & 0xFF,
+          (argb >> 8) & 0xFF,
+          argb & 0xFF,
+          0xFF,
+        );
+      }
+      final png = img.encodePng(image);
+      expect(qfDecodeQrImageBytes(Uint8List.fromList(png)), content);
+    });
+
+    test('returns null for images without a QR code', () {
+      expect(qfDecodeQrImageBytes(Uint8List.fromList([1, 2, 3])), isNull);
+      final blank = Int32List(100 * 100)
+        ..fillRange(0, 100 * 100, 0xFFFFFFFF);
+      expect(qfDecodeQrPixels(100, 100, blank), isNull);
+    });
+  });
+
   group('W5-02 manifest fail-open extensions', () {
     QfReleaseManifest manifest({
       bool maintenance = false,

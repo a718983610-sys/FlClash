@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:fl_clash/common/common.dart';
+import 'package:fl_clash/qf/qf_qr.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
@@ -46,13 +47,26 @@ class Picker {
     }
     // Not through a throwaway MobileScannerController: disposing one clears
     // the platform scan window of a scanner page that is still open.
-    final capture = await MobileScannerPlatform.instance.analyzeImage(
-      xFile.path,
-      formats: const [BarcodeFormat.qrCode],
-    );
-    final url = profileUrlFromQrCodes(
+    BarcodeCapture? capture;
+    try {
+      capture = await MobileScannerPlatform.instance.analyzeImage(
+        xFile.path,
+        formats: const [BarcodeFormat.qrCode],
+      );
+    } catch (_) {
+      capture = null;
+    }
+    var url = profileUrlFromQrCodes(
       capture?.barcodes.map((barcode) => barcode.rawValue) ?? const [],
     );
+    // Platforms without a scanner implementation (Windows) decode the
+    // picked image in pure Dart instead.
+    if (url == null) {
+      final decoded = qfDecodeQrImageBytes(await xFile.readAsBytes());
+      if (decoded != null) {
+        url = profileUrlFromQrCodes([decoded]);
+      }
+    }
     if (url == null) {
       throw MessageException(currentAppLocalizations.pleaseUploadValidQrcode);
     }

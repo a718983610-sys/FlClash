@@ -17,6 +17,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'qf_api.dart';
 import 'qf_chat_media.dart';
+import 'qf_config.dart';
+import 'qf_qr.dart';
 import 'qf_recovery.dart';
 import 'qf_signal.dart';
 import 'qf_pages.dart';
@@ -1528,16 +1530,26 @@ class _QfScanPageState extends State<QfScanPage> {
   Future<void> _importImage() async {
     final file = await ImagePicker().pickImage(source: ImageSource.gallery);
     if (file == null) return;
-    final capture = await MobileScannerPlatform.instance.analyzeImage(
-      file.path,
-      formats: const [BarcodeFormat.qrCode],
-    );
-    final value = capture?.barcodes
-        .map((barcode) => barcode.rawValue)
-        .whereType<String>()
-        .firstOrNull;
+    String? value;
+    if (qfCameraScanSupported()) {
+      try {
+        final capture = await MobileScannerPlatform.instance.analyzeImage(
+          file.path,
+          formats: const [BarcodeFormat.qrCode],
+        );
+        value = capture?.barcodes
+            .map((barcode) => barcode.rawValue)
+            .whereType<String>()
+            .firstOrNull;
+      } catch (_) {
+        value = null;
+      }
+    }
+    // Platforms without a scanner implementation (Windows) decode the
+    // picked image in pure Dart instead.
+    value ??= qfDecodeQrImageBytes(await file.readAsBytes());
     if (value == null) {
-      if (mounted) qfToast(context, '图片中没有识别到有效的二维码');
+      if (mounted) qfToast(context, QfCopy.qrNoCodeFound);
       return;
     }
     _handle(value);
@@ -1545,21 +1557,32 @@ class _QfScanPageState extends State<QfScanPage> {
 
   @override
   Widget build(BuildContext context) {
+    final cameraSupported = qfCameraScanSupported();
     return Scaffold(
       appBar: AppBar(title: const Text('扫一扫')),
       body: Column(
         children: [
           Expanded(
-            child: MobileScanner(
-              controller: _controller,
-              onDetect: (capture) {
-                final value = capture.barcodes
-                    .map((barcode) => barcode.rawValue)
-                    .whereType<String>()
-                    .firstOrNull;
-                _handle(value);
-              },
-            ),
+            child: cameraSupported
+                ? MobileScanner(
+                    controller: _controller,
+                    onDetect: (capture) {
+                      final value = capture.barcodes
+                          .map((barcode) => barcode.rawValue)
+                          .whereType<String>()
+                          .firstOrNull;
+                      _handle(value);
+                    },
+                  )
+                : const Center(
+                    child: Padding(
+                      padding: EdgeInsets.all(24),
+                      child: Text(
+                        QfCopy.qrCameraUnsupported,
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  ),
           ),
           Padding(
             padding: const EdgeInsets.all(16),
