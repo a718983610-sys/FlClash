@@ -7,6 +7,8 @@ import 'package:crypto/crypto.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import 'qf_config.dart';
+import 'qf_http_client.dart';
 import 'qf_providers.dart';
 
 class QfGoogleAuthException implements Exception {
@@ -147,8 +149,9 @@ class QfGoogleAuth {
     required String redirectUri,
     required String clientId,
   }) async {
-    final client = HttpClient();
-    client.findProxy = (_) => 'DIRECT';
+    final client = await QfHttpClient.create(
+      uri: Uri.parse('https://oauth2.googleapis.com/token'),
+    );
     try {
       final request = await client.postUrl(
         Uri.parse('https://oauth2.googleapis.com/token'),
@@ -187,7 +190,7 @@ class QfGoogleAuth {
     } on QfGoogleAuthException {
       rethrow;
     } catch (_) {
-      throw const QfGoogleAuthException('网络连接失败，请检查网络后重试。');
+      throw const QfGoogleAuthException(QfCopy.networkAccountUnreachable);
     } finally {
       client.close(force: true);
     }

@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'qf_api.dart';
+import 'qf_http_client.dart';
 import 'qf_config.dart';
 import 'qf_version.dart';
 
@@ -134,8 +135,7 @@ class QfUpdateService {
         ? 'qfclash-update'
         : Uri.parse(url).pathSegments.last;
     final file = File('${dir.path}/$fileName');
-    final client = HttpClient();
-    client.findProxy = (_) => 'DIRECT';
+    final client = await QfHttpClient.create(uri: Uri.parse(url));
     try {
       final request = await client.getUrl(Uri.parse(url));
       request.headers.set('User-Agent', 'QFClash');

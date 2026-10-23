@@ -280,7 +280,7 @@ class _QfLoginFormState extends State<QfLoginForm> {
             );
           }
         } else {
-          qfToast(context, e.message);
+          qfToast(context, qfAccountErrorMessage(e));
         }
       }
     } finally {
@@ -387,9 +387,9 @@ class _QfLoginFormState extends State<QfLoginForm> {
             },
           );
         } else if (e.code == 'BAD_CREDENTIALS') {
-          setState(() => _passwordError = e.message);
+          setState(() => _passwordError = qfAccountErrorMessage(e));
         } else {
-          qfToast(context, e.message);
+          qfToast(context, qfAccountErrorMessage(e));
         }
       }
     } finally {
@@ -457,7 +457,7 @@ class _QfLoginFormState extends State<QfLoginForm> {
         setState(() {});
       }
     } on QfGoogleAuthException catch (e) {
-      if (mounted) qfToast(context, e.message);
+      if (mounted) qfToast(context, qfAccountErrorMessage(e));
     } on QfApiException catch (e) {
       if (mounted) {
         if (e.code == 'ACCOUNT_FROZEN') {
@@ -482,7 +482,7 @@ class _QfLoginFormState extends State<QfLoginForm> {
             account: _email.text.trim(),
           );
         } else {
-          qfToast(context, e.message);
+          qfToast(context, qfAccountErrorMessage(e));
         }
       }
     } finally {
@@ -673,7 +673,7 @@ class _QfResetPasswordDialogState extends State<QfResetPasswordDialog> {
         qfToast(context, '密码已经重置，请使用新密码登录');
       }
     } on QfApiException catch (e) {
-      if (mounted) qfToast(context, e.message);
+      if (mounted) qfToast(context, qfAccountErrorMessage(e));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -825,16 +825,16 @@ class _QfRegisterFormState extends State<QfRegisterForm> {
               e.message.contains('已被注册') ||
               e.message.contains('账户 ID') ||
               e.message.contains('账户ID')) {
-            _idError = e.message;
+            _idError = qfAccountErrorMessage(e);
           } else if (e.message.contains('验证码')) {
-            _codeError = e.message;
+            _codeError = qfAccountErrorMessage(e);
             _ticket = null;
           } else if (e.message.contains('密码')) {
-            _passwordError = e.message;
+            _passwordError = qfAccountErrorMessage(e);
           } else if (e.message.contains('邮箱')) {
-            _emailError = e.message;
+            _emailError = qfAccountErrorMessage(e);
           } else {
-            _codeError = e.message;
+            _codeError = qfAccountErrorMessage(e);
           }
         });
       }
@@ -955,7 +955,7 @@ class _QfGoogleCompletionDialogState extends State<QfGoogleCompletionDialog> {
         case 'USERNAME_TAKEN':
         case 'USERNAME_INVALID':
         case 'USERNAME_IMMUTABLE':
-          setState(() => _idError = e.message);
+          setState(() => _idError = qfAccountErrorMessage(e));
         case 'ACCOUNT_FROZEN':
           {
             final action = await qfShowFrozenDialog(
@@ -988,12 +988,12 @@ class _QfGoogleCompletionDialogState extends State<QfGoogleCompletionDialog> {
           Navigator.of(context).pop(e.message);
         case 'BAD_REQUEST':
           if (e.message.contains('密码')) {
-            setState(() => _passwordError = e.message);
+            setState(() => _passwordError = qfAccountErrorMessage(e));
           } else {
-            qfToast(context, e.message);
+            qfToast(context, qfAccountErrorMessage(e));
           }
         default:
-          qfToast(context, e.message);
+          qfToast(context, qfAccountErrorMessage(e));
       }
     }
   }
@@ -1092,7 +1092,7 @@ class _QfCompleteUsernameDialogState extends State<QfCompleteUsernameDialog> {
       if (mounted) {
         setState(() {
           _busy = false;
-          _idError = e.message;
+          _idError = qfAccountErrorMessage(e);
         });
       }
     }
@@ -1231,7 +1231,8 @@ class QfMinePage extends StatelessWidget {
                             qfToast(context, '注销已经撤销，账号恢复正常');
                           }
                         } on QfApiException catch (e) {
-                          if (context.mounted) qfToast(context, e.message);
+                          if (context.mounted)
+                            qfToast(context, qfAccountErrorMessage(e));
                         }
                       },
                       child: const Text('撤销注销'),
@@ -1625,6 +1626,78 @@ class _QfRedeemPageState extends State<QfRedeemPage> {
     }
   }
 
+  Future<void> _cancelOrder(Map<dynamic, dynamic> order) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text(QfCopy.orderCancel),
+          content: const Text(QfCopy.orderCancelConfirm),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('再想想'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text(QfCopy.orderCancel),
+            ),
+          ],
+        );
+      },
+    );
+    if (confirmed != true) return;
+    try {
+      await widget.session.redeemCancelOrder((order['id'] as num).toInt());
+      if (mounted) qfToast(context, QfCopy.orderCancelledDone);
+      await _load();
+      await widget.session.refreshPoints();
+    } on QfApiException catch (e) {
+      if (mounted) qfToast(context, qfAccountErrorMessage(e));
+    }
+  }
+
+  Future<void> _changeOrderAddress(Map<dynamic, dynamic> order) async {
+    final controller = TextEditingController(
+      text: (order['payoutAddress'] ?? '').toString(),
+    );
+    final address = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text(QfCopy.orderChangeAddress),
+          content: TextField(
+            controller: controller,
+            decoration: const InputDecoration(labelText: 'USDT（TRC20）收款地址'),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () =>
+                  Navigator.of(dialogContext).pop(controller.text.trim()),
+              child: const Text('保存'),
+            ),
+          ],
+        );
+      },
+    );
+    controller.dispose();
+    if (address == null || address.isEmpty) return;
+    try {
+      await widget.session.redeemChangePayoutAddress(
+        (order['id'] as num).toInt(),
+        address,
+      );
+      if (mounted) qfToast(context, QfCopy.orderChangeAddressDone);
+      await _load();
+    } on QfApiException catch (e) {
+      if (mounted) qfToast(context, qfAccountErrorMessage(e));
+    }
+  }
+
   Future<void> _showReveal(Map<dynamic, dynamic> order) async {
     await showDialog<void>(
       context: context,
@@ -1822,7 +1895,7 @@ class _QfRedeemDialogState extends State<_QfRedeemDialog> {
         Navigator.of(context).pop('region');
       } else {
         setState(() => _busy = false);
-        qfToast(context, e.message);
+        qfToast(context, qfAccountErrorMessage(e));
       }
     }
   }
@@ -2023,7 +2096,7 @@ class _QfRevealCodeDialogState extends State<_QfRevealCodeDialog> {
           _busy = false;
           if (e.code == 'REAUTH_INVALID') _reauthToken = null;
         });
-        qfToast(context, e.message);
+        qfToast(context, qfAccountErrorMessage(e));
       }
     }
   }

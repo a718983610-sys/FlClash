@@ -96,12 +96,25 @@ class _QfSessionGateState extends ConsumerState<QfSessionGate> {
       }
     } catch (_) {}
     session.isRunningFn = () => ref.read(isStartProvider);
+    QfHttpClient.coreRunningProbe = () {
+      try {
+        return ref.read(isStartProvider) && !ref.read(suspendProvider);
+      } catch (_) {
+        return false;
+      }
+    };
+    try {
+      QfHttpClient.corePort = ref.read(
+        patchClashConfigProvider.select((state) => state.mixedPort),
+      );
+    } catch (_) {}
     session.trafficTotalFn = () {
       final traffic = ref.read(totalTrafficProvider);
       return (traffic.up + traffic.down).toInt();
     };
     session.onGuestExhaustedFn = _stopCore;
     session.onForceDisconnectFn = _stopCore;
+    session.onAuthenticatedFn = () => QfSignalManager.ensureInstalled(session);
     try {
       QfRuntime.appVersion = (await PackageInfo.fromPlatform()).version;
     } catch (_) {}

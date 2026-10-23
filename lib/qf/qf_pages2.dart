@@ -136,7 +136,7 @@ class _QfSecurityPageState extends State<QfSecurityPage> {
     } on QfApiException catch (e) {
       if (mounted) {
         setState(() => _loginProtection = previous);
-        qfToast(context, e.message);
+        qfToast(context, qfAccountErrorMessage(e));
       }
     } finally {
       if (mounted) setState(() => _settingsBusy = false);
@@ -158,6 +158,36 @@ class _QfSecurityPageState extends State<QfSecurityPage> {
     await _load();
   }
 
+  Future<void> _untrustDevice(Map<dynamic, dynamic> device) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text(QfCopy.deviceUntrust),
+          content: const Text(QfCopy.deviceUntrustConfirm),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text(QfCopy.deviceUntrust),
+            ),
+          ],
+        );
+      },
+    );
+    if (confirmed != true) return;
+    try {
+      await widget.session.securityUntrustDevice((device['id'] as num).toInt());
+      if (mounted) qfToast(context, QfCopy.deviceUntrustedDone);
+      await _load();
+    } on QfApiException catch (e) {
+      if (mounted) qfToast(context, qfAccountErrorMessage(e));
+    }
+  }
+
   Future<void> _logoutDevice(Map<dynamic, dynamic> device) async {
     try {
       await widget.session.authed(
@@ -168,7 +198,7 @@ class _QfSecurityPageState extends State<QfSecurityPage> {
       if (mounted) qfToast(context, '该设备已经退出登录');
       await _load();
     } on QfApiException catch (e) {
-      if (mounted) qfToast(context, e.message);
+      if (mounted) qfToast(context, qfAccountErrorMessage(e));
     }
   }
 
@@ -261,7 +291,7 @@ class _QfSecurityPageState extends State<QfSecurityPage> {
       if (mounted) qfToast(context, '通行密钥已删除');
       await _load();
     } on QfApiException catch (e) {
-      if (mounted) qfToast(context, e.message);
+      if (mounted) qfToast(context, qfAccountErrorMessage(e));
     }
   }
 
@@ -578,7 +608,7 @@ class _QfDeleteAccountDialogState extends State<_QfDeleteAccountDialog> {
         setState(() {
           _busy = false;
           if (e.code == 'REAUTH_INVALID') _reauthToken = null;
-          _error = e.message;
+          _error = qfAccountErrorMessage(e);
         });
       }
     }
@@ -758,7 +788,7 @@ class _QfChangePasswordDialogState extends State<_QfChangePasswordDialog> {
           _busy = false;
           if (e.code == 'REAUTH_INVALID') _reauthToken = null;
         });
-        qfToast(context, e.message);
+        qfToast(context, qfAccountErrorMessage(e));
       }
     }
   }
@@ -911,7 +941,7 @@ class _QfChangeEmailDialogState extends State<_QfChangeEmailDialog> {
         qfToast(context, '邮箱已经换绑，请使用新邮箱登录');
       }
     } on QfApiException catch (e) {
-      if (mounted) qfToast(context, e.message);
+      if (mounted) qfToast(context, qfAccountErrorMessage(e));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -1019,7 +1049,7 @@ class _QfFeedbackPageState extends State<QfFeedbackPage> {
         qfToast(context, QfCopy.feedbackSuccess);
       }
     } on QfApiException catch (e) {
-      if (mounted) qfToast(context, e.message);
+      if (mounted) qfToast(context, qfAccountErrorMessage(e));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -1484,7 +1514,7 @@ class _QfAppealPageState extends State<QfAppealPage> {
         qfToast(context, (result['message'] ?? '申诉已经提交').toString());
       }
     } on QfApiException catch (e) {
-      if (mounted) qfToast(context, e.message);
+      if (mounted) qfToast(context, qfAccountErrorMessage(e));
     } finally {
       if (mounted) setState(() => _busy = false);
     }

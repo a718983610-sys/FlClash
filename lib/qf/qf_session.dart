@@ -232,29 +232,62 @@ class QfSessionController extends ChangeNotifier {
     _envEmulator = envEmulator;
     final prefs = await SharedPreferences.getInstance();
     rememberDevice = prefs.getBool(_kRemember) ?? true;
-    _accessToken = await _secure.read(key: _kAccess);
-    _refreshToken = await _secure.read(key: _kRefresh);
-    _accessExpiresAt =
-        int.tryParse(await _secure.read(key: _kAccessExp) ?? '') ?? 0;
-    _heartbeatKey = await _secure.read(key: _kHeartbeatKey);
+    var secureOk = true;
+    Future<String?> readSecure(String key) async {
+      try {
+        return await _secure.read(key: key);
+      } catch (_) {
+        secureOk = false;
+        return null;
+      }
+    }
+
+    _accessToken = await readSecure(_kAccess);
+    _refreshToken = await readSecure(_kRefresh);
+    _accessExpiresAt = int.tryParse(await readSecure(_kAccessExp) ?? '') ?? 0;
+    _heartbeatKey = await readSecure(_kHeartbeatKey);
+    _guestToken = await readSecure(_kGuestToken);
+    _guestHeartbeatKey = await readSecure(_kGuestKey);
     if (!rememberDevice) {
       await _wipeStoredCredentials();
       _accessToken = null;
       _refreshToken = null;
       _accessExpiresAt = 0;
       _heartbeatKey = null;
-    } else if (_refreshToken == null && prefs.getString(_kRefresh) != null) {
-      _accessToken = prefs.getString(_kAccess);
-      _refreshToken = prefs.getString(_kRefresh);
-      _accessExpiresAt = prefs.getInt(_kAccessExp) ?? 0;
-      _heartbeatKey = prefs.getString(_kHeartbeatKey);
-      await _storeCredentials();
+    } else {
+      // Legacy plaintext copies in preferences: adopt what secure storage
+      // lacks, migrate into secure storage, then always purge the plaintext.
+      final legacyAccess = prefs.getString(_kAccess);
+      final legacyRefresh = prefs.getString(_kRefresh);
+      if ((legacyAccess != null && legacyAccess.isNotEmpty) ||
+          (legacyRefresh != null && legacyRefresh.isNotEmpty)) {
+        _accessToken ??= legacyAccess;
+        _refreshToken ??= legacyRefresh;
+        if (_accessExpiresAt == 0) {
+          _accessExpiresAt = prefs.getInt(_kAccessExp) ?? 0;
+        }
+        _heartbeatKey ??= prefs.getString(_kHeartbeatKey);
+        try {
+          await _storeCredentials();
+        } catch (_) {}
+      }
+      for (final key in [_kAccess, _kRefresh, _kAccessExp, _kHeartbeatKey]) {
+        await prefs.remove(key);
+      }
+      if (_guestToken == null) {
+        final legacyGuest = prefs.getString(_kGuestToken);
+        if (legacyGuest != null && legacyGuest.isNotEmpty) {
+          _guestToken = legacyGuest;
+          _guestHeartbeatKey = prefs.getString(_kGuestKey);
+          await _storeGuestCredentials();
+        }
+      }
+      await prefs.remove(_kGuestToken);
+      await prefs.remove(_kGuestKey);
     }
     email = prefs.getString(_kEmail);
     username = prefs.getString(_kUsername);
     userId = prefs.getInt(_kUserId);
-    _guestToken = prefs.getString(_kGuestToken);
-    _guestHeartbeatKey = prefs.getString(_kGuestKey);
     _pointsSeq = prefs.getInt(_kPointsSeq) ?? 0;
     _guestSeq = prefs.getInt(_kGuestSeq) ?? 0;
     final storedMode = prefs.getString(_kMode);
@@ -282,15 +315,43 @@ class QfSessionController extends ChangeNotifier {
 
   Future<void> _storeCredentials() async {
     if (!rememberDevice) return;
-    await _secure.write(key: _kAccess, value: _accessToken ?? '');
-    await _secure.write(key: _kRefresh, value: _refreshToken ?? '');
-    await _secure.write(key: _kAccessExp, value: _accessExpiresAt.toString());
-    await _secure.write(key: _kHeartbeatKey, value: _heartbeatKey ?? '');
+    Future<void> writeAll() async {
+      await _secure.write(key: _kAccess, value: _accessToken ?? '');
+      await _secure.write(key: _kRefresh, value: _refreshToken ?? '');
+      await _secure.write(key: _kAccessExp, value: '$_accessExpiresAt');
+      await _secure.write(key: _kHeartbeatKey, value: _heartbeatKey ?? '');
+    }
+
+    try {
+      await writeAll();
+    } catch (_) {
+      try {
+        await writeAll();
+      } catch (_) {
+        throw const QfApiException(0, 'STORAGE', QfCopy.storageSaveFailed);
+      }
+    }
+    final prefs = await SharedPreferences.getInstance();
+    for (final key in [_kAccess, _kRefresh, _kAccessExp, _kHeartbeatKey]) {
+      await prefs.remove(key);
+    }
+  }
+
+  Future<void> _storeGuestCredentials() async {
+    try {
+      await _secure.write(key: _kGuestToken, value: _guestToken ?? '');
+      await _secure.write(key: _kGuestKey, value: _guestHeartbeatKey ?? '');
+    } catch (_) {}
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_kGuestToken);
+    await prefs.remove(_kGuestKey);
   }
 
   Future<void> _wipeStoredCredentials() async {
     for (final key in [_kAccess, _kRefresh, _kAccessExp, _kHeartbeatKey]) {
-      await _secure.delete(key: key);
+      try {
+        await _secure.delete(key: key);
+      } catch (_) {}
     }
     final prefs = await SharedPreferences.getInstance();
     for (final key in [_kAccess, _kRefresh, _kAccessExp, _kHeartbeatKey]) {
@@ -318,9 +379,6 @@ class QfSessionController extends ChangeNotifier {
     deletionEffectiveAt = (data['deletionEffectiveAt'] as num?)?.toInt();
     if (rememberDevice) {
       await _storeCredentials();
-      for (final key in [_kAccess, _kRefresh, _kAccessExp, _kHeartbeatKey]) {
-        await prefs.remove(key);
-      }
     } else {
       await _wipeStoredCredentials();
     }
@@ -477,8 +535,9 @@ class QfSessionController extends ChangeNotifier {
   Future<Uint8List?> qfGetBinary(String path) async {
     await _refreshIfNeeded();
     for (var attempt = 0; attempt < 2; attempt++) {
-      final client = HttpClient();
-      client.findProxy = (_) => 'DIRECT';
+      final client = await QfHttpClient.create(
+        uri: Uri.parse('$serverBaseUrl$path'),
+      );
       client.connectionTimeout = const Duration(seconds: 15);
       try {
         final request = await client.getUrl(Uri.parse('$serverBaseUrl$path'));
@@ -525,8 +584,9 @@ class QfSessionController extends ChangeNotifier {
   }) async {
     await _refreshIfNeeded();
     for (var attempt = 0; attempt < 2; attempt++) {
-      final client = HttpClient();
-      client.findProxy = (_) => 'DIRECT';
+      final client = await QfHttpClient.create(
+        uri: Uri.parse('$serverBaseUrl$path'),
+      );
       client.connectionTimeout = const Duration(seconds: 15);
       try {
         final request = await client.postUrl(Uri.parse('$serverBaseUrl$path'));
@@ -620,10 +680,6 @@ class QfSessionController extends ChangeNotifier {
       _heartbeatKey = (data['heartbeatKey'] ?? _heartbeatKey ?? '').toString();
       if (rememberDevice) {
         await _storeCredentials();
-        final prefs = await SharedPreferences.getInstance();
-        for (final key in [_kAccess, _kRefresh, _kAccessExp, _kHeartbeatKey]) {
-          await prefs.remove(key);
-        }
       } else {
         await _wipeStoredCredentials();
       }

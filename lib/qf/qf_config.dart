@@ -87,4 +87,50 @@ class QfCopy {
   static const String campEditPendingNote = '有修改正在审核中，审核通过后生效。';
   static const String campEmptyMine = '暂无营地';
   static const String campFormRequired = '营地名称与简介不能为空。';
+  static const String campResubmit = '修改并重新提交';
+  static const String campResubmitSubmit = '重新提交审核';
+  static const String campResubmitted = '已重新提交，请等待审核。审核通过后，营地将正式上线。';
+  static const String campDelete = '删除营地';
+  static const String campDeleteConfirmTitle = '删除营地';
+  static const String campDeleteConfirmBody = '删除后该营地将无法恢复，确定要删除吗？';
+  static const String campDeleted = '营地已删除。';
+  static const String appealStatusTitle = '查询申诉结果';
+  static const String appealStatusEmpty = '暂未查询到申诉记录。如您已提交申诉，请核对账户与密码后重新查询。';
+  static const String appealStatusPending = '审核中';
+  static const String appealStatusApproved = '申诉已通过';
+  static const String appealStatusRejected = '申诉未通过';
+  static const String appealPasskeyVerify = '使用通行密钥查询';
+  static const String vaultUnlockTitle = '解锁保险库';
+  static const String vaultUnlockedState = '保险库已解锁，设置同步已开启。';
+  static const String vaultLockedState = '保险库尚未解锁。解锁后，订阅备份与设置将自动同步。';
+  static const String vaultClearSettings = '清除云端设置备份';
+  static const String vaultClearSettingsConfirm =
+      '清除后云端设置备份将被删除，无法恢复；本机设置不受影响。确定要清除吗？';
+  static const String vaultSettingsCleared = '云端设置备份已清除。';
+  static const String deviceTrusted = '已信任';
+  static const String deviceUntrusted = '未信任';
+  static const String deviceUntrust = '取消信任';
+  static const String deviceUntrustConfirm =
+      '取消信任后，该设备将被退出登录，下次登录时需要重新验证。确定要取消信任吗？';
+  static const String deviceUntrustedDone = '已取消对这台设备的信任。';
+  static const String chatDecryptFailed = '这条消息暂时无法解密。';
+  static const String chatRecoverKey = '恢复聊天密钥';
+  static const String orderCancel = '取消订单';
+  static const String orderCancelConfirm = '取消后积分将退回您的账户，确定要取消该订单吗？';
+  static const String orderCancelledDone = '订单已取消，积分已退回。';
+  static const String orderChangeAddress = '修改地址';
+  static const String orderChangeAddressDone = '收款地址已修改。';
+  static const String forumAnnouncementForbidden = '公告板块仅官方发布。';
+  static const String networkAccountUnreachable =
+      '当前网络无法连接账户服务器。您可以先以访客模式使用，或检查网络后重试。';
+  static const String networkAccountNeedsProxy =
+      '当前网络无法连接账户服务器（当前网络可能需要代理）。您可以先以访客模式使用，或开启代理后重试。';
+  static const String networkGuestUnreachable = '当前网络无法连接服务器，请检查网络后重试。';
+  static const String storageSaveFailed = '无法安全保存登录状态，请重试。';
+  static const String qrCameraUnsupported = '当前设备不支持相机扫码，请导入二维码图片。';
+  static const String qrNoCodeFound = '图片中没有识别到有效的二维码';
+  static const String googleNotConfiguredHint = '谷歌登录尚未完成配置，请改用邮箱或账户 ID 登录。';
+  static const String attachmentsTitle = '我的附件';
+  static const String attachmentsEmpty = '暂无附件';
+  static const String attachmentsDeleteHint = '删除后文件将进入 7 天待删除期，期满后彻底清除。';
 }

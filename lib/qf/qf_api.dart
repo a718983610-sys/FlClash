@@ -9,6 +9,7 @@ import 'package:device_info_plus/device_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'qf_config.dart';
+import 'qf_http_client.dart';
 import 'qf_version.dart';
 
 class QfApiException implements Exception {
@@ -24,8 +25,29 @@ class QfApiException implements Exception {
     this.data = const {},
   ]);
 
+  bool get isNetworkFailure => status == 0 && code == 'NETWORK';
+
   @override
   String toString() => message;
+}
+
+String qfAccountErrorMessage(Object error) {
+  if (error is QfApiException) {
+    if (!error.isNetworkFailure) return error.message;
+    return QfHttpClient.lastDecision.source == QfProxySource.direct
+        ? QfCopy.networkAccountNeedsProxy
+        : QfCopy.networkAccountUnreachable;
+  }
+  return error.toString();
+}
+
+String qfGuestErrorMessage(Object error) {
+  if (error is QfApiException) {
+    return error.isNetworkFailure
+        ? QfCopy.networkGuestUnreachable
+        : error.message;
+  }
+  return error.toString();
 }
 
 class QfHttp {
@@ -36,8 +58,7 @@ class QfHttp {
     String? bearer,
     Map<String, String>? headers,
   }) async {
-    final client = HttpClient();
-    client.findProxy = (_) => 'DIRECT';
+    final client = await QfHttpClient.create(uri: Uri.parse(url));
     client.connectionTimeout = const Duration(seconds: 15);
     try {
       final request = await client.openUrl(method, Uri.parse(url));
