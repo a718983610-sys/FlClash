@@ -62,4 +62,29 @@ class QfCopy {
   static const String supportHandoffDone = '已转接人工客服，您可以继续在本会话中留言。';
   static const String supportNotThis = '不是这个';
   static const String supportDeskTitle = '客服会话';
+  static const String campCreate = '创建营地';
+  static const String campMyCamps = '我的营地';
+  static const String campNameLabel = '营地名称';
+  static const String campDescriptionLabel = '营地简介';
+  static const String campCreateRules =
+      '营地提交后将经审核，审核通过后正式上线。营地名称全网唯一，'
+      '同一账号最多创建 3 个营地。';
+  static const String campCreateSubmit = '提交创建';
+  static const String campCreateActive = '创建成功，营地已正式上线。';
+  static const String campCreatePending = '已提交，请等待审核。审核通过后，营地将正式上线。';
+  static const String campCreateRejected = '未通过审核';
+  static const String campNameTaken = '该营地名称已被使用。';
+  static const String campStatusPending = '待审核';
+  static const String campStatusActive = '已上线';
+  static const String campStatusRejected = '未通过';
+  static const String campStatusClosed = '已关闭';
+  static const String campCloseReasonPrefix = '关闭原因：';
+  static const String campMemberCountSuffix = ' 位成员';
+  static const String campCreatorLabel = '创建者';
+  static const String campEdit = '编辑营地';
+  static const String campEditSubmit = '保存修改';
+  static const String campEditSubmitted = '修改已提交，审核通过后生效。';
+  static const String campEditPendingNote = '有修改正在审核中，审核通过后生效。';
+  static const String campEmptyMine = '暂无营地';
+  static const String campFormRequired = '营地名称与简介不能为空。';
 }

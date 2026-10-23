@@ -73,6 +73,119 @@ String qfForumPostLink(String serverBaseUrl, int postId) {
   return '$serverBaseUrl/forum/posts/$postId';
 }
 
+Map<dynamic, dynamic>? qfCampCreator(Map<dynamic, dynamic> camp) {
+  final creator = camp['creator'];
+  return creator is Map ? creator : null;
+}
+
+int qfCampCreatorId(Map<dynamic, dynamic> camp) {
+  final creator = qfCampCreator(camp);
+  if (creator == null) return 0;
+  return ((creator['userId'] ?? creator['id']) as num?)?.toInt() ?? 0;
+}
+
+String qfCampCreatorName(Map<dynamic, dynamic> camp) {
+  final creator = qfCampCreator(camp);
+  if (creator == null) return '';
+  return (creator['displayName'] ??
+          creator['name'] ??
+          creator['nickname'] ??
+          '')
+      .toString();
+}
+
+bool? qfCampCreatorHasAvatar(Map<dynamic, dynamic> camp) {
+  final creator = qfCampCreator(camp);
+  if (creator == null) return null;
+  if (creator['hasAvatar'] is bool) return creator['hasAvatar'] as bool;
+  final avatarUrl = (creator['avatarUrl'] ?? '').toString();
+  if (avatarUrl.isNotEmpty) return true;
+  return null;
+}
+
+bool qfCampIsMine(Map<dynamic, dynamic> camp, int? currentUserId) {
+  if (currentUserId == null || currentUserId <= 0) return false;
+  return qfCampCreatorId(camp) == currentUserId;
+}
+
+String qfCampStatus(Map<dynamic, dynamic> camp) {
+  return (camp['status'] ?? 'active').toString();
+}
+
+String qfCampStatusLabel(String status) {
+  return switch (status) {
+    'pending' => QfCopy.campStatusPending,
+    'active' => QfCopy.campStatusActive,
+    'rejected' => QfCopy.campStatusRejected,
+    'closed' => QfCopy.campStatusClosed,
+    _ => '',
+  };
+}
+
+String qfCampCategory(Map<dynamic, dynamic> raw) {
+  for (final key in [
+    'category',
+    'rejectCategory',
+    'reasonCategory',
+    'closeReasonCategory',
+  ]) {
+    final value = (raw[key] ?? '').toString();
+    if (value.isNotEmpty) return value;
+  }
+  return '';
+}
+
+String qfCampCloseReason(Map<dynamic, dynamic> camp) {
+  return (camp['closeReasonCategory'] ?? '').toString();
+}
+
+bool qfCampPendingReview(Map<dynamic, dynamic> camp) {
+  if (camp['pendingReview'] == true) return true;
+  if (camp['hasPendingReview'] == true) return true;
+  if (camp['pendingEdit'] is Map) return true;
+  if (camp['pendingChanges'] is Map) return true;
+  return (camp['editStatus'] ?? '').toString() == 'pending';
+}
+
+class QfCampOutcome {
+  final String state;
+  final String text;
+
+  const QfCampOutcome(this.state, this.text);
+}
+
+QfCampOutcome qfCampCreateOutcome(Map<dynamic, dynamic> result) {
+  final status = (result['status'] ?? 'active').toString();
+  final message = (result['message'] ?? '').toString();
+  if (status == 'pending') {
+    return QfCampOutcome(
+      'pending',
+      message.isNotEmpty ? message : QfCopy.campCreatePending,
+    );
+  }
+  if (status == 'rejected') {
+    final category = qfCampCategory(result);
+    final text = message.isNotEmpty
+        ? message
+        : category.isNotEmpty
+        ? '${QfCopy.campCreateRejected}：$category'
+        : QfCopy.campCreateRejected;
+    return QfCampOutcome('rejected', text);
+  }
+  return QfCampOutcome(
+    'active',
+    message.isNotEmpty ? message : QfCopy.campCreateActive,
+  );
+}
+
+QfCampOutcome qfCampCreateErrorOutcome(QfApiException error) {
+  final data = error.data;
+  if ((data['status'] ?? '').toString() == 'rejected') {
+    return qfCampCreateOutcome({...data, 'message': error.message});
+  }
+  return QfCampOutcome('rejected', error.message);
+}
+
 String _qfFormatSec(int sec) {
   final time = DateTime.fromMillisecondsSinceEpoch(sec * 1000);
   String two(int v) => v.toString().padLeft(2, '0');
@@ -1328,6 +1441,276 @@ class _QfForumUserPageState extends State<QfForumUserPage> {
   }
 }
 
+class QfCampCreatorRow extends StatelessWidget {
+  final QfSessionController session;
+  final Map<dynamic, dynamic> camp;
+
+  const QfCampCreatorRow({
+    super.key,
+    required this.session,
+    required this.camp,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (qfCampCreator(camp) == null) return const SizedBox.shrink();
+    final name = qfCampCreatorName(camp);
+    return Row(
+      children: [
+        QfAvatarImage(
+          session: session,
+          userId: qfCampCreatorId(camp),
+          name: name,
+          hasAvatar: qfCampCreatorHasAvatar(camp),
+          radius: 14,
+        ),
+        const SizedBox(width: 8),
+        Flexible(child: Text(name)),
+        const SizedBox(width: 8),
+        Text(QfCopy.campCreatorLabel, style: AppTextStyle.caption1.of(context)),
+      ],
+    );
+  }
+}
+
+class QfCampStatusBadge extends StatelessWidget {
+  final Map<dynamic, dynamic> camp;
+
+  const QfCampStatusBadge({super.key, required this.camp});
+
+  @override
+  Widget build(BuildContext context) {
+    final label = qfCampStatusLabel(qfCampStatus(camp));
+    if (label.isEmpty) return const SizedBox.shrink();
+    return Text(label, style: AppTextStyle.caption1.of(context));
+  }
+}
+
+class QfCampFormPage extends StatefulWidget {
+  final QfSessionController session;
+  final Map<dynamic, dynamic>? camp;
+
+  const QfCampFormPage({super.key, required this.session, this.camp});
+
+  bool get isEdit => camp != null;
+
+  @override
+  State<QfCampFormPage> createState() => _QfCampFormPageState();
+}
+
+class _QfCampFormPageState extends State<QfCampFormPage> {
+  final _name = TextEditingController();
+  final _description = TextEditingController();
+  bool _busy = false;
+  QfCampOutcome? _outcome;
+
+  @override
+  void initState() {
+    super.initState();
+    final camp = widget.camp;
+    if (camp != null) {
+      _name.text = (camp['name'] ?? '').toString();
+      _description.text = (camp['description'] ?? '').toString();
+    }
+  }
+
+  @override
+  void dispose() {
+    _name.dispose();
+    _description.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    final name = _name.text.trim();
+    final description = _description.text.trim();
+    if (name.isEmpty || description.isEmpty) {
+      qfToast(context, QfCopy.campFormRequired);
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _outcome = null;
+    });
+    try {
+      if (widget.isEdit) {
+        await widget.session.forumEditCamp(
+          (widget.camp!['id'] as num).toInt(),
+          name: name,
+          description: description,
+        );
+        if (!mounted) return;
+        qfToast(context, QfCopy.campEditSubmitted);
+        Navigator.of(context).pop(true);
+        return;
+      }
+      final result = await widget.session.forumCreateCamp(
+        name: name,
+        description: description,
+      );
+      if (mounted) setState(() => _outcome = qfCampCreateOutcome(result));
+    } on QfApiException catch (e) {
+      if (!mounted) return;
+      if (widget.isEdit) {
+        qfToast(context, e.message);
+      } else {
+        setState(() => _outcome = qfCampCreateErrorOutcome(e));
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final outcome = _outcome;
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(widget.isEdit ? QfCopy.campEdit : QfCopy.campCreate),
+      ),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          TextField(
+            controller: _name,
+            decoration: const InputDecoration(labelText: QfCopy.campNameLabel),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _description,
+            maxLines: 5,
+            decoration: const InputDecoration(
+              labelText: QfCopy.campDescriptionLabel,
+              alignLabelWithHint: true,
+            ),
+          ),
+          if (!widget.isEdit) ...[
+            const SizedBox(height: 12),
+            Text(
+              QfCopy.campCreateRules,
+              style: AppTextStyle.caption1.of(context),
+            ),
+          ],
+          if (outcome != null) ...[
+            const SizedBox(height: 16),
+            Text(
+              outcome.text,
+              key: const ValueKey('qf-camp-outcome'),
+              style: outcome.state == 'rejected'
+                  ? TextStyle(color: Theme.of(context).colorScheme.error)
+                  : null,
+            ),
+          ],
+          const SizedBox(height: 16),
+          FilledButton(
+            onPressed: _busy ? null : _submit,
+            child: Text(
+              widget.isEdit ? QfCopy.campEditSubmit : QfCopy.campCreateSubmit,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class QfMyCampsPage extends StatefulWidget {
+  final QfSessionController session;
+
+  const QfMyCampsPage({super.key, required this.session});
+
+  @override
+  State<QfMyCampsPage> createState() => _QfMyCampsPageState();
+}
+
+class _QfMyCampsPageState extends State<QfMyCampsPage> {
+  List<dynamic> _camps = const [];
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final data = await widget.session.forumMyCamps();
+      final camps = data['camps'];
+      if (mounted) {
+        setState(() {
+          _camps = camps is List ? camps : const [];
+          _loading = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _create() async {
+    final changed = await Navigator.of(context).push<bool>(
+      MaterialPageRoute<bool>(
+        builder: (_) => QfCampFormPage(session: widget.session),
+      ),
+    );
+    if (changed == true && mounted) await _load();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text(QfCopy.campMyCamps),
+        actions: [
+          TextButton(onPressed: _create, child: const Text(QfCopy.campCreate)),
+        ],
+      ),
+      body: _loading
+          ? const Center(child: CommonCircleLoading.page())
+          : _camps.isEmpty
+          ? const Center(child: Text(QfCopy.campEmptyMine))
+          : ListView.separated(
+              itemCount: _camps.length,
+              separatorBuilder: (_, _) => const Divider(height: 1),
+              itemBuilder: (context, index) {
+                final raw = _camps[index];
+                if (raw is! Map) return const SizedBox.shrink();
+                final status = qfCampStatus(raw);
+                final reason = qfCampCloseReason(raw);
+                final memberCount = (raw['memberCount'] as num?)?.toInt();
+                return ListTile(
+                  title: Text((raw['name'] ?? '').toString()),
+                  subtitle: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text((raw['description'] ?? '').toString()),
+                      if (memberCount != null)
+                        Text('$memberCount${QfCopy.campMemberCountSuffix}'),
+                      if (status == 'closed' && reason.isNotEmpty)
+                        Text('${QfCopy.campCloseReasonPrefix}$reason'),
+                    ],
+                  ),
+                  trailing: QfCampStatusBadge(camp: raw),
+                  onTap: status == 'closed'
+                      ? null
+                      : () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute<void>(
+                              builder: (_) => QfForumCampPage(
+                                session: widget.session,
+                                campId: (raw['id'] as num).toInt(),
+                              ),
+                            ),
+                          );
+                        },
+                );
+              },
+            ),
+    );
+  }
+}
+
 class QfForumCampListPage extends StatefulWidget {
   final QfSessionController session;
 
@@ -1382,10 +1765,44 @@ class _QfForumCampListPageState extends State<QfForumCampListPage> {
     }
   }
 
+  Future<void> _createCamp() async {
+    if (!widget.session.isLoggedIn) {
+      await qfForumGuideLogin(context, widget.session);
+      return;
+    }
+    await Navigator.of(context).push<bool>(
+      MaterialPageRoute<bool>(
+        builder: (_) => QfCampFormPage(session: widget.session),
+      ),
+    );
+    if (mounted) await _load();
+  }
+
+  void _openMyCamps() {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => QfMyCampsPage(session: widget.session),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('营地')),
+      appBar: AppBar(
+        title: const Text('营地'),
+        actions: [
+          TextButton(
+            onPressed: _createCamp,
+            child: const Text(QfCopy.campCreate),
+          ),
+          if (widget.session.isLoggedIn)
+            TextButton(
+              onPressed: _openMyCamps,
+              child: const Text(QfCopy.campMyCamps),
+            ),
+        ],
+      ),
       body: _loading
           ? const Center(child: CommonCircleLoading.page())
           : _camps.isEmpty
@@ -1488,6 +1905,20 @@ class _QfForumCampPageState extends State<QfForumCampPage> {
     return camp is Map ? camp : _data;
   }
 
+  Future<void> _editCamp() async {
+    final camp = _camp;
+    if (camp == null) return;
+    final changed = await Navigator.of(context).push<bool>(
+      MaterialPageRoute<bool>(
+        builder: (_) => QfCampFormPage(
+          session: widget.session,
+          camp: Map<dynamic, dynamic>.from(camp),
+        ),
+      ),
+    );
+    if (changed == true && mounted) await _load();
+  }
+
   Widget _section(String title, dynamic raw) {
     final list = raw is List ? raw : const <dynamic>[];
     return Column(
@@ -1533,6 +1964,21 @@ class _QfForumCampPageState extends State<QfForumCampPage> {
                 ),
                 const SizedBox(height: 8),
                 Text((camp['description'] ?? '').toString()),
+                if (qfCampCreator(camp) != null) ...[
+                  const SizedBox(height: 8),
+                  QfCampCreatorRow(session: widget.session, camp: camp),
+                ],
+                if (qfCampIsMine(camp, widget.session.userId)) ...[
+                  const SizedBox(height: 12),
+                  OutlinedButton(
+                    onPressed: _editCamp,
+                    child: const Text(QfCopy.campEdit),
+                  ),
+                  if (qfCampPendingReview(camp)) ...[
+                    const SizedBox(height: 8),
+                    const Text(QfCopy.campEditPendingNote),
+                  ],
+                ],
                 const SizedBox(height: 12),
                 if (camp['joined'] == true)
                   OutlinedButton(

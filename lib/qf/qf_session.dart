@@ -1362,6 +1362,33 @@ class QfSessionController extends ChangeNotifier {
     );
   }
 
+  Future<Map<String, dynamic>> forumCreateCamp({
+    required String name,
+    required String description,
+  }) {
+    return authed(
+      'POST',
+      '/forum/camps',
+      body: {'name': name, 'description': description},
+    );
+  }
+
+  Future<Map<String, dynamic>> forumMyCamps() {
+    return authed('GET', '/forum/me/camps');
+  }
+
+  Future<Map<String, dynamic>> forumEditCamp(
+    int campId, {
+    String? name,
+    String? description,
+  }) {
+    return authed(
+      'POST',
+      '/forum/camps/$campId/edit',
+      body: {'name': ?name, 'description': ?description},
+    );
+  }
+
   Future<Map<String, dynamic>> forumCreateReply(int postId, String content) {
     return authed(
       'POST',

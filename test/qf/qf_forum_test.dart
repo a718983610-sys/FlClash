@@ -1,3 +1,5 @@
+import 'package:fl_clash/qf/qf_api.dart';
+import 'package:fl_clash/qf/qf_config.dart';
 import 'package:fl_clash/qf/qf_forum.dart';
 import 'package:fl_clash/qf/qf_session.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -72,10 +74,69 @@ class _FakeForumSession extends QfSessionController {
           'description': '营地说明',
           'joined': false,
           'recommended': true,
+          'creator': {
+            'userId': 7,
+            'displayName': '营主甲',
+            'avatarUrl': '',
+            'hasAvatar': false,
+          },
           'hotPosts': [_post(id: 9)],
         },
       ],
     };
+  }
+
+  Map<String, dynamic> campDetailData = {
+    'camp': {
+      'id': 5,
+      'name': '测试营地',
+      'description': '营地说明',
+      'joined': false,
+      'creator': {
+        'userId': 7,
+        'displayName': '营主甲',
+        'avatarUrl': '',
+        'hasAvatar': false,
+      },
+    },
+    'hotPosts': <dynamic>[],
+    'latestPosts': <dynamic>[],
+  };
+  Map<String, dynamic> createResult = {'status': 'active'};
+  QfApiException? createError;
+  Map<String, dynamic>? lastCreate;
+  Map<String, dynamic> myCampsData = {'camps': <dynamic>[]};
+  Map<String, dynamic>? lastEdit;
+
+  @override
+  Future<Map<String, dynamic>> forumCampDetail(int campId) async {
+    return campDetailData;
+  }
+
+  @override
+  Future<Map<String, dynamic>> forumCreateCamp({
+    required String name,
+    required String description,
+  }) async {
+    lastCreate = {'name': name, 'description': description};
+    final error = createError;
+    if (error != null) throw error;
+    return createResult;
+  }
+
+  @override
+  Future<Map<String, dynamic>> forumMyCamps() async {
+    return myCampsData;
+  }
+
+  @override
+  Future<Map<String, dynamic>> forumEditCamp(
+    int campId, {
+    String? name,
+    String? description,
+  }) async {
+    lastEdit = {'id': campId, 'name': name, 'description': description};
+    return {'ok': true, 'pendingReview': true};
   }
 
   @override
@@ -228,4 +289,271 @@ void main() {
       );
     },
   );
+
+  test('camp creator helpers parse user camps and ignore seed camps', () {
+    final userCamp = {
+      'id': 1,
+      'creator': {
+        'userId': 7,
+        'displayName': '营主甲',
+        'avatarUrl': 'https://example.invalid/a.png',
+      },
+    };
+    expect(qfCampCreatorId(userCamp), 7);
+    expect(qfCampCreatorName(userCamp), '营主甲');
+    expect(qfCampCreatorHasAvatar(userCamp), isTrue);
+    expect(qfCampIsMine(userCamp, 7), isTrue);
+    expect(qfCampIsMine(userCamp, 8), isFalse);
+    expect(qfCampIsMine(userCamp, null), isFalse);
+    final seed = {'id': 2, 'name': '种子营地'};
+    expect(qfCampCreator(seed), isNull);
+    expect(qfCampCreatorId(seed), 0);
+    expect(qfCampCreatorName(seed), '');
+    expect(qfCampIsMine(seed, 7), isFalse);
+  });
+
+  test('camp status labels, close reason and pending review parsing', () {
+    expect(qfCampStatusLabel('pending'), QfCopy.campStatusPending);
+    expect(qfCampStatusLabel('active'), QfCopy.campStatusActive);
+    expect(qfCampStatusLabel('rejected'), QfCopy.campStatusRejected);
+    expect(qfCampStatusLabel('closed'), QfCopy.campStatusClosed);
+    expect(qfCampStatusLabel('unknown'), '');
+    expect(qfCampStatus({'name': 'x'}), 'active');
+    expect(qfCampCloseReason({'closeReasonCategory': '违规内容聚集'}), '违规内容聚集');
+    expect(qfCampPendingReview({'pendingReview': true}), isTrue);
+    expect(qfCampPendingReview({'hasPendingReview': true}), isTrue);
+    expect(
+      qfCampPendingReview({
+        'pendingEdit': {'name': '新名'},
+      }),
+      isTrue,
+    );
+    expect(qfCampPendingReview({'editStatus': 'pending'}), isTrue);
+    expect(qfCampPendingReview({'id': 1}), isFalse);
+  });
+
+  test('camp create outcome maps active pending and rejected states', () {
+    final active = qfCampCreateOutcome({'status': 'active'});
+    expect(active.state, 'active');
+    expect(active.text, QfCopy.campCreateActive);
+    final pending = qfCampCreateOutcome({'status': 'pending'});
+    expect(pending.state, 'pending');
+    expect(pending.text, QfCopy.campCreatePending);
+    final rejected = qfCampCreateOutcome({
+      'status': 'rejected',
+      'category': '敏感内容',
+    });
+    expect(rejected.state, 'rejected');
+    expect(rejected.text, contains('敏感内容'));
+    final serverMessage = qfCampCreateOutcome({
+      'status': 'pending',
+      'message': '服务端提示',
+    });
+    expect(serverMessage.text, '服务端提示');
+    final errorOutcome = qfCampCreateErrorOutcome(
+      const QfApiException(409, 'NAME_TAKEN', QfCopy.campNameTaken),
+    );
+    expect(errorOutcome.state, 'rejected');
+    expect(errorOutcome.text, QfCopy.campNameTaken);
+  });
+
+  testWidgets('camp list shows create and my camps entries when logged in', (
+    tester,
+  ) async {
+    final session = _FakeForumSession(loggedIn: true, currentUserId: 7);
+    await tester.pumpWidget(_wrap(QfForumCampListPage(session: session)));
+    await tester.pumpAndSettle();
+    expect(find.text(QfCopy.campCreate), findsOneWidget);
+    expect(find.text(QfCopy.campMyCamps), findsOneWidget);
+    expect(find.text('测试营地'), findsOneWidget);
+  });
+
+  testWidgets('camp list guest create entry guides to login', (tester) async {
+    final session = _FakeForumSession(loggedIn: false);
+    await tester.pumpWidget(_wrap(QfForumCampListPage(session: session)));
+    await tester.pumpAndSettle();
+    expect(find.text(QfCopy.campCreate), findsOneWidget);
+    expect(find.text(QfCopy.campMyCamps), findsNothing);
+    await tester.tap(find.text(QfCopy.campCreate));
+    await tester.pumpAndSettle();
+    expect(find.text('登录后即可参与论坛'), findsOneWidget);
+    await tester.tap(find.text('继续浏览'));
+    await tester.pumpAndSettle();
+    expect(find.text('登录后即可参与论坛'), findsNothing);
+  });
+
+  Future<void> fillAndSubmitCamp(WidgetTester tester) async {
+    await tester.enterText(find.byType(TextField).at(0), '新营地');
+    await tester.enterText(find.byType(TextField).at(1), '营地简介');
+    await tester.tap(find.text(QfCopy.campCreateSubmit));
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets('create camp form shows rules and active outcome', (
+    tester,
+  ) async {
+    final session = _FakeForumSession(loggedIn: true, currentUserId: 7);
+    session.createResult = {'status': 'active'};
+    await tester.pumpWidget(_wrap(QfCampFormPage(session: session)));
+    await tester.pumpAndSettle();
+    expect(find.text(QfCopy.campCreateRules), findsOneWidget);
+    await fillAndSubmitCamp(tester);
+    expect(session.lastCreate?['name'], '新营地');
+    expect(session.lastCreate?['description'], '营地简介');
+    expect(find.text(QfCopy.campCreateActive), findsOneWidget);
+  });
+
+  testWidgets('create camp form shows pending outcome', (tester) async {
+    final session = _FakeForumSession(loggedIn: true, currentUserId: 7);
+    session.createResult = {'status': 'pending'};
+    await tester.pumpWidget(_wrap(QfCampFormPage(session: session)));
+    await tester.pumpAndSettle();
+    await fillAndSubmitCamp(tester);
+    expect(find.text(QfCopy.campCreatePending), findsOneWidget);
+  });
+
+  testWidgets('create camp form shows rejected category outcome', (
+    tester,
+  ) async {
+    final session = _FakeForumSession(loggedIn: true, currentUserId: 7);
+    session.createResult = {'status': 'rejected', 'category': '敏感内容'};
+    await tester.pumpWidget(_wrap(QfCampFormPage(session: session)));
+    await tester.pumpAndSettle();
+    await fillAndSubmitCamp(tester);
+    expect(find.text('未通过审核：敏感内容'), findsOneWidget);
+  });
+
+  testWidgets('create camp surfaces server name-taken message verbatim', (
+    tester,
+  ) async {
+    final session = _FakeForumSession(loggedIn: true, currentUserId: 7);
+    session.createError = const QfApiException(
+      409,
+      'NAME_TAKEN',
+      QfCopy.campNameTaken,
+    );
+    await tester.pumpWidget(_wrap(QfCampFormPage(session: session)));
+    await tester.pumpAndSettle();
+    await fillAndSubmitCamp(tester);
+    expect(find.text('该营地名称已被使用。'), findsOneWidget);
+  });
+
+  testWidgets('create camp surfaces server limit message verbatim', (
+    tester,
+  ) async {
+    final session = _FakeForumSession(loggedIn: true, currentUserId: 7);
+    session.createError = const QfApiException(
+      400,
+      'CAMP_LIMIT',
+      '您创建的营地数量已达上限。',
+    );
+    await tester.pumpWidget(_wrap(QfCampFormPage(session: session)));
+    await tester.pumpAndSettle();
+    await fillAndSubmitCamp(tester);
+    expect(find.text('您创建的营地数量已达上限。'), findsOneWidget);
+  });
+
+  testWidgets('my camps renders every status badge and close reason', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(800, 2200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final session = _FakeForumSession(loggedIn: true, currentUserId: 7);
+    session.myCampsData = {
+      'camps': [
+        {
+          'id': 1,
+          'name': '待审营地',
+          'description': '简介一',
+          'status': 'pending',
+          'memberCount': 0,
+        },
+        {
+          'id': 2,
+          'name': '上线营地',
+          'description': '简介二',
+          'status': 'active',
+          'memberCount': 12,
+        },
+        {'id': 3, 'name': '被拒营地', 'description': '简介三', 'status': 'rejected'},
+        {
+          'id': 4,
+          'name': '关闭营地',
+          'description': '简介四',
+          'status': 'closed',
+          'closeReasonCategory': '违规内容聚集',
+        },
+      ],
+    };
+    await tester.pumpWidget(_wrap(QfMyCampsPage(session: session)));
+    await tester.pumpAndSettle();
+    expect(find.text('待审营地'), findsOneWidget);
+    expect(find.text(QfCopy.campStatusPending), findsOneWidget);
+    expect(find.text(QfCopy.campStatusActive), findsOneWidget);
+    expect(find.text(QfCopy.campStatusRejected), findsOneWidget);
+    expect(find.text(QfCopy.campStatusClosed), findsOneWidget);
+    expect(find.text('12 位成员'), findsOneWidget);
+    expect(find.text('关闭原因：违规内容聚集'), findsOneWidget);
+  });
+
+  testWidgets('camp detail shows creator row for user camp', (tester) async {
+    final session = _FakeForumSession(loggedIn: true, currentUserId: 8);
+    await tester.pumpWidget(
+      _wrap(QfForumCampPage(session: session, campId: 5)),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('营主甲'), findsOneWidget);
+    expect(find.text(QfCopy.campCreatorLabel), findsOneWidget);
+    expect(find.text(QfCopy.campEdit), findsNothing);
+  });
+
+  testWidgets('camp detail hides creator row for seed camp', (tester) async {
+    final session = _FakeForumSession(loggedIn: true, currentUserId: 7);
+    session.campDetailData = {
+      'camp': {'id': 9, 'name': '种子营地', 'description': '官方营地', 'joined': false},
+      'hotPosts': <dynamic>[],
+      'latestPosts': <dynamic>[],
+    };
+    await tester.pumpWidget(
+      _wrap(QfForumCampPage(session: session, campId: 9)),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('种子营地'), findsOneWidget);
+    expect(find.text(QfCopy.campCreatorLabel), findsNothing);
+    expect(find.text(QfCopy.campEdit), findsNothing);
+  });
+
+  testWidgets('camp owner edits camp and gets pending-review notice', (
+    tester,
+  ) async {
+    final session = _FakeForumSession(loggedIn: true, currentUserId: 7);
+    await tester.pumpWidget(
+      _wrap(QfForumCampPage(session: session, campId: 5)),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text(QfCopy.campEdit), findsOneWidget);
+    await tester.tap(find.text(QfCopy.campEdit));
+    await tester.pumpAndSettle();
+    expect(find.widgetWithText(TextField, '测试营地'), findsOneWidget);
+    await tester.tap(find.text(QfCopy.campEditSubmit));
+    await tester.pumpAndSettle();
+    expect(session.lastEdit?['id'], 5);
+    expect(session.lastEdit?['name'], '测试营地');
+    expect(find.text(QfCopy.campEditSubmitted), findsOneWidget);
+    expect(find.byType(QfForumCampPage), findsOneWidget);
+  });
+
+  testWidgets('compose camp selector tolerates creator field in camp list', (
+    tester,
+  ) async {
+    final session = _FakeForumSession(loggedIn: true, currentUserId: 7);
+    await tester.pumpWidget(_wrap(QfForumPage(session: session)));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('发帖'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(DropdownButtonFormField<int?>));
+    await tester.pumpAndSettle();
+    expect(find.text('测试营地'), findsWidgets);
+  });
 }
