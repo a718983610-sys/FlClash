@@ -10,6 +10,7 @@ import 'package:shared_preferences_platform_interface/shared_preferences_platfor
 
 import 'application.dart';
 import 'bootstrap.dart';
+import 'qf/qf_data_migration.dart';
 import 'common/app_data.dart';
 import 'common/common.dart';
 import 'common/preferences_store.dart';
@@ -19,6 +20,7 @@ void main(List<String> args) {
   runZonedGuarded(
     () async {
       WidgetsFlutterBinding.ensureInitialized();
+      await qfMigrateLegacyDataDirIfNeeded();
       if (Platform.isWindows || Platform.isLinux) {
         SharedPreferencesStorePlatform.instance = AtomicFilePreferencesStore(
           appPath.sharedPreferencesPath,

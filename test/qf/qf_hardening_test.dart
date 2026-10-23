@@ -79,6 +79,79 @@ void main() {
     });
   });
 
+  group('W1-09 legacy data directory migration', () {
+    test('decision table', () {
+      expect(
+        qfShouldMigrate(markerExists: false, newHasData: false, oldHasData: true),
+        isTrue,
+      );
+      expect(
+        qfShouldMigrate(markerExists: true, newHasData: false, oldHasData: true),
+        isFalse,
+      );
+      expect(
+        qfShouldMigrate(markerExists: false, newHasData: true, oldHasData: true),
+        isFalse,
+      );
+      expect(
+        qfShouldMigrate(markerExists: false, newHasData: false, oldHasData: false),
+        isFalse,
+      );
+      expect(qfNamesContainAppData(['config.yaml', 'x.txt']), isTrue);
+      expect(qfNamesContainAppData(['x.txt']), isFalse);
+    });
+
+    test('copies the legacy directory once and leaves a marker', () async {
+      final root = await Directory.systemTemp.createTemp('qf-mig-');
+      addTearDown(() => root.delete(recursive: true));
+      final current = Directory(p.join(root.path, 'com.follow', 'QFClash'));
+      final legacy = Directory(p.join(root.path, 'com.follow', 'clash'));
+      await current.create(recursive: true);
+      await Directory(p.join(legacy.path, 'profiles')).create(recursive: true);
+      await File(p.join(legacy.path, 'config.yaml')).writeAsString('cfg');
+      await File(p.join(legacy.path, 'database.sqlite')).writeAsString('db');
+      await File(
+        p.join(legacy.path, 'profiles', 'a.yaml'),
+      ).writeAsString('profile-a');
+      await File(
+        p.join(legacy.path, 'shared_preferences.json'),
+      ).writeAsString('{}');
+
+      expect(await qfMigrateLegacyDataDir(current), isTrue);
+      expect(
+        await File(p.join(current.path, 'config.yaml')).readAsString(),
+        'cfg',
+      );
+      expect(
+        await File(
+          p.join(current.path, 'profiles', 'a.yaml'),
+        ).readAsString(),
+        'profile-a',
+      );
+      expect(
+        await File(p.join(current.path, qfLegacyMarkerName)).exists(),
+        isTrue,
+      );
+      expect(await qfMigrateLegacyDataDir(current), isFalse);
+    });
+
+    test('does not touch a current directory that already has data', () async {
+      final root = await Directory.systemTemp.createTemp('qf-mig-');
+      addTearDown(() => root.delete(recursive: true));
+      final current = Directory(p.join(root.path, 'com.follow', 'QFClash'));
+      final legacy = Directory(p.join(root.path, 'com.follow', 'clash'));
+      await current.create(recursive: true);
+      await legacy.create(recursive: true);
+      await File(p.join(current.path, 'config.yaml')).writeAsString('new');
+      await File(p.join(legacy.path, 'config.yaml')).writeAsString('old');
+      expect(await qfMigrateLegacyDataDir(current), isFalse);
+      expect(
+        await File(p.join(current.path, 'config.yaml')).readAsString(),
+        'new',
+      );
+    });
+  });
+
   group('W5-02 manifest fail-open extensions', () {
     QfReleaseManifest manifest({
       bool maintenance = false,
