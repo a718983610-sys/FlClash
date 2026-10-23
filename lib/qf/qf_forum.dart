@@ -6,6 +6,49 @@ import 'qf_api.dart';
 import 'qf_pages.dart';
 import 'qf_session.dart';
 
+/// 帖子/回复的作者名：服务端 postView/replyView 统一回 author:{userId, name}。
+String qfForumAuthorName(Map<dynamic, dynamic> raw) {
+  final author = raw['author'];
+  if (author is Map) return (author['name'] ?? '').toString();
+  return '';
+}
+
+String _qfFormatSec(int sec) {
+  final time = DateTime.fromMillisecondsSinceEpoch(sec * 1000);
+  String two(int v) => v.toString().padLeft(2, '0');
+  return '${time.year}-${two(time.month)}-${two(time.day)} '
+      '${two(time.hour)}:${two(time.minute)}';
+}
+
+/// 访客只读下发帖/回复/举报的登录引导。
+Future<void> qfForumGuideLogin(
+  BuildContext context,
+  QfSessionController session,
+) async {
+  final go = await showDialog<bool>(
+    context: context,
+    builder: (dialogContext) {
+      return AlertDialog(
+        title: const Text('登录后即可参与论坛'),
+        content: const Text('游客模式下仅可浏览帖子，登录后即可发帖、回复与举报。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('继续浏览'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('去登录'),
+          ),
+        ],
+      );
+    },
+  );
+  if (go == true && session.isGuest) {
+    await session.exitGuestToEntry();
+  }
+}
+
 class QfForumPage extends StatefulWidget {
   final QfSessionController session;
 
@@ -29,18 +72,22 @@ class _QfForumPageState extends State<QfForumPage> {
     _loadBoards();
   }
 
+  bool get _readOnly => !widget.session.isLoggedIn;
+
   Future<void> _loadBoards() async {
     try {
       final data = await widget.session.forumBoards();
       final boards = data['boards'];
-      final profile = await widget.session.forumProfile();
       if (mounted) {
-        setState(() {
-          _boards = boards is List ? boards : const [];
-          _profile = profile;
-        });
+        setState(() => _boards = boards is List ? boards : const []);
       }
     } catch (_) {}
+    if (!_readOnly) {
+      try {
+        final profile = await widget.session.forumProfile();
+        if (mounted) setState(() => _profile = profile);
+      } catch (_) {}
+    }
     await _loadPosts(reset: true);
   }
 
@@ -120,46 +167,68 @@ class _QfForumPageState extends State<QfForumPage> {
   }
 
   Future<void> _compose() async {
+    if (_readOnly) {
+      await qfForumGuideLogin(context, widget.session);
+      return;
+    }
     if (_board == 'announcements') {
       qfToast(context, '公告板块仅管理员可以发帖');
       return;
     }
-    final posted = await Navigator.of(context).push<bool>(
-      MaterialPageRoute<bool>(
+    final message = await Navigator.of(context).push<String>(
+      MaterialPageRoute<String>(
         builder: (_) =>
             _QfComposePostPage(session: widget.session, board: _board),
       ),
     );
-    if (posted == true) {
+    if (message != null && mounted) {
+      qfToast(context, message);
       await _loadPosts(reset: true);
     }
   }
 
+  Widget? _muteBanner() {
+    final profile = _profile;
+    if (profile == null || _readOnly) return null;
+    final permanent = profile['mutePermanent'] == true;
+    final until = (profile['muteUntil'] as num?)?.toInt();
+    final nowSec = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+    if (!permanent && (until == null || until <= nowSec)) return null;
+    final text = permanent
+        ? '您已被永久禁言，无法在论坛发帖与回复。'
+              '如有疑问，请通过意见反馈申诉，或发邮件到 a718983610@gmail.com'
+        : '您的论坛发言已被限制，解除时间：${_qfFormatSec(until!)}。'
+              '如有疑问，请通过意见反馈申诉，或发邮件到 a718983610@gmail.com';
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      color: Theme.of(context).colorScheme.errorContainer,
+      child: Text(text),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final muted = _profile?['muted'] == true;
+    final muteBanner = _muteBanner();
     return Scaffold(
       appBar: AppBar(
         title: const Text('论坛'),
         actions: [
-          TextButton(
-            onPressed: _editNickname,
-            child: Text((_profile?['nickname'] ?? '设置昵称').toString()),
-          ),
+          if (!_readOnly)
+            TextButton(
+              onPressed: _editNickname,
+              child: Text((_profile?['nickname'] ?? '设置昵称').toString()),
+            ),
         ],
       ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: _compose,
         icon: const GlyphIcon(AppGlyphs.edit, fill: 1),
-        label: const Text('发帖'),
+        label: Text(_readOnly ? '登录后发帖' : '发帖'),
       ),
       body: Column(
         children: [
-          if (muted)
-            const Padding(
-              padding: EdgeInsets.all(12),
-              child: Text('您当前处于禁言状态，暂时无法发帖与回复。'),
-            ),
+          ?muteBanner,
           SingleChildScrollView(
             scrollDirection: Axis.horizontal,
             padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -205,7 +274,7 @@ class _QfForumPageState extends State<QfForumPage> {
                       return ListTile(
                         title: Text((raw['title'] ?? '').toString()),
                         subtitle: Text(
-                          '${raw['authorName'] ?? ''} · 回复 ${raw['replyCount'] ?? 0}',
+                          '${qfForumAuthorName(raw)} · 回复 ${raw['replyCount'] ?? 0}',
                         ),
                         onTap: () {
                           Navigator.of(context).push(
@@ -241,6 +310,7 @@ class _QfComposePostPageState extends State<_QfComposePostPage> {
   final _title = TextEditingController();
   final _content = TextEditingController();
   bool _busy = false;
+  String? _notice;
 
   @override
   void dispose() {
@@ -254,18 +324,26 @@ class _QfComposePostPageState extends State<_QfComposePostPage> {
       qfToast(context, '标题与内容不能为空');
       return;
     }
-    setState(() => _busy = true);
+    setState(() {
+      _busy = true;
+      _notice = null;
+    });
     try {
       final result = await widget.session.forumCreatePost(
         board: widget.board,
         title: _title.text,
         content: _content.text,
       );
-      if (mounted) {
-        final message = (result['message'] ?? '发布成功').toString();
-        Navigator.of(context).pop(true);
+      if (!mounted) return;
+      final status = (result['status'] ?? 'published').toString();
+      final message = (result['message'] ?? '发布成功').toString();
+      if (status == 'rejected') {
+        // 驳回不关页：保留原稿，页面内展示审核大类，用户改完可直接重发。
+        setState(() => _notice = message);
         qfToast(context, message);
+        return;
       }
+      Navigator.of(context).pop(message);
     } on QfApiException catch (e) {
       if (mounted) qfToast(context, e.message);
     } finally {
@@ -280,6 +358,13 @@ class _QfComposePostPageState extends State<_QfComposePostPage> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
+          if (_notice != null) ...[
+            Text(
+              _notice!,
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
+            ),
+            const SizedBox(height: 12),
+          ],
           TextField(
             controller: _title,
             decoration: const InputDecoration(labelText: '标题'),
@@ -362,16 +447,29 @@ class _QfForumPostPageState extends State<QfForumPostPage> {
     }
   }
 
+  bool get _readOnly => !widget.session.isLoggedIn;
+
   Future<void> _sendReply() async {
+    if (_readOnly) {
+      await qfForumGuideLogin(context, widget.session);
+      return;
+    }
     if (_reply.text.trim().isEmpty) return;
     try {
       final result = await widget.session.forumCreateReply(
         widget.postId,
         _reply.text,
       );
+      final status = (result['status'] ?? 'published').toString();
+      final message = (result['message'] ?? '回复成功').toString();
+      if (status == 'rejected') {
+        // 驳回保留输入并展示审核大类，改完可直接重发。
+        if (mounted) qfToast(context, message);
+        return;
+      }
       _reply.clear();
       if (mounted) {
-        qfToast(context, (result['message'] ?? '回复成功').toString());
+        qfToast(context, message);
       }
       await _load();
     } on QfApiException catch (e) {
@@ -380,6 +478,10 @@ class _QfForumPostPageState extends State<QfForumPostPage> {
   }
 
   Future<void> _report() async {
+    if (_readOnly) {
+      await qfForumGuideLogin(context, widget.session);
+      return;
+    }
     try {
       await widget.session.forumReport(widget.postId);
       if (mounted) {
@@ -420,7 +522,7 @@ class _QfForumPostPageState extends State<QfForumPostPage> {
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        '${post['authorName'] ?? ''}'
+                        '${qfForumAuthorName(post)}'
                         '${qfForumStatusLabel(post).isEmpty ? '' : ' · ${qfForumStatusLabel(post)}'}',
                       ),
                       const SizedBox(height: 12),
@@ -429,7 +531,7 @@ class _QfForumPostPageState extends State<QfForumPostPage> {
                       for (final raw in _replies)
                         if (raw is Map)
                           ListTile(
-                            title: Text((raw['authorName'] ?? '').toString()),
+                            title: Text(qfForumAuthorName(raw)),
                             subtitle: Text(
                               '${raw['content'] ?? ''}'
                               '${qfForumStatusLabel(raw).isEmpty ? '' : '\n${qfForumStatusLabel(raw)}'}',
@@ -441,23 +543,29 @@ class _QfForumPostPageState extends State<QfForumPostPage> {
                 SafeArea(
                   child: Padding(
                     padding: const EdgeInsets.all(8),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: TextField(
-                            controller: _reply,
-                            decoration: const InputDecoration(
-                              hintText: '写下您的回复',
-                            ),
+                    child: _readOnly
+                        ? OutlinedButton(
+                            onPressed: () =>
+                                qfForumGuideLogin(context, widget.session),
+                            child: const Text('登录后回复'),
+                          )
+                        : Row(
+                            children: [
+                              Expanded(
+                                child: TextField(
+                                  controller: _reply,
+                                  decoration: const InputDecoration(
+                                    hintText: '写下您的回复',
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              FilledButton(
+                                onPressed: _sendReply,
+                                child: const Text('回复'),
+                              ),
+                            ],
                           ),
-                        ),
-                        const SizedBox(width: 8),
-                        FilledButton(
-                          onPressed: _sendReply,
-                          child: const Text('回复'),
-                        ),
-                      ],
-                    ),
                   ),
                 ),
               ],

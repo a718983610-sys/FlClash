@@ -8,8 +8,12 @@ import 'package:pointycastle/key_derivators/api.dart';
 import 'package:pointycastle/block/aes.dart';
 import 'package:pointycastle/block/modes/gcm.dart';
 import 'package:pointycastle/key_derivators/argon2.dart';
+import 'package:pointycastle/macs/poly1305.dart';
+import 'package:pointycastle/stream/chacha20poly1305.dart' hide State;
+import 'package:pointycastle/stream/chacha7539.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'qf_api.dart';
 import 'qf_session.dart';
 import 'qf_social.dart';
 
@@ -84,6 +88,40 @@ class QfSignalStore extends SignalProtocolStore {
 
   String get identityPublicB64 =>
       base64Encode(_identityPair.getPublicKey().serialize());
+
+  /// 服务端公钥包要求 32 字节原始公钥（不带 libsignal 序列化首字节的类型标记）。
+  String get identityRawB64 => base64Encode(_rawPublicBytes(identityKey));
+
+  static Uint8List _rawPublicBytes(IdentityKey key) =>
+      rawPublicBytes(key.publicKey);
+
+  static Uint8List rawPublicBytes(ECPublicKey key) {
+    final serialized = key.serialize();
+    return serialized.length == 33
+        ? Uint8List.fromList(serialized.sublist(1))
+        : serialized;
+  }
+
+  static Uint8List typedPublicBytes(Uint8List raw) {
+    if (raw.length == 33) return raw;
+    return Uint8List.fromList([Curve.djbType, ...raw]);
+  }
+
+  int get nextPreKeyId {
+    var next = int.tryParse(_entries['meta:nextPreKeyId'] ?? '') ?? 0;
+    for (final key in _entries.keys) {
+      if (key.startsWith('pre:')) {
+        final id = int.tryParse(key.substring(4));
+        if (id != null && id + 1 > next) next = id + 1;
+      }
+    }
+    return next;
+  }
+
+  Future<void> syncPreKeyCounter() async {
+    _entries['meta:nextPreKeyId'] = '$nextPreKeyId';
+    await persist();
+  }
 
   IdentityKey get identityKey => _identityPair.getPublicKey();
 
@@ -248,8 +286,52 @@ class QfSignalStore extends SignalProtocolStore {
 }
 
 class QfSignalManager {
+  static const int _prekeyLowWatermark = 20;
+  static const int _prekeyBatchSize = 50;
+
   static SignalProtocolAddress _address(int userId) {
     return SignalProtocolAddress('$userId', 1);
+  }
+
+  static Future<List<Map<String, dynamic>>> _oneTimeList(
+    QfSignalStore store,
+    Iterable<int> ids,
+  ) async {
+    final list = <Map<String, dynamic>>[];
+    for (final id in ids) {
+      if (await store.containsPreKey(id)) {
+        final record = await store.loadPreKey(id);
+        list.add({
+          'keyId': id,
+          'pubkey': base64Encode(
+            QfSignalStore.rawPublicBytes(record.getKeyPair().publicKey),
+          ),
+        });
+      }
+    }
+    return list;
+  }
+
+  static Future<Map<String, dynamic>> _fullBundle(QfSignalStore store) async {
+    final signed = await store.loadSignedPreKey(0);
+    final ids = <int>[];
+    for (var id = 0; id < store.nextPreKeyId; id++) {
+      if (await store.containsPreKey(id)) ids.add(id);
+    }
+    return {
+      // 本机身份密钥为 X25519 单密钥：服务端要求 Ed25519 与 X25519 双字段，
+      // Ed25519 字段镜像同一公钥以满足契约，会话协商只使用 X25519 字段。
+      'identityKeyEd25519': store.identityRawB64,
+      'identityKeyX25519': store.identityRawB64,
+      'signedPrekey': {
+        'keyId': 0,
+        'pubkey': base64Encode(
+          QfSignalStore.rawPublicBytes(signed.getKeyPair().publicKey),
+        ),
+        'signature': base64Encode(signed.signature),
+      },
+      'oneTimePrekeys': await _oneTimeList(store, ids),
+    };
   }
 
   static Future<void> ensureInstalled(QfSessionController session) async {
@@ -261,75 +343,103 @@ class QfSignalManager {
       for (final preKey in preKeys) {
         await store.storePreKey(preKey.id, preKey);
       }
+      await store.syncPreKeyCounter();
+      store.bundlePublished = false;
+      await store.persist();
     }
-    if (store.bundlePublished) return;
-    final signed = await store.loadSignedPreKey(0);
-    final preKeyList = <Map<String, dynamic>>[];
-    for (var id = 0; id < 100; id++) {
-      if (await store.containsPreKey(id)) {
-        final record = await store.loadPreKey(id);
-        preKeyList.add({
-          'id': id,
-          'publicKey': base64Encode(record.getKeyPair().publicKey.serialize()),
-        });
+    if (!store.bundlePublished) {
+      try {
+        await session.socialPutPrekeyBundle(await _fullBundle(store));
+        store.bundlePublished = true;
+        await store.persist();
+      } catch (_) {}
+      return;
+    }
+    await _replenishIfLow(session, store);
+  }
+
+  /// 公钥包余量低时自动补仓：只增量上传新的一次性预钥，不动身份与签名预钥。
+  static Future<void> _replenishIfLow(
+    QfSessionController session,
+    QfSignalStore store,
+  ) async {
+    try {
+      final mine = await session.socialGetMyPrekeyBundle();
+      final remoteIdentity = (mine['identityKeyX25519'] ?? '').toString();
+      if (remoteIdentity.isNotEmpty && remoteIdentity != store.identityRawB64) {
+        await session.socialPutPrekeyBundle(await _fullBundle(store));
+        return;
       }
-    }
-    await session.socialUpdateProfile({
-      'signalBundle': {
-        'registrationId': store.registrationId,
-        'identityKey': store.identityPublicB64,
-        'signedPreKeyId': 0,
-        'signedPreKey': base64Encode(signed.getKeyPair().publicKey.serialize()),
-        'signedPreKeySignature': base64Encode(signed.signature),
-        'preKeys': preKeyList,
-      },
-    });
-    store.bundlePublished = true;
-    await store.persist();
+      final count = (mine['oneTimePrekeyCount'] as num?)?.toInt() ?? 0;
+      if (count >= _prekeyLowWatermark) return;
+      final start = store.nextPreKeyId;
+      final fresh = generatePreKeys(start, _prekeyBatchSize);
+      final ids = <int>[];
+      for (final preKey in fresh) {
+        await store.storePreKey(preKey.id, preKey);
+        ids.add(preKey.id);
+      }
+      await store.syncPreKeyCounter();
+      await session.socialPutPrekeyBundle({
+        'oneTimePrekeys': await _oneTimeList(store, ids),
+      });
+    } catch (_) {}
   }
 
   static Future<PreKeyBundle?> _fetchBundle(
     QfSessionController session,
     int userId,
   ) async {
-    final profile = await session.socialGetUserProfile(userId);
-    final bundle = profile['signalBundle'];
-    if (bundle is! Map) return null;
-    final data = Map<String, dynamic>.from(bundle);
+    Map<String, dynamic> data;
+    try {
+      data = await session.socialGetPrekeyBundle(userId);
+    } on QfApiException catch (e) {
+      if (e.code == 'PREKEY_BUNDLE_NOT_FOUND' || e.status == 404) return null;
+      rethrow;
+    }
+    final identityRaw = (data['identityKeyX25519'] ?? '').toString();
+    final signedRaw = data['signedPrekey'];
+    if (identityRaw.isEmpty || signedRaw is! Map) return null;
+    final signed = Map<String, dynamic>.from(signedRaw);
     Map<String, dynamic>? oneTime;
-    final single = data['preKey'];
+    final single = data['oneTimePrekey'];
     if (single is Map) {
       oneTime = Map<String, dynamic>.from(single);
     } else {
-      final list = data['preKeys'];
+      final list = data['oneTimePrekeys'];
       if (list is List && list.isNotEmpty && list.first is Map) {
         oneTime = Map<String, dynamic>.from(list.first as Map);
       }
     }
+    final oneTimeRaw = (oneTime?['pubkey'] ?? '').toString();
     return PreKeyBundle(
-      (data['registrationId'] as num?)?.toInt() ?? 0,
+      0,
       1,
-      (oneTime?['id'] as num?)?.toInt(),
-      oneTime == null
+      (oneTime?['keyId'] as num?)?.toInt(),
+      oneTime == null || oneTimeRaw.isEmpty
           ? null
           : Curve.decodePoint(
-              base64Decode((oneTime['publicKey'] ?? '').toString()),
+              QfSignalStore.typedPublicBytes(base64Decode(oneTimeRaw)),
               0,
             ),
-      (data['signedPreKeyId'] as num?)?.toInt() ?? 0,
+      (signed['keyId'] as num?)?.toInt() ?? 0,
       Curve.decodePoint(
-        base64Decode((data['signedPreKey'] ?? '').toString()),
+        QfSignalStore.typedPublicBytes(
+          base64Decode((signed['pubkey'] ?? '').toString()),
+        ),
         0,
       ),
-      base64Decode((data['signedPreKeySignature'] ?? '').toString()),
+      base64Decode((signed['signature'] ?? '').toString()),
       IdentityKey.fromBytes(
-        base64Decode((data['identityKey'] ?? '').toString()),
+        QfSignalStore.typedPublicBytes(base64Decode(identityRaw)),
         0,
       ),
     );
   }
 
-  static Future<({int type, String body})> encryptFor(
+  /// 加密一条消息并组装服务端中继格式：ciphertext 首字节为 Signal 消息类型、
+  /// 其余为密文本体（服务端只作不透明转发）；nonce 为独立随机串，满足中继校验。
+  static Future<({String ciphertext, String nonce})> encryptFor(
     QfSessionController session,
     int userId,
     String text,
@@ -346,18 +456,27 @@ class QfSignalManager {
     }
     final cipher = SessionCipher.fromStore(store, address);
     final message = await cipher.encrypt(Uint8List.fromList(utf8.encode(text)));
-    return (type: message.getType(), body: base64Encode(message.serialize()));
+    final packed = Uint8List.fromList([
+      message.getType(),
+      ...message.serialize(),
+    ]);
+    final nonce = Uint8List.fromList(
+      List<int>.generate(16, (_) => Random.secure().nextInt(256)),
+    );
+    return (ciphertext: base64Encode(packed), nonce: base64Encode(nonce));
   }
 
   static Future<String> decryptFrom(
     QfSessionController session,
     int fromUserId,
-    int type,
-    String bodyB64,
+    String ciphertextB64,
   ) async {
     final store = await QfSignalStore.load();
     final cipher = SessionCipher.fromStore(store, _address(fromUserId));
-    final bytes = base64Decode(bodyB64);
+    final packed = base64Decode(ciphertextB64);
+    if (packed.isEmpty) throw const FormatException('empty-ciphertext');
+    final type = packed.first;
+    final bytes = Uint8List.fromList(packed.sublist(1));
     final plain = type == CiphertextMessage.prekeyType
         ? await cipher.decrypt(PreKeySignalMessage(bytes))
         : await cipher.decryptFromSignal(SignalMessage.fromSerialized(bytes));
@@ -454,5 +573,639 @@ class QfSignalManager {
     final out = Uint8List(32);
     generator.deriveKey(Uint8List.fromList(utf8.encode(password)), 0, out, 0);
     return out;
+  }
+}
+
+class QfChatHistoryException implements Exception {
+  final String message;
+
+  const QfChatHistoryException(this.message);
+
+  @override
+  String toString() => message;
+}
+
+class QfHistoryRecord {
+  final String localId;
+  final int peerId;
+  final bool mine;
+  final String text;
+  final int ts;
+
+  const QfHistoryRecord({
+    required this.localId,
+    required this.peerId,
+    required this.mine,
+    required this.text,
+    required this.ts,
+  });
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': localId,
+      'peer': peerId,
+      'mine': mine,
+      'text': text,
+      'ts': ts,
+    };
+  }
+
+  static QfHistoryRecord? fromJson(dynamic raw) {
+    if (raw is! Map) return null;
+    final text = (raw['text'] ?? '').toString();
+    final localId = (raw['id'] ?? '').toString();
+    if (text.isEmpty || localId.isEmpty) return null;
+    return QfHistoryRecord(
+      localId: localId,
+      peerId: (raw['peer'] as num?)?.toInt() ?? 0,
+      mine: raw['mine'] == true,
+      text: text,
+      ts: (raw['ts'] as num?)?.toInt() ?? 0,
+    );
+  }
+}
+
+enum QfHistoryDeleteResult { synced, pendingRetry, localOnly }
+
+int _historyRotl32(int value, int shift) =>
+    ((value << shift) | (value >> (32 - shift))) & 0xffffffff;
+
+void _historyQuarterRound(List<int> x, int a, int b, int c, int d) {
+  x[a] = (x[a] + x[b]) & 0xffffffff;
+  x[d] = _historyRotl32(x[d] ^ x[a], 16);
+  x[c] = (x[c] + x[d]) & 0xffffffff;
+  x[b] = _historyRotl32(x[b] ^ x[c], 12);
+  x[a] = (x[a] + x[b]) & 0xffffffff;
+  x[d] = _historyRotl32(x[d] ^ x[a], 8);
+  x[c] = (x[c] + x[d]) & 0xffffffff;
+  x[b] = _historyRotl32(x[b] ^ x[c], 7);
+}
+
+Uint8List _historyHChaCha20(Uint8List key, Uint8List nonce) {
+  final state = List<int>.filled(16, 0);
+  state[0] = 0x61707865;
+  state[1] = 0x3320646e;
+  state[2] = 0x79622d32;
+  state[3] = 0x6b206574;
+  final keyData = ByteData.sublistView(key);
+  for (var i = 0; i < 8; i++) {
+    state[4 + i] = keyData.getUint32(i * 4, Endian.little);
+  }
+  final nonceData = ByteData.sublistView(nonce);
+  for (var i = 0; i < 4; i++) {
+    state[12 + i] = nonceData.getUint32(i * 4, Endian.little);
+  }
+  final x = List<int>.of(state);
+  for (var round = 0; round < 10; round++) {
+    _historyQuarterRound(x, 0, 4, 8, 12);
+    _historyQuarterRound(x, 1, 5, 9, 13);
+    _historyQuarterRound(x, 2, 6, 10, 14);
+    _historyQuarterRound(x, 3, 7, 11, 15);
+    _historyQuarterRound(x, 0, 5, 10, 15);
+    _historyQuarterRound(x, 1, 6, 11, 12);
+    _historyQuarterRound(x, 2, 7, 8, 13);
+    _historyQuarterRound(x, 3, 4, 9, 14);
+  }
+  final out = ByteData(32);
+  const indices = [0, 1, 2, 3, 12, 13, 14, 15];
+  for (var i = 0; i < indices.length; i++) {
+    out.setUint32(i * 4, x[indices[i]], Endian.little);
+  }
+  return out.buffer.asUint8List();
+}
+
+Uint8List _historyIetfChaChaPoly(
+  bool encrypt,
+  Uint8List key,
+  Uint8List nonce,
+  Uint8List data,
+) {
+  final cipher = ChaCha20Poly1305(
+    ChaCha7539Engine(),
+    Poly1305(),
+  )..init(encrypt, AEADParameters(KeyParameter(key), 128, nonce, Uint8List(0)));
+  final out = Uint8List(cipher.getOutputSize(data.length));
+  var length = cipher.processBytes(data, 0, data.length, out, 0);
+  length += cipher.doFinal(out, length);
+  return Uint8List.sublistView(out, 0, length);
+}
+
+Uint8List _historyXEncrypt(Uint8List key, Uint8List nonce, Uint8List plain) {
+  final subKey = _historyHChaCha20(key, Uint8List.sublistView(nonce, 0, 16));
+  final ietfNonce = Uint8List(12)
+    ..setRange(4, 12, Uint8List.sublistView(nonce, 16, 24));
+  return _historyIetfChaChaPoly(true, subKey, ietfNonce, plain);
+}
+
+Uint8List _historyXDecrypt(Uint8List key, Uint8List nonce, Uint8List sealed) {
+  final subKey = _historyHChaCha20(key, Uint8List.sublistView(nonce, 0, 16));
+  final ietfNonce = Uint8List(12)
+    ..setRange(4, 12, Uint8List.sublistView(nonce, 16, 24));
+  return _historyIetfChaChaPoly(false, subKey, ietfNonce, sealed);
+}
+
+class QfChatHistoryVault {
+  static const int maxEntries = 20000;
+  static const int maxBytes = 64 * 1024 * 1024;
+  static const String _kLocal = 'qf_chathistory_local_v1';
+  static const String _kUploaded = 'qf_chathistory_uploaded_v1';
+  static const String _kSeqMap = 'qf_chathistory_seqmap_v1';
+  static const String _kPendingDelete = 'qf_chathistory_pending_delete_v1';
+  static const String _kMaxSeq = 'qf_chathistory_max_seq';
+  static const String _kTotalEntries = 'qf_chathistory_total_entries';
+  static const String _kTotalBytes = 'qf_chathistory_total_bytes';
+  static const Map<String, dynamic> _kdfParams = {'t': 3, 'm': 32768, 'p': 1};
+  static const String _decryptFailed = '账户密码不正确或备份数据已损坏，无法解密。';
+
+  static Uint8List? _historyKey;
+  static bool capacityExceeded = false;
+
+  static bool get historyUnlocked => _historyKey != null;
+
+  static bool isNearCapacity(int entries, int bytes) {
+    return entries >= 18000 || bytes >= (maxBytes * 0.9).floor();
+  }
+
+  static Uint8List _randomBytes(int length) {
+    return Uint8List.fromList(
+      List<int>.generate(length, (_) => Random.secure().nextInt(256)),
+    );
+  }
+
+  static Uint8List _argon2History(
+    String password,
+    Uint8List salt,
+    Map<String, dynamic> params,
+  ) {
+    final generator = Argon2BytesGenerator()
+      ..init(
+        Argon2Parameters(
+          Argon2Parameters.ARGON2_id,
+          salt,
+          desiredKeyLength: 32,
+          iterations: (params['t'] as num?)?.toInt() ?? 3,
+          memory: (params['m'] as num?)?.toInt() ?? 32768,
+          lanes: (params['p'] as num?)?.toInt() ?? 1,
+        ),
+      );
+    final out = Uint8List(32);
+    generator.deriveKey(Uint8List.fromList(utf8.encode(password)), 0, out, 0);
+    return out;
+  }
+
+  static Map<String, dynamic> _parseParams(dynamic raw) {
+    dynamic decoded = raw;
+    if (raw is String) {
+      try {
+        decoded = jsonDecode(raw);
+      } catch (_) {
+        decoded = null;
+      }
+    }
+    if (decoded is Map) {
+      return {
+        't': (decoded['t'] as num?)?.toInt() ?? _kdfParams['t'],
+        'm': (decoded['m'] as num?)?.toInt() ?? _kdfParams['m'],
+        'p': (decoded['p'] as num?)?.toInt() ?? _kdfParams['p'],
+      };
+    }
+    return Map<String, dynamic>.of(_kdfParams);
+  }
+
+  static Map<String, dynamic> _wrapHistoryKey(
+    Uint8List historyKey,
+    String password,
+  ) {
+    final salt = _randomBytes(16);
+    final kek = _argon2History(password, salt, _kdfParams);
+    final nonce = _randomBytes(24);
+    final wrapped = _historyXEncrypt(kek, nonce, historyKey);
+    final packed = Uint8List(24 + wrapped.length)
+      ..setRange(0, 24, nonce)
+      ..setRange(24, 24 + wrapped.length, wrapped);
+    return {
+      'wrappedKey': base64Encode(packed),
+      'kdfAlgo': 'argon2id',
+      'kdfSalt': base64Encode(salt),
+      'kdfParams': Map<String, dynamic>.of(_kdfParams),
+      'aeadAlgo': 'xchacha20poly1305',
+    };
+  }
+
+  static Uint8List _unwrapHistoryKey(
+    Map<String, dynamic> fields,
+    String password,
+  ) {
+    try {
+      final salt = base64Decode((fields['kdfSalt'] ?? '').toString());
+      final kek = _argon2History(
+        password,
+        Uint8List.fromList(salt),
+        _parseParams(fields['kdfParams']),
+      );
+      final packed = base64Decode((fields['wrappedKey'] ?? '').toString());
+      final key = _historyXDecrypt(
+        kek,
+        Uint8List.sublistView(packed, 0, 24),
+        Uint8List.sublistView(packed, 24),
+      );
+      if (key.length != 32) {
+        throw const QfChatHistoryException(_decryptFailed);
+      }
+      return key;
+    } on QfChatHistoryException {
+      rethrow;
+    } catch (_) {
+      throw const QfChatHistoryException(_decryptFailed);
+    }
+  }
+
+  static String _encryptRecord(Uint8List key, QfHistoryRecord record) {
+    final nonce = _randomBytes(24);
+    final sealed = _historyXEncrypt(
+      key,
+      nonce,
+      Uint8List.fromList(utf8.encode(jsonEncode(record.toJson()))),
+    );
+    final packed = Uint8List(24 + sealed.length)
+      ..setRange(0, 24, nonce)
+      ..setRange(24, 24 + sealed.length, sealed);
+    return base64Encode(packed);
+  }
+
+  static QfHistoryRecord? _decryptEntry(Uint8List key, String ciphertext) {
+    try {
+      final packed = base64Decode(ciphertext);
+      final plain = _historyXDecrypt(
+        key,
+        Uint8List.sublistView(packed, 0, 24),
+        Uint8List.sublistView(packed, 24),
+      );
+      return QfHistoryRecord.fromJson(jsonDecode(utf8.decode(plain)));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<List<QfHistoryRecord>> localRecords() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_kLocal);
+    if (raw == null || raw.isEmpty) return [];
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return [];
+      return decoded
+          .map(QfHistoryRecord.fromJson)
+          .whereType<QfHistoryRecord>()
+          .toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  static Future<List<QfHistoryRecord>> localRecordsFor(int peerId) async {
+    final all = await localRecords();
+    return all.where((record) => record.peerId == peerId).toList();
+  }
+
+  static Future<void> _saveLocal(List<QfHistoryRecord> records) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      _kLocal,
+      jsonEncode(records.map((record) => record.toJson()).toList()),
+    );
+  }
+
+  static Future<Set<String>> _loadUploaded() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_kUploaded);
+    if (raw == null || raw.isEmpty) return {};
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is List) return decoded.map((e) => e.toString()).toSet();
+    } catch (_) {}
+    return {};
+  }
+
+  static Future<void> _saveUploaded(Set<String> ids) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_kUploaded, jsonEncode(ids.toList()));
+  }
+
+  static Future<Map<String, String>> _loadSeqMap() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_kSeqMap);
+    if (raw == null || raw.isEmpty) return {};
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is Map) {
+        return decoded.map((k, v) => MapEntry(k.toString(), v.toString()));
+      }
+    } catch (_) {}
+    return {};
+  }
+
+  static Future<void> _saveSeqMap(Map<String, String> map) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_kSeqMap, jsonEncode(map));
+  }
+
+  static Future<Set<int>> _loadPendingDeletes() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_kPendingDelete);
+    if (raw == null || raw.isEmpty) return {};
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is List) {
+        return decoded
+            .map((e) => (e as num?)?.toInt())
+            .whereType<int>()
+            .toSet();
+      }
+    } catch (_) {}
+    return {};
+  }
+
+  static Future<void> _savePendingDeletes(Set<int> peers) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_kPendingDelete, jsonEncode(peers.toList()));
+  }
+
+  static Future<({int maxSeq, int totalEntries, int totalBytes})>
+  knownTotals() async {
+    final prefs = await SharedPreferences.getInstance();
+    return (
+      maxSeq: prefs.getInt(_kMaxSeq) ?? 0,
+      totalEntries: prefs.getInt(_kTotalEntries) ?? 0,
+      totalBytes: prefs.getInt(_kTotalBytes) ?? 0,
+    );
+  }
+
+  static Future<void> _saveTotals({
+    int? maxSeq,
+    int? totalEntries,
+    int? totalBytes,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (maxSeq != null) await prefs.setInt(_kMaxSeq, maxSeq);
+    if (totalEntries != null) await prefs.setInt(_kTotalEntries, totalEntries);
+    if (totalBytes != null) await prefs.setInt(_kTotalBytes, totalBytes);
+  }
+
+  static Future<
+    ({int localCount, int maxSeq, int totalEntries, int totalBytes})
+  >
+  status() async {
+    final totals = await knownTotals();
+    final records = await localRecords();
+    return (
+      localCount: records.length,
+      maxSeq: totals.maxSeq,
+      totalEntries: totals.totalEntries,
+      totalBytes: totals.totalBytes,
+    );
+  }
+
+  static Future<bool> archiveMessage(QfHistoryRecord record) async {
+    if (record.text == '无法解密的消息' || record.text == '已加密发送的消息') {
+      return false;
+    }
+    final records = await localRecords();
+    if (records.any((item) => item.localId == record.localId)) return false;
+    records.add(record);
+    records.sort((a, b) => a.ts.compareTo(b.ts));
+    await _saveLocal(records);
+    return true;
+  }
+
+  static Future<void> unlock({
+    required QfSessionController session,
+    required String password,
+  }) async {
+    Map<String, dynamic>? keyRow;
+    try {
+      keyRow = await session.authed('GET', '/me/chathistory/key');
+    } on QfApiException catch (e) {
+      if (e.status != 404 && e.code != 'HISTORY_KEY_NOT_FOUND') rethrow;
+    }
+    if (keyRow == null) {
+      final fresh = _randomBytes(32);
+      await session.authed(
+        'PUT',
+        '/me/chathistory/key',
+        body: _wrapHistoryKey(fresh, password),
+      );
+      _historyKey = fresh;
+      return;
+    }
+    _historyKey = _unwrapHistoryKey(keyRow, password);
+  }
+
+  static Future<int> pullIncremental(QfSessionController session) async {
+    final key = _historyKey;
+    if (key == null) return 0;
+    final totals = await knownTotals();
+    var afterSeq = totals.maxSeq;
+    final records = await localRecords();
+    final knownIds = records.map((record) => record.localId).toSet();
+    final uploaded = await _loadUploaded();
+    final seqMap = await _loadSeqMap();
+    final pendingDeletes = await _loadPendingDeletes();
+    var restored = 0;
+    var maxSeq = totals.maxSeq;
+    var totalEntries = totals.totalEntries;
+    var totalBytes = totals.totalBytes;
+    while (true) {
+      final data = await session.authed(
+        'GET',
+        '/me/chathistory/entries?afterSeq=$afterSeq&limit=500',
+      );
+      final entries = data['entries'];
+      if (entries is List) {
+        for (final raw in entries) {
+          if (raw is! Map) continue;
+          final seq = (raw['seq'] as num?)?.toInt();
+          final record = _decryptEntry(
+            key,
+            (raw['ciphertext'] ?? '').toString(),
+          );
+          if (record == null || seq == null) continue;
+          if (pendingDeletes.contains(record.peerId)) continue;
+          seqMap['$seq'] = record.localId;
+          uploaded.add(record.localId);
+          if (knownIds.add(record.localId)) {
+            records.add(record);
+            restored += 1;
+          }
+        }
+      }
+      maxSeq = (data['maxSeq'] as num?)?.toInt() ?? maxSeq;
+      totalEntries = (data['totalEntries'] as num?)?.toInt() ?? totalEntries;
+      totalBytes = (data['totalBytes'] as num?)?.toInt() ?? totalBytes;
+      afterSeq = (data['nextAfterSeq'] as num?)?.toInt() ?? afterSeq;
+      if (data['hasMore'] != true) break;
+    }
+    records.sort((a, b) => a.ts.compareTo(b.ts));
+    await _saveLocal(records);
+    await _saveUploaded(uploaded);
+    await _saveSeqMap(seqMap);
+    await _saveTotals(
+      maxSeq: maxSeq,
+      totalEntries: totalEntries,
+      totalBytes: totalBytes,
+    );
+    capacityExceeded = totalEntries >= maxEntries || totalBytes >= maxBytes;
+    return restored;
+  }
+
+  static Future<void> pushPending(QfSessionController session) async {
+    final key = _historyKey;
+    if (key == null) return;
+    final uploaded = await _loadUploaded();
+    final records = await localRecords()
+      ..sort((a, b) => a.ts.compareTo(b.ts));
+    final pending = records
+        .where((record) => !uploaded.contains(record.localId))
+        .toList();
+    if (pending.isEmpty) return;
+    final seqMap = await _loadSeqMap();
+    var index = 0;
+    while (index < pending.length) {
+      final batch = <QfHistoryRecord>[];
+      final entries = <String>[];
+      var batchBytes = 0;
+      while (index < pending.length && batch.length < 100) {
+        final entry = _encryptRecord(key, pending[index]);
+        final size = utf8.encode(entry).length;
+        if (batch.isNotEmpty && batchBytes + size > 800000) break;
+        batch.add(pending[index]);
+        entries.add(entry);
+        batchBytes += size;
+        index += 1;
+      }
+      Map<String, dynamic> data;
+      try {
+        data = await session.authed(
+          'POST',
+          '/me/chathistory/entries',
+          body: {'entries': entries},
+        );
+      } on QfApiException catch (e) {
+        if (e.code == 'HISTORY_CAPACITY_EXCEEDED') capacityExceeded = true;
+        rethrow;
+      }
+      final stored = (data['stored'] as num?)?.toInt() ?? batch.length;
+      final batchMaxSeq = (data['maxSeq'] as num?)?.toInt() ?? 0;
+      for (var i = 0; i < batch.length && i < stored; i++) {
+        seqMap['${batchMaxSeq - stored + 1 + i}'] = batch[i].localId;
+        uploaded.add(batch[i].localId);
+      }
+      await _saveUploaded(uploaded);
+      await _saveSeqMap(seqMap);
+      await _saveTotals(
+        maxSeq: batchMaxSeq,
+        totalEntries: (data['totalEntries'] as num?)?.toInt(),
+        totalBytes: (data['totalBytes'] as num?)?.toInt(),
+      );
+    }
+  }
+
+  static Future<void> _rewriteAll(QfSessionController session) async {
+    final key = _historyKey;
+    if (key == null) throw const QfChatHistoryException(_decryptFailed);
+    final totals = await knownTotals();
+    final records = await localRecords()
+      ..sort((a, b) => a.ts.compareTo(b.ts));
+    final entries = records.map((r) => _encryptRecord(key, r)).toList();
+    final data = await session.authed(
+      'PUT',
+      '/me/chathistory/entries',
+      body: {'entries': entries, 'baseMaxSeq': totals.maxSeq},
+    );
+    final stored = (data['stored'] as num?)?.toInt() ?? records.length;
+    final newMaxSeq = (data['maxSeq'] as num?)?.toInt() ?? 0;
+    final seqMap = <String, String>{};
+    for (var i = 0; i < records.length && i < stored; i++) {
+      seqMap['${newMaxSeq - stored + 1 + i}'] = records[i].localId;
+    }
+    await _saveSeqMap(seqMap);
+    await _saveUploaded(records.map((r) => r.localId).toSet());
+    await _saveTotals(
+      maxSeq: newMaxSeq,
+      totalEntries: (data['totalEntries'] as num?)?.toInt() ?? records.length,
+      totalBytes: (data['totalBytes'] as num?)?.toInt(),
+    );
+  }
+
+  static Future<QfHistoryDeleteResult> deleteConversation(
+    QfSessionController session,
+    int peerId,
+  ) async {
+    final records = await localRecords();
+    await _saveLocal(
+      records.where((record) => record.peerId != peerId).toList(),
+    );
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('qf_chat_sent_$peerId');
+    final pendingDeletes = await _loadPendingDeletes()
+      ..add(peerId);
+    await _savePendingDeletes(pendingDeletes);
+    if (!session.isLoggedIn || _historyKey == null) {
+      return QfHistoryDeleteResult.localOnly;
+    }
+    try {
+      await _rewriteAll(session);
+    } on QfApiException catch (e) {
+      if (e.status != 409) return QfHistoryDeleteResult.pendingRetry;
+      try {
+        await pullIncremental(session);
+        await _rewriteAll(session);
+      } catch (_) {
+        return QfHistoryDeleteResult.pendingRetry;
+      }
+    } catch (_) {
+      return QfHistoryDeleteResult.pendingRetry;
+    }
+    final remaining = await _loadPendingDeletes()
+      ..remove(peerId);
+    await _savePendingDeletes(remaining);
+    return QfHistoryDeleteResult.synced;
+  }
+
+  static Future<void> clearCloud(QfSessionController session) async {
+    await session.authed('DELETE', '/me/chathistory');
+    _historyKey = null;
+    capacityExceeded = false;
+    await _saveUploaded({});
+    await _saveSeqMap({});
+    await _savePendingDeletes({});
+    await _saveTotals(maxSeq: 0, totalEntries: 0, totalBytes: 0);
+  }
+
+  // 改密弹窗（qf_pages2）当前密码路径改密成功后与 QfVaultService.rewrapAll 并列调用本方法。
+  static Future<bool> rewrapHistoryKey({
+    required QfSessionController session,
+    required String oldPassword,
+    required String newPassword,
+  }) async {
+    try {
+      Map<String, dynamic> keyRow;
+      try {
+        keyRow = await session.authed('GET', '/me/chathistory/key');
+      } on QfApiException catch (e) {
+        if (e.status == 404 || e.code == 'HISTORY_KEY_NOT_FOUND') return true;
+        rethrow;
+      }
+      final key = _unwrapHistoryKey(keyRow, oldPassword);
+      await session.authed(
+        'PUT',
+        '/me/chathistory/key',
+        body: _wrapHistoryKey(key, newPassword),
+      );
+      _historyKey = key;
+      return true;
+    } catch (_) {
+      return false;
+    }
   }
 }
