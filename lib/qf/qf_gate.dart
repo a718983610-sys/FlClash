@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
+import 'package:shared_preferences/shared_preferences.dart';
+
 import '../application.dart';
 import '../providers/providers.dart';
 import '../views/about.dart';
@@ -30,6 +32,8 @@ class _QfSessionGateState extends ConsumerState<QfSessionGate> {
   QfUpdateCheck? _check;
   bool _booted = false;
   bool _minorShown = false;
+  String? _regionMessage;
+  bool _regionShown = false;
 
   QfSessionController get _session => ref.read(qfSessionProvider);
 
@@ -77,6 +81,7 @@ class _QfSessionGateState extends ConsumerState<QfSessionGate> {
     if (session.isGuest && session.guestExhausted) {
       await _stopCore();
     }
+    await _checkRegion();
     session.startHeartbeat();
     final check = await QfUpdateService.check(QfRuntime.appVersion);
     if (!mounted) return;
@@ -103,6 +108,50 @@ class _QfSessionGateState extends ConsumerState<QfSessionGate> {
         }
       });
     }
+  }
+
+  Future<void> _checkRegion() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final now = DateTime.now();
+      final today = '${now.year}-${now.month}-${now.day}';
+      if (prefs.getString('qf_region_last_shown') == today) return;
+      final data = await QfHttp.send(
+        'GET',
+        '${_session.serverBaseUrl}/region/status',
+      );
+      if (data['restricted'] == true) {
+        final message = (data['message'] ?? '').toString();
+        if (message.isNotEmpty) {
+          await prefs.setString('qf_region_last_shown', today);
+          _regionMessage = message;
+        }
+      }
+    } catch (_) {}
+  }
+
+  void _showRegionDialog() {
+    final message = _regionMessage;
+    if (message == null || _regionShown) return;
+    _regionShown = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) {
+          return AlertDialog(
+            content: Text(message),
+            actions: [
+              FilledButton(
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: const Text('确认'),
+              ),
+            ],
+          );
+        },
+      );
+    });
   }
 
   void _openAbout() {
@@ -152,8 +201,12 @@ class _QfSessionGateState extends ConsumerState<QfSessionGate> {
           );
         }
         if (session.mode == QfMode.entry) {
+          _showRegionDialog();
           final notice = session.banNotice;
           if (notice != null) {
+            final reason = session.banReason;
+            final account = session.banAccount;
+            final permanent = notice.contains('永久封禁');
             session.consumeBanNotice();
             WidgetsBinding.instance.addPostFrameCallback((_) {
               if (!mounted) return;
@@ -162,8 +215,34 @@ class _QfSessionGateState extends ConsumerState<QfSessionGate> {
                 builder: (dialogContext) {
                   return AlertDialog(
                     title: const Text('账户已被封禁'),
-                    content: Text(notice),
+                    content: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(notice),
+                        if (reason.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 8),
+                            child: Text('封禁原因：$reason'),
+                          ),
+                      ],
+                    ),
                     actions: [
+                      TextButton(
+                        onPressed: () {
+                          Navigator.of(dialogContext).pop();
+                          Navigator.of(context).push(
+                            MaterialPageRoute<void>(
+                              builder: (_) => QfAppealPage(
+                                serverBaseUrl: session.serverBaseUrl,
+                                initialAccount: account,
+                                permanent: permanent,
+                              ),
+                            ),
+                          );
+                        },
+                        child: const Text('申诉'),
+                      ),
                       FilledButton(
                         onPressed: () => Navigator.of(dialogContext).pop(),
                         child: const Text('我知道了'),
@@ -181,6 +260,7 @@ class _QfSessionGateState extends ConsumerState<QfSessionGate> {
             onAgreement: _openAgreement,
           );
         }
+        _showRegionDialog();
         if (session.isGuest && session.guestExhausted) {
           return QfBlockingPage(
             title: QfCopy.quotaTitle,
