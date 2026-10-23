@@ -69,55 +69,77 @@ void main() {
     );
   });
 
-  group('latestRelease', () {
+  group('latestPlatformRelease', () {
     Request requestAnswering(Map<String, ResponseBody Function()> byHost) {
       return Request()..dio.httpClientAdapter = _HostAdapter(byHost);
     }
 
-    test('reads the release from the API', () async {
+    ResponseBody releaseList(String body) {
+      return ResponseBody.fromString(
+        body,
+        200,
+        headers: {
+          Headers.contentTypeHeader: [Headers.jsonContentType],
+        },
+      );
+    }
+
+    test('returns the first published release carrying the prefix', () async {
       final request = requestAnswering({
-        'api.github.com': () => ResponseBody.fromString(
-          '{"tag_name":"v1.2.3","body":"notes"}',
-          200,
-          headers: {
-            Headers.contentTypeHeader: [Headers.jsonContentType],
-          },
+        'api.github.com': () => releaseList(
+          '[{"tag_name":"android-v1.2.4","draft":true},'
+          '{"tag_name":"windows-v1.2.4"},'
+          '{"tag_name":"android-v1.2.3","body":"notes","prerelease":false}]',
         ),
       });
 
-      expect(await request.latestRelease(), {
-        'tag_name': 'v1.2.3',
+      expect(await request.latestPlatformRelease('android-v'), {
+        'tag_name': 'android-v1.2.3',
         'body': 'notes',
+        'prerelease': false,
       });
     });
 
+    test('returns null when no published release carries the prefix', () async {
+      final request = requestAnswering({
+        'api.github.com': () => releaseList(
+          '[{"tag_name":"windows-v1.2.4"},'
+          '{"tag_name":"android-v1.2.3","prerelease":true}]',
+        ),
+      });
+
+      expect(await request.latestPlatformRelease('android-v'), isNull);
+    });
+
     test(
-      'falls back to the release page when the API is rate limited',
+      'throws instead of falling back when the API is rate limited',
       () async {
         final request = requestAnswering({
           'api.github.com': () => ResponseBody.fromString('{}', 403),
-          'github.com': () => ResponseBody.fromString(
-            '',
-            302,
-            headers: {
-              HttpHeaders.locationHeader: [
-                'https://github.com/owner/repo/releases/tag/v1.2.4',
-              ],
-            },
-          ),
         });
 
-        expect(await request.latestRelease(), {'tag_name': 'v1.2.4'});
+        await expectLater(
+          request.latestPlatformRelease('android-v'),
+          throwsA(
+            isA<DioException>().having(
+              (e) => e.type,
+              'type',
+              DioExceptionType.badResponse,
+            ),
+          ),
+        );
       },
     );
 
-    test('fails instead of answering when neither endpoint does', () async {
+    test('fails instead of answering when the API request fails', () async {
       final request = requestAnswering({
-        'api.github.com': () => ResponseBody.fromString('{}', 403),
-        'github.com': () => ResponseBody.fromString('', 503),
+        'api.github.com': () => ResponseBody.fromString('', 503),
       });
 
-      await expectLater(request.latestRelease(), throwsA(isA<DioException>()));
+      await expectLater(
+        request.latestPlatformRelease('android-v'),
+        throwsA(isA<DioException>()),
+      );
     });
   });
 
