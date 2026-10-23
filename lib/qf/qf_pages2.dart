@@ -1047,7 +1047,6 @@ class QfFeedbackPage extends StatefulWidget {
 class _QfFeedbackPageState extends State<QfFeedbackPage> {
   final _content = TextEditingController();
   final _contact = TextEditingController();
-  bool _busy = false;
 
   @override
   void dispose() {
@@ -1061,7 +1060,6 @@ class _QfFeedbackPageState extends State<QfFeedbackPage> {
       qfToast(context, '反馈内容不能为空');
       return;
     }
-    setState(() => _busy = true);
     try {
       await widget.session.submitFeedback(
         content: _content.text,
@@ -1074,8 +1072,6 @@ class _QfFeedbackPageState extends State<QfFeedbackPage> {
       }
     } on QfApiException catch (e) {
       if (mounted) qfToast(context, qfAccountErrorMessage(e));
-    } finally {
-      if (mounted) setState(() => _busy = false);
     }
   }
 
@@ -1103,10 +1099,7 @@ class _QfFeedbackPageState extends State<QfFeedbackPage> {
             decoration: const InputDecoration(labelText: '联系方式（选填）'),
           ),
           const SizedBox(height: 16),
-          FilledButton(
-            onPressed: _busy ? null : _submit,
-            child: const Text('提交反馈'),
-          ),
+          QfActionButton(label: '提交反馈', busyLabel: '正在提交……', onAction: _submit),
         ],
       ),
     );
