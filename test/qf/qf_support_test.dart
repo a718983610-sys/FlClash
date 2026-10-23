@@ -242,6 +242,7 @@ void main() {
     expect(botY, lessThan(friendY));
     expect(find.byTooltip('删除好友'), findsOneWidget);
     expect(find.byKey(const ValueKey('qf-support-desk-entry')), findsNothing);
+    await _unmount(tester);
   });
 
   testWidgets('support page renders banner bot tag and resident handoff', (
@@ -370,6 +371,7 @@ void main() {
     await tester.pumpWidget(_wrap(QfFriendsPage(session: session)));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('qf-support-desk-entry')), findsNothing);
+    await _unmount(tester);
   });
 
   testWidgets('support desk lists tickets replies and closes as agent', (
