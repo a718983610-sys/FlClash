@@ -16,11 +16,38 @@ import 'qf_google.dart';
 import 'qf_pages2.dart';
 import 'qf_passkey.dart';
 import 'qf_providers.dart';
+import 'qf_recovery.dart';
 import 'qf_session.dart';
 import 'qf_social.dart';
 
 void qfToast(BuildContext context, String message) {
   ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+}
+
+Future<String> qfPasskeyReauthToken(
+  QfSessionController session,
+  String purpose,
+) async {
+  final data = await session.authed(
+    'POST',
+    '/passkeys/reauth/options',
+    body: {'purpose': purpose},
+  );
+  final rawOptions = data['options'];
+  final options = rawOptions is Map
+      ? Map<String, dynamic>.from(rawOptions)
+      : Map<String, dynamic>.from(data);
+  final response = await QfPasskeyCeremony.authenticate(options);
+  final verified = await session.authed(
+    'POST',
+    '/passkeys/reauth/verify',
+    body: {'purpose': purpose, 'response': response},
+  );
+  final token = (verified['reauthToken'] ?? '').toString();
+  if (token.isEmpty) {
+    throw const QfApiException(401, 'REAUTH_INVALID', '通行密钥验证未完成，请重试');
+  }
+  return token;
 }
 
 class QfField extends StatelessWidget {
@@ -210,9 +237,11 @@ class _QfLoginFormState extends State<QfLoginForm> {
   final _email = TextEditingController();
   final _password = TextEditingController();
   final _code = TextEditingController();
+  final _stepUpCode = TextEditingController();
   String? _emailError;
   String? _passwordError;
   String? _codeError;
+  String? _stepUpError;
   bool _dual = false;
   bool _busy = false;
   bool _remember = true;
@@ -222,7 +251,50 @@ class _QfLoginFormState extends State<QfLoginForm> {
     _email.dispose();
     _password.dispose();
     _code.dispose();
+    _stepUpCode.dispose();
     super.dispose();
+  }
+
+  Future<void> _verifyStepUp() async {
+    setState(() {
+      _stepUpError = _stepUpCode.text.trim().isEmpty ? '请输入验证码' : null;
+    });
+    if (_stepUpError != null) return;
+    setState(() => _busy = true);
+    try {
+      await widget.session.verifyStepUp(_stepUpCode.text.trim());
+    } on QfApiException catch (e) {
+      if (mounted) {
+        if (e.code == 'ACCOUNT_FROZEN') {
+          final action = await qfShowFrozenDialog(
+            context,
+            message: e.message,
+            frozenAt: (e.data['passwordFrozenAt'] as num?)?.toInt(),
+          );
+          if (mounted) {
+            await qfHandleFrozenAction(
+              context,
+              session: widget.session,
+              action: action,
+              account: _email.text.trim(),
+            );
+          }
+        } else {
+          qfToast(context, e.message);
+        }
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _resendStepUp() async {
+    try {
+      await widget.session.resendStepUp();
+      if (mounted) qfToast(context, '验证码已经重新发送至您的绑定邮箱');
+    } on QfApiException catch (e) {
+      if (mounted) qfToast(context, e.message);
+    }
   }
 
   Future<void> _sendCode() async {
@@ -252,10 +324,26 @@ class _QfLoginFormState extends State<QfLoginForm> {
       if (outcome.dualVerifyRequired && mounted) {
         setState(() => _dual = true);
         qfToast(context, outcome.message);
+      } else if (widget.session.stepUpPending && mounted) {
+        setState(() {});
       }
     } on QfApiException catch (e) {
       if (mounted) {
-        if (e.code == 'ACCOUNT_BANNED') {
+        if (e.code == 'ACCOUNT_FROZEN') {
+          final action = await qfShowFrozenDialog(
+            context,
+            message: e.message,
+            frozenAt: (e.data['passwordFrozenAt'] as num?)?.toInt(),
+          );
+          if (mounted) {
+            await qfHandleFrozenAction(
+              context,
+              session: widget.session,
+              action: action,
+              account: _email.text.trim(),
+            );
+          }
+        } else if (e.code == 'ACCOUNT_BANNED') {
           final reason = (e.data['reason'] ?? '').toString();
           await showDialog<void>(
             context: context,
@@ -319,7 +407,21 @@ class _QfLoginFormState extends State<QfLoginForm> {
       await widget.session.passkeyLoginVerify(response, remember: _remember);
     } on QfApiException catch (e) {
       if (mounted) {
-        if (e.code == 'ACCOUNT_BANNED') {
+        if (e.code == 'ACCOUNT_FROZEN') {
+          final action = await qfShowFrozenDialog(
+            context,
+            message: e.message,
+            frozenAt: (e.data['passwordFrozenAt'] as num?)?.toInt(),
+          );
+          if (mounted) {
+            await qfHandleFrozenAction(
+              context,
+              session: widget.session,
+              action: action,
+              account: _email.text.trim(),
+            );
+          }
+        } else if (e.code == 'ACCOUNT_BANNED') {
           await qfShowBanDialog(
             context,
             session: widget.session,
@@ -342,11 +444,37 @@ class _QfLoginFormState extends State<QfLoginForm> {
     try {
       final idToken = await QfGoogleAuth.fetchIdToken();
       await widget.session.googleLogin(idToken, remember: _remember);
+      if (!mounted) return;
+      if (widget.session.googleCompletionPending) {
+        final message = await showDialog<String>(
+          context: context,
+          builder: (_) => QfGoogleCompletionDialog(session: widget.session),
+        );
+        if (message != null && message.isNotEmpty && mounted) {
+          qfToast(context, message);
+        }
+      } else if (widget.session.stepUpPending) {
+        setState(() {});
+      }
     } on QfGoogleAuthException catch (e) {
       if (mounted) qfToast(context, e.message);
     } on QfApiException catch (e) {
       if (mounted) {
-        if (e.code == 'ACCOUNT_BANNED') {
+        if (e.code == 'ACCOUNT_FROZEN') {
+          final action = await qfShowFrozenDialog(
+            context,
+            message: e.message,
+            frozenAt: (e.data['passwordFrozenAt'] as num?)?.toInt(),
+          );
+          if (mounted) {
+            await qfHandleFrozenAction(
+              context,
+              session: widget.session,
+              action: action,
+              account: _email.text.trim(),
+            );
+          }
+        } else if (e.code == 'ACCOUNT_BANNED') {
           await qfShowBanDialog(
             context,
             session: widget.session,
@@ -365,7 +493,23 @@ class _QfLoginFormState extends State<QfLoginForm> {
   Future<void> _forgotPassword() async {
     await showDialog<void>(
       context: context,
-      builder: (_) => QfResetPasswordDialog(session: widget.session),
+      builder: (_) => QfResetPasswordDialog(
+        session: widget.session,
+        initialEmail: _email.text.trim().contains('@')
+            ? _email.text.trim()
+            : '',
+      ),
+    );
+  }
+
+  Future<void> _openRecoveryAppeal() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => QfRecoveryAppealPage(
+          session: widget.session,
+          initialAccount: _email.text.trim(),
+        ),
+      ),
     );
   }
 
@@ -400,6 +544,39 @@ class _QfLoginFormState extends State<QfLoginForm> {
               child: const Text('发送验证码'),
             ),
           ),
+          const SizedBox(height: 8),
+          const Text(
+            '邮箱无法接收验证码？请发送邮件至 a718983610@gmail.com 申请人工核验，并附上您的账户ID或绑定邮箱。',
+          ),
+        ],
+        if (widget.session.stepUpPending) ...[
+          const SizedBox(height: 12),
+          const Text('检测到本次登录环境异常。为保障账户安全，验证码已发送至您的绑定邮箱，请输入验证码完成验证。'),
+          const SizedBox(height: 12),
+          QfField(
+            controller: _stepUpCode,
+            label: '邮箱验证码',
+            error: _stepUpError,
+            keyboardType: TextInputType.number,
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              TextButton(
+                onPressed: _busy ? null : _resendStepUp,
+                child: const Text('重新发送验证码'),
+              ),
+              const Spacer(),
+              FilledButton(
+                onPressed: _busy ? null : _verifyStepUp,
+                child: const Text('验证并登录'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            '邮箱无法接收验证码？请发送邮件至 a718983610@gmail.com 申请人工核验，并附上您的账户ID或绑定邮箱。',
+          ),
         ],
         CheckboxListTile(
           value: _remember,
@@ -425,12 +602,15 @@ class _QfLoginFormState extends State<QfLoginForm> {
           onPressed: googleReady && !_busy ? _googleLogin : null,
           child: const Text('使用谷歌账号登录'),
         ),
-        Align(
-          alignment: Alignment.centerRight,
-          child: TextButton(
-            onPressed: _forgotPassword,
-            child: const Text('忘记密码'),
-          ),
+        Row(
+          children: [
+            TextButton(
+              onPressed: _openRecoveryAppeal,
+              child: const Text('邮箱不可用？提交找回申诉'),
+            ),
+            const Spacer(),
+            TextButton(onPressed: _forgotPassword, child: const Text('忘记密码')),
+          ],
         ),
       ],
     );
@@ -439,8 +619,13 @@ class _QfLoginFormState extends State<QfLoginForm> {
 
 class QfResetPasswordDialog extends StatefulWidget {
   final QfSessionController session;
+  final String initialEmail;
 
-  const QfResetPasswordDialog({super.key, required this.session});
+  const QfResetPasswordDialog({
+    super.key,
+    required this.session,
+    this.initialEmail = '',
+  });
 
   @override
   State<QfResetPasswordDialog> createState() => _QfResetPasswordDialogState();
@@ -453,6 +638,12 @@ class _QfResetPasswordDialogState extends State<QfResetPasswordDialog> {
   final _confirm = TextEditingController();
   String? _confirmError;
   bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _email.text = widget.initialEmail;
+  }
 
   @override
   void dispose() {
@@ -621,7 +812,14 @@ class _QfRegisterFormState extends State<QfRegisterForm> {
         usernameInput: _id.text,
       );
     } on QfApiException catch (e) {
-      if (mounted) {
+      if (mounted && e.code == 'REGISTRATION_FROZEN') {
+        widget.session.captureRegistrationFrozen(e);
+        await qfShowRegistrationFrozenDialog(
+          context,
+          message: e.message,
+          data: e.data,
+        );
+      } else if (mounted) {
         setState(() {
           if (e.code.contains('USERNAME') ||
               e.message.contains('已被注册') ||
@@ -657,6 +855,10 @@ class _QfRegisterFormState extends State<QfRegisterForm> {
             QfCopy.usernameRuleHint,
             style: AppTextStyle.caption1.of(context),
           ),
+        ),
+        const Padding(
+          padding: EdgeInsets.only(top: 4),
+          child: Text('账户ID一经设置不可更改，请谨慎填写。'),
         ),
         const SizedBox(height: 12),
         QfField(
@@ -694,6 +896,240 @@ class _QfRegisterFormState extends State<QfRegisterForm> {
         FilledButton(
           onPressed: _busy ? null : _submit,
           child: const Text('注册并登录'),
+        ),
+      ],
+    );
+  }
+}
+
+class QfGoogleCompletionDialog extends StatefulWidget {
+  final QfSessionController session;
+
+  const QfGoogleCompletionDialog({super.key, required this.session});
+
+  @override
+  State<QfGoogleCompletionDialog> createState() =>
+      _QfGoogleCompletionDialogState();
+}
+
+class _QfGoogleCompletionDialogState extends State<QfGoogleCompletionDialog> {
+  final _id = TextEditingController();
+  final _password = TextEditingController();
+  final _confirm = TextEditingController();
+  String? _idError;
+  String? _passwordError;
+  String? _confirmError;
+  bool _busy = false;
+
+  @override
+  void dispose() {
+    _id.dispose();
+    _password.dispose();
+    _confirm.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    setState(() {
+      _idError = qfUsernameError(_id.text);
+      _passwordError = _password.text.length < 8 ? '密码至少要 8 位' : null;
+      _confirmError = _password.text != _confirm.text
+          ? QfCopy.passwordMismatch
+          : null;
+    });
+    if (_idError != null || _passwordError != null || _confirmError != null) {
+      return;
+    }
+    setState(() => _busy = true);
+    final pw = _password.text;
+    try {
+      await widget.session.completeGoogleSetup(
+        username: _id.text.trim(),
+        password: pw,
+      );
+      if (mounted) Navigator.of(context).pop();
+    } on QfApiException catch (e) {
+      if (!mounted) return;
+      setState(() => _busy = false);
+      switch (e.code) {
+        case 'USERNAME_TAKEN':
+        case 'USERNAME_INVALID':
+        case 'USERNAME_IMMUTABLE':
+          setState(() => _idError = e.message);
+        case 'ACCOUNT_FROZEN':
+          {
+            final action = await qfShowFrozenDialog(
+              context,
+              message: e.message,
+              frozenAt: (e.data['passwordFrozenAt'] as num?)?.toInt(),
+            );
+            if (mounted) {
+              await qfHandleFrozenAction(
+                context,
+                session: widget.session,
+                action: action,
+                account: widget.session.googleCompletionEmail ?? '',
+              );
+            }
+          }
+        case 'REGISTRATION_FROZEN':
+          {
+            widget.session.captureRegistrationFrozen(e);
+            await qfShowRegistrationFrozenDialog(
+              context,
+              message: e.message,
+              data: e.data,
+            );
+          }
+        case 'GOOGLE_COMPLETION_INVALID':
+        case 'GOOGLE_ALREADY_COMPLETED':
+        case 'ACCOUNT_BANNED':
+        case 'DEVICE_BANNED':
+          Navigator.of(context).pop(e.message);
+        case 'BAD_REQUEST':
+          if (e.message.contains('密码')) {
+            setState(() => _passwordError = e.message);
+          } else {
+            qfToast(context, e.message);
+          }
+        default:
+          qfToast(context, e.message);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final email = widget.session.googleCompletionEmail;
+    return AlertDialog(
+      title: const Text('设置账户ID和密码'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text('请设置账户ID与登录密码以完成注册。设置完成后，可使用账户ID或邮箱加密码登录。'),
+            if (email != null && email.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Text('账号邮箱：$email'),
+            ],
+            const SizedBox(height: 12),
+            QfField(controller: _id, label: '账户 ID', error: _idError),
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                QfCopy.usernameRuleHint,
+                style: AppTextStyle.caption1.of(context),
+              ),
+            ),
+            const Padding(
+              padding: EdgeInsets.only(top: 4),
+              child: Text('账户ID一经设置不可更改，请谨慎填写。'),
+            ),
+            const SizedBox(height: 12),
+            QfField(
+              controller: _password,
+              label: '密码',
+              error: _passwordError,
+              obscure: true,
+            ),
+            const SizedBox(height: 12),
+            QfField(
+              controller: _confirm,
+              label: '重复密码',
+              error: _confirmError,
+              obscure: true,
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _busy ? null : () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: _busy ? null : _submit,
+          child: const Text('完成设置'),
+        ),
+      ],
+    );
+  }
+}
+
+class QfCompleteUsernameDialog extends StatefulWidget {
+  final QfSessionController session;
+
+  const QfCompleteUsernameDialog({super.key, required this.session});
+
+  @override
+  State<QfCompleteUsernameDialog> createState() =>
+      _QfCompleteUsernameDialogState();
+}
+
+class _QfCompleteUsernameDialogState extends State<QfCompleteUsernameDialog> {
+  final _id = TextEditingController();
+  String? _idError;
+  bool _busy = false;
+
+  @override
+  void dispose() {
+    _id.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    setState(() => _idError = qfUsernameError(_id.text));
+    if (_idError != null) return;
+    setState(() => _busy = true);
+    try {
+      await widget.session.completeUsername(_id.text.trim());
+      if (mounted) {
+        Navigator.of(context).pop();
+        qfToast(context, '账户ID已设置。');
+      }
+    } on QfApiException catch (e) {
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _idError = e.message;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('设置账户ID'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            QfField(controller: _id, label: '账户 ID', error: _idError),
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                QfCopy.usernameRuleHint,
+                style: AppTextStyle.caption1.of(context),
+              ),
+            ),
+            const Padding(
+              padding: EdgeInsets.only(top: 4),
+              child: Text('账户ID一经设置不可更改，请谨慎填写。'),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _busy ? null : () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: _busy ? null : _submit,
+          child: const Text('确认设置'),
         ),
       ],
     );
@@ -746,6 +1182,23 @@ class QfMinePage extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 8),
+              if (session.accountIncomplete)
+                Card(
+                  child: ListTile(
+                    title: const Text('您的账号尚未设置账户ID'),
+                    subtitle: const Text('设置账户ID后，好友可通过账户ID或二维码找到您。'),
+                    trailing: TextButton(
+                      onPressed: () async {
+                        await showDialog<void>(
+                          context: context,
+                          builder: (_) =>
+                              QfCompleteUsernameDialog(session: session),
+                        );
+                      },
+                      child: const Text('立即设置'),
+                    ),
+                  ),
+                ),
               QfMyQrCard(session: session),
               if (session.accountDeleting)
                 Card(
@@ -1100,6 +1553,7 @@ class _QfRedeemPageState extends State<QfRedeemPage> {
   int _balance = 0;
   bool _loading = true;
   bool _regionBlocked = false;
+  String _redeemBlockedMessage = '';
 
   @override
   void initState() {
@@ -1119,6 +1573,8 @@ class _QfRedeemPageState extends State<QfRedeemPage> {
           _balance = (data['balance'] as num?)?.toInt() ?? 0;
           _orders = orders;
           _regionBlocked = rules['redeemRegionBlocked'] == true;
+          _redeemBlockedMessage = (rules['redeemBlockedMessage'] ?? '')
+              .toString();
           _loading = false;
         });
       }
@@ -1174,7 +1630,11 @@ class _QfRedeemPageState extends State<QfRedeemPage> {
       'pending_payout' => '待打款',
       'paid' => '已打款',
       'rejected' => '已驳回',
+      'rejected_fraud' => '已驳回（查实作弊，积分已没收）',
       'refunded' => '已退分',
+      'superseded' => '已被补发订单替代',
+      'cancelled' => '已取消',
+      'expired' => '已过期',
       _ => (order['status'] ?? '').toString(),
     };
   }
@@ -1200,7 +1660,9 @@ class _QfRedeemPageState extends State<QfRedeemPage> {
                   Padding(
                     padding: EdgeInsets.only(top: 12),
                     child: Text(
-                      '您所在地区暂不支持福利兑换，积分仍可正常累计。',
+                      _redeemBlockedMessage.isNotEmpty
+                          ? _redeemBlockedMessage
+                          : '该功能在您的国家地区不可用',
                       style: AppTextStyle.body.of(context, emphasized: true),
                     ),
                   ),
@@ -1250,6 +1712,7 @@ class _QfRedeemPageState extends State<QfRedeemPage> {
                         '${raw['payoutAddress'] != null ? '\n收款地址：${raw['payoutAddress']}' : ''}'
                         '${raw['payoutEmail'] != null ? '\n通知邮箱：${raw['payoutEmail']}' : ''}'
                         '${raw['paidAt'] != null ? '\n打款时间：${DateTime.fromMillisecondsSinceEpoch(((raw['paidAt'] as num) * 1000).toInt())}' : ''}'
+                        '${raw['paidTx'] != null && raw['paidTx'].toString().isNotEmpty ? '\n打款交易号：${raw['paidTx']}' : ''}'
                         '${raw['reviewReason'] != null ? '\n驳回原因：${raw['reviewReason']}' : ''}',
                       ),
                       trailing: _canRevealCode(raw)
@@ -1446,7 +1909,35 @@ class _QfRevealCodeDialogState extends State<_QfRevealCodeDialog> {
   Timer? _maskTimer;
   int _cooldown = 0;
   String? _revealedCode;
+  String? _reauthToken;
   bool _busy = false;
+
+  Future<void> _passkeyVerify() async {
+    setState(() => _busy = true);
+    try {
+      final token = await qfPasskeyReauthToken(widget.session, 'reveal_code');
+      if (mounted) {
+        setState(() {
+          _reauthToken = token;
+          _busy = false;
+        });
+        qfToast(context, '通行密钥验证已通过，请继续输入邮箱验证码完成查看');
+      }
+    } on QfApiException catch (e) {
+      if (mounted) {
+        setState(() => _busy = false);
+        qfToast(
+          context,
+          e.code == 'PASSKEY_NOT_ENROLLED' ? '您尚未创建通行密钥，请使用账户密码验证' : e.message,
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() => _busy = false);
+        qfToast(context, '通行密钥验证未完成，请重试或改用账户密码验证');
+      }
+    }
+  }
 
   @override
   void dispose() {
@@ -1480,17 +1971,31 @@ class _QfRevealCodeDialogState extends State<_QfRevealCodeDialog> {
   }
 
   Future<void> _reveal() async {
-    if (_password.text.isEmpty || _code.text.trim().isEmpty) {
-      qfToast(context, '请输入账户密码与邮箱验证码');
+    if (_code.text.trim().isEmpty) {
+      qfToast(context, '请输入邮箱验证码');
+      return;
+    }
+    if (_reauthToken == null && _password.text.isEmpty) {
+      qfToast(context, '请输入账户密码，或先使用通行密钥验证');
       return;
     }
     setState(() => _busy = true);
     try {
-      final code = await widget.session.redeemCodeReveal(
-        widget.orderId,
-        _password.text,
-        _code.text,
-      );
+      final String code;
+      if (_reauthToken != null) {
+        final data = await widget.session.authed(
+          'POST',
+          '/redeem/orders/${widget.orderId}/code/reveal',
+          body: {'reauthToken': _reauthToken, 'emailCode': _code.text.trim()},
+        );
+        code = (data['code'] ?? '').toString();
+      } else {
+        code = await widget.session.redeemCodeReveal(
+          widget.orderId,
+          _password.text,
+          _code.text,
+        );
+      }
       if (!mounted) return;
       setState(() {
         _revealedCode = code;
@@ -1501,7 +2006,10 @@ class _QfRevealCodeDialogState extends State<_QfRevealCodeDialog> {
       });
     } on QfApiException catch (e) {
       if (mounted) {
-        setState(() => _busy = false);
+        setState(() {
+          _busy = false;
+          if (e.code == 'REAUTH_INVALID') _reauthToken = null;
+        });
         qfToast(context, e.message);
       }
     }
@@ -1517,13 +2025,23 @@ class _QfRevealCodeDialogState extends State<_QfRevealCodeDialog> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             if (_revealedCode == null) ...[
-              const Text('查看兑换码需完成双重核验：先验证当前账户密码，再输入发送至账号绑定邮箱的一次性验证码。'),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _password,
-                obscureText: true,
-                decoration: const InputDecoration(labelText: '当前账户密码'),
+              const Text(
+                '查看兑换码需完成双重核验：先验证当前账户密码（或使用通行密钥验证），再输入发送至账号绑定邮箱的一次性验证码。通行密钥仅替代密码验证，邮箱验证码仍须输入。',
               ),
+              const SizedBox(height: 12),
+              if (_reauthToken == null) ...[
+                TextField(
+                  controller: _password,
+                  obscureText: true,
+                  decoration: const InputDecoration(labelText: '当前账户密码'),
+                ),
+                const SizedBox(height: 8),
+                OutlinedButton(
+                  onPressed: _busy ? null : _passkeyVerify,
+                  child: const Text('使用通行密钥验证'),
+                ),
+              ] else
+                const Text('已通过通行密钥验证，请继续输入邮箱验证码完成查看。'),
               const SizedBox(height: 12),
               Row(
                 children: [

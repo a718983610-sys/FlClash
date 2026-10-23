@@ -9,7 +9,9 @@ import 'qf_config.dart';
 import 'qf_pages.dart';
 import 'qf_providers.dart';
 import 'qf_session.dart';
+import 'qf_signal.dart';
 import 'qf_update.dart';
+import 'qf_vault.dart';
 import 'qf_version.dart';
 
 List<String> qfUpdateBlockText(QfUpdateDecision decision) {
@@ -77,6 +79,8 @@ class _QfSecurityPageState extends State<QfSecurityPage> {
   List<dynamic> _devices = const [];
   List<dynamic> _passkeys = const [];
   bool _loading = true;
+  bool? _loginProtection;
+  bool _settingsBusy = false;
 
   @override
   void initState() {
@@ -92,16 +96,50 @@ class _QfSecurityPageState extends State<QfSecurityPage> {
       try {
         passkeys = await widget.session.passkeyList();
       } catch (_) {}
+      var loginProtection = me['loginProtection'] == true;
+      try {
+        final settings = await widget.session.authed(
+          'GET',
+          '/security/settings',
+        );
+        if (settings['loginProtection'] is bool) {
+          loginProtection = settings['loginProtection'] == true;
+        }
+      } catch (_) {}
       if (mounted) {
         setState(() {
           _me = me;
           _devices = devices;
           _passkeys = passkeys;
+          _loginProtection = loginProtection;
           _loading = false;
         });
       }
     } catch (_) {
       if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _toggleLoginProtection(bool value) async {
+    final previous = _loginProtection;
+    setState(() {
+      _loginProtection = value;
+      _settingsBusy = true;
+    });
+    try {
+      await widget.session.authed(
+        'PUT',
+        '/security/settings',
+        body: {'loginProtection': value},
+      );
+      if (mounted) qfToast(context, '设置已保存');
+    } on QfApiException catch (e) {
+      if (mounted) {
+        setState(() => _loginProtection = previous);
+        qfToast(context, e.message);
+      }
+    } finally {
+      if (mounted) setState(() => _settingsBusy = false);
     }
   }
 
@@ -134,40 +172,41 @@ class _QfSecurityPageState extends State<QfSecurityPage> {
     }
   }
 
-  Future<String?> _askPassword(String title) async {
-    final controller = TextEditingController();
-    final result = await showDialog<String>(
+  Future<Map<String, String>?> _verifyIdentity(
+    String title,
+    String purpose,
+  ) async {
+    return showDialog<Map<String, String>>(
       context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          title: Text(title),
-          content: TextField(
-            controller: controller,
-            obscureText: true,
-            decoration: const InputDecoration(labelText: '当前账户密码'),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(dialogContext).pop(controller.text),
-              child: const Text('确认'),
-            ),
-          ],
-        );
-      },
+      builder: (_) => _QfIdentityVerifyDialog(
+        session: widget.session,
+        title: title,
+        purpose: purpose,
+      ),
     );
-    controller.dispose();
-    return (result == null || result.isEmpty) ? null : result;
   }
 
   Future<void> _createPasskey() async {
-    final password = await _askPassword('创建通行密钥');
-    if (password == null || !mounted) return;
+    final proof = await _verifyIdentity('创建通行密钥', 'passkey_manage');
+    if (proof == null || !mounted) return;
     try {
-      final options = await widget.session.passkeyRegisterOptions(password);
+      final Map<String, dynamic> options;
+      final reauthToken = proof['reauthToken'];
+      if (reauthToken != null) {
+        final data = await widget.session.authed(
+          'POST',
+          '/passkeys/register/options',
+          body: {'reauthToken': reauthToken},
+        );
+        final rawOptions = data['options'];
+        options = rawOptions is Map
+            ? Map<String, dynamic>.from(rawOptions)
+            : Map<String, dynamic>.from(data);
+      } else {
+        options = await widget.session.passkeyRegisterOptions(
+          proof['password']!,
+        );
+      }
       final response = await QfPasskeyCeremony.register(options);
       if (!mounted) return;
       final nameController = TextEditingController(text: '通行密钥');
@@ -205,15 +244,37 @@ class _QfSecurityPageState extends State<QfSecurityPage> {
   }
 
   Future<void> _deletePasskey(Map<dynamic, dynamic> item) async {
-    final password = await _askPassword('删除通行密钥');
-    if (password == null || !mounted) return;
+    final proof = await _verifyIdentity('删除通行密钥', 'passkey_manage');
+    if (proof == null || !mounted) return;
     try {
-      await widget.session.passkeyDelete((item['id'] as num).toInt(), password);
+      final id = (item['id'] as num).toInt();
+      final reauthToken = proof['reauthToken'];
+      if (reauthToken != null) {
+        await widget.session.authed(
+          'DELETE',
+          '/passkeys/$id',
+          body: {'reauthToken': reauthToken},
+        );
+      } else {
+        await widget.session.passkeyDelete(id, proof['password']!);
+      }
       if (mounted) qfToast(context, '通行密钥已删除');
       await _load();
     } on QfApiException catch (e) {
       if (mounted) qfToast(context, e.message);
     }
+  }
+
+  String _platformLabel(dynamic value) {
+    final platform = (value ?? '').toString();
+    if (platform.isEmpty) return '';
+    final label = switch (platform) {
+      'android' => 'Android',
+      'windows' => 'Windows',
+      'website' => '网页',
+      _ => platform,
+    };
+    return '$label · ';
   }
 
   String _passkeyCreatedLabel(dynamic value) {
@@ -226,39 +287,22 @@ class _QfSecurityPageState extends State<QfSecurityPage> {
   }
 
   Future<void> _deleteAccount() async {
-    final confirmed = await showDialog<bool>(
+    final done = await showDialog<bool>(
       context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          title: const Text('注销账号'),
-          content: const Text(
-            '提交注销后进入 7 天冷静期，冷静期内登录可撤销注销；'
-            '冷静期结束后账号正式注销，积分清零、已兑换未使用的兑换码作废。',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(false),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(dialogContext).pop(true),
-              child: const Text('确认提交注销'),
-            ),
-          ],
-        );
-      },
+      builder: (_) => _QfDeleteAccountDialog(session: widget.session),
     );
-    if (confirmed != true) return;
+    if (done != true || !mounted) return;
+    widget.session.accountDeleting = true;
     try {
-      await widget.session.authed(
-        'POST',
-        '/security/delete-account',
-        body: {'confirm': true},
-      );
-      if (mounted) qfToast(context, '注销申请已经提交，进入 7 天冷静期');
-      await widget.session.refreshPoints();
-    } on QfApiException catch (e) {
-      if (mounted) qfToast(context, e.message);
+      final me = await widget.session.authed('GET', '/security/me');
+      widget.session.accountDeleting = me['status'] == 'deleting';
+      widget.session.deletionEffectiveAt = (me['deletionEffectiveAt'] as num?)
+          ?.toInt();
+    } catch (_) {}
+    await widget.session.refreshPoints();
+    if (mounted) {
+      qfToast(context, '注销申请已经提交，进入 7 天冷静期');
+      Navigator.of(context).pop();
     }
   }
 
@@ -275,6 +319,16 @@ class _QfSecurityPageState extends State<QfSecurityPage> {
                   title: const Text('当前账号'),
                   subtitle: Text(_me?['email']?.toString() ?? ''),
                 ),
+                if (_loginProtection != null)
+                  SwitchListTile(
+                    title: const Text('环境异常双重验证'),
+                    subtitle: const Text(
+                      '开启后，在新设备登录或登录国家与以往明显不同时，除密码外还需输入发送至绑定邮箱的验证码；'
+                      '已验证通过的设备不会被反复拦截。关闭后，如系统检测到异常登录，仍可能要求完成强制复核。',
+                    ),
+                    value: _loginProtection!,
+                    onChanged: _settingsBusy ? null : _toggleLoginProtection,
+                  ),
                 ListTile(
                   leading: const GlyphIcon(AppGlyphs.lock),
                   title: const Text('修改密码'),
@@ -295,6 +349,7 @@ class _QfSecurityPageState extends State<QfSecurityPage> {
                         '${raw['isCurrent'] == true ? '（本机）' : ''}',
                       ),
                       subtitle: Text(
+                        '${_platformLabel(raw['platform'])}'
                         '${raw['region'] ?? ''} · 最近活跃 '
                         '${DateTime.fromMillisecondsSinceEpoch(((raw['lastActiveAt'] as num? ?? 0) * 1000).toInt())}',
                       ),
@@ -345,6 +400,243 @@ class _QfSecurityPageState extends State<QfSecurityPage> {
   }
 }
 
+class _QfIdentityVerifyDialog extends StatefulWidget {
+  final QfSessionController session;
+  final String title;
+  final String purpose;
+
+  const _QfIdentityVerifyDialog({
+    required this.session,
+    required this.title,
+    required this.purpose,
+  });
+
+  @override
+  State<_QfIdentityVerifyDialog> createState() =>
+      _QfIdentityVerifyDialogState();
+}
+
+class _QfIdentityVerifyDialogState extends State<_QfIdentityVerifyDialog> {
+  final _password = TextEditingController();
+  String? _error;
+  bool _busy = false;
+
+  @override
+  void dispose() {
+    _password.dispose();
+    super.dispose();
+  }
+
+  Future<void> _usePasskey() async {
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      final token = await qfPasskeyReauthToken(widget.session, widget.purpose);
+      if (mounted) Navigator.of(context).pop({'reauthToken': token});
+    } on QfApiException catch (e) {
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _error = e.code == 'PASSKEY_NOT_ENROLLED'
+              ? '您尚未创建通行密钥，请使用账户密码验证。'
+              : e.message;
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _error = '通行密钥验证未完成，请重试或改用账户密码验证。';
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(widget.title),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Text('请先完成身份验证：输入当前密码，或使用通行密钥验证。'),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _password,
+            obscureText: true,
+            decoration: InputDecoration(labelText: '当前账户密码', errorText: _error),
+          ),
+          const SizedBox(height: 8),
+          OutlinedButton(
+            onPressed: _busy ? null : _usePasskey,
+            child: const Text('使用通行密钥验证'),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: _busy ? null : () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: _busy
+              ? null
+              : () {
+                  if (_password.text.isEmpty) {
+                    setState(() => _error = '请输入当前账户密码');
+                    return;
+                  }
+                  Navigator.of(context).pop({'password': _password.text});
+                },
+          child: const Text('确认'),
+        ),
+      ],
+    );
+  }
+}
+
+class _QfDeleteAccountDialog extends StatefulWidget {
+  final QfSessionController session;
+
+  const _QfDeleteAccountDialog({required this.session});
+
+  @override
+  State<_QfDeleteAccountDialog> createState() => _QfDeleteAccountDialogState();
+}
+
+class _QfDeleteAccountDialogState extends State<_QfDeleteAccountDialog> {
+  final _password = TextEditingController();
+  String? _reauthToken;
+  String? _error;
+  bool _busy = false;
+
+  @override
+  void dispose() {
+    _password.dispose();
+    super.dispose();
+  }
+
+  Future<void> _usePasskey() async {
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      final token = await qfPasskeyReauthToken(
+        widget.session,
+        'delete_account',
+      );
+      if (mounted) {
+        setState(() {
+          _reauthToken = token;
+          _busy = false;
+        });
+      }
+    } on QfApiException catch (e) {
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _error = e.code == 'PASSKEY_NOT_ENROLLED'
+              ? '您尚未创建通行密钥，请使用账户密码验证。'
+              : e.message;
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _error = '通行密钥验证未完成，请重试或改用账户密码验证。';
+        });
+      }
+    }
+  }
+
+  Future<void> _submit() async {
+    if (_reauthToken == null && _password.text.isEmpty) {
+      setState(() => _error = '请先完成身份复核：输入账户密码，或使用通行密钥验证。');
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      await widget.session.authed(
+        'POST',
+        '/security/delete-account',
+        body: {
+          'confirm': true,
+          if (_reauthToken != null)
+            'reauthToken': _reauthToken
+          else
+            'password': _password.text,
+        },
+      );
+      if (mounted) Navigator.of(context).pop(true);
+    } on QfApiException catch (e) {
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          if (e.code == 'REAUTH_INVALID') _reauthToken = null;
+          _error = e.message;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('注销账号'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text(
+              '提交注销后进入 7 天冷静期，冷静期内登录可撤销注销；'
+              '冷静期结束后账号正式注销，积分清零、已兑换未使用的兑换码作废。',
+            ),
+            const SizedBox(height: 12),
+            const Text('冷静期结束并完成数据清除后，本账号绑定的邮箱可用于重新注册；账户ID将被保留，不再释放。'),
+            const SizedBox(height: 12),
+            const Text('提交前请完成身份复核：输入账户密码，或使用通行密钥验证。'),
+            const SizedBox(height: 12),
+            if (_reauthToken == null) ...[
+              TextField(
+                controller: _password,
+                obscureText: true,
+                decoration: InputDecoration(
+                  labelText: '当前账户密码',
+                  errorText: _error,
+                ),
+              ),
+              const SizedBox(height: 8),
+              OutlinedButton(
+                onPressed: _busy ? null : _usePasskey,
+                child: const Text('使用通行密钥验证'),
+              ),
+            ] else ...[
+              const Text('已通过通行密钥验证。'),
+              if (_error != null) ...[const SizedBox(height: 8), Text(_error!)],
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _busy ? null : () => Navigator.of(context).pop(false),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: _busy ? null : _submit,
+          child: const Text('确认提交注销'),
+        ),
+      ],
+    );
+  }
+}
+
 class _QfChangePasswordDialog extends StatefulWidget {
   final QfSessionController session;
 
@@ -361,8 +653,10 @@ class _QfChangePasswordDialogState extends State<_QfChangePasswordDialog> {
   final _password = TextEditingController();
   final _confirm = TextEditingController();
   String? _confirmError;
-  bool _byCode = false;
+  String? _reauthToken;
+  int _method = 0;
   bool _busy = false;
+  bool _vaultFailed = false;
 
   @override
   void dispose() {
@@ -373,6 +667,37 @@ class _QfChangePasswordDialogState extends State<_QfChangePasswordDialog> {
     super.dispose();
   }
 
+  Future<void> _usePasskey() async {
+    setState(() => _busy = true);
+    try {
+      final token = await qfPasskeyReauthToken(
+        widget.session,
+        'change_password',
+      );
+      if (mounted) {
+        setState(() {
+          _reauthToken = token;
+          _busy = false;
+        });
+      }
+    } on QfApiException catch (e) {
+      if (mounted) {
+        setState(() => _busy = false);
+        qfToast(
+          context,
+          e.code == 'PASSKEY_NOT_ENROLLED'
+              ? '您尚未创建通行密钥，请改用当前密码或邮箱验证码验证'
+              : e.message,
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() => _busy = false);
+        qfToast(context, '通行密钥验证未完成，请重试或改用其他验证方式');
+      }
+    }
+  }
+
   Future<void> _submit() async {
     setState(() {
       _confirmError = _password.text != _confirm.text
@@ -380,27 +705,61 @@ class _QfChangePasswordDialogState extends State<_QfChangePasswordDialog> {
           : null;
     });
     if (_confirmError != null) return;
+    if (_method == 1 && _reauthToken == null) {
+      qfToast(context, '请先使用通行密钥完成验证');
+      return;
+    }
     setState(() => _busy = true);
     try {
       await widget.session.authed(
         'POST',
         '/security/password/change',
         body: {
-          if (_byCode)
+          if (_method == 2)
             'emailCode': _code.text
+          else if (_method == 1)
+            'reauthToken': _reauthToken
           else
             'currentPassword': _current.text,
           'newPassword': _password.text,
         },
       );
-      if (mounted) {
-        Navigator.of(context).pop(true);
-        qfToast(context, '密码已经修改');
+      if (!mounted) return;
+      if (_method == 0) {
+        var rewrapped = false;
+        try {
+          final vaultOk = await QfVaultService.rewrapAll(
+            session: widget.session,
+            oldPassword: _current.text,
+            newPassword: _password.text,
+          );
+          final historyOk = await QfChatHistoryVault.rewrapHistoryKey(
+            session: widget.session,
+            oldPassword: _current.text,
+            newPassword: _password.text,
+          );
+          rewrapped = vaultOk && historyOk;
+        } catch (_) {
+          rewrapped = false;
+        }
+        if (!rewrapped) {
+          setState(() {
+            _busy = false;
+            _vaultFailed = true;
+          });
+          return;
+        }
       }
+      Navigator.of(context).pop(true);
+      qfToast(context, '密码已经修改');
     } on QfApiException catch (e) {
-      if (mounted) qfToast(context, e.message);
-    } finally {
-      if (mounted) setState(() => _busy = false);
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          if (e.code == 'REAUTH_INVALID') _reauthToken = null;
+        });
+        qfToast(context, e.message);
+      }
     }
   }
 
@@ -411,19 +770,28 @@ class _QfChangePasswordDialogState extends State<_QfChangePasswordDialog> {
       content: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            SegmentedButton<bool>(
+            SegmentedButton<int>(
               segments: const [
-                ButtonSegment(value: false, label: Text('当前密码')),
-                ButtonSegment(value: true, label: Text('邮箱验证码')),
+                ButtonSegment(value: 0, label: Text('当前密码')),
+                ButtonSegment(value: 1, label: Text('通行密钥')),
+                ButtonSegment(value: 2, label: Text('邮箱验证码')),
               ],
-              selected: {_byCode},
+              selected: {_method},
               onSelectionChanged: (value) {
-                setState(() => _byCode = value.first);
+                setState(() => _method = value.first);
               },
             ),
             const SizedBox(height: 12),
-            if (_byCode)
+            if (_method != 0)
+              const Padding(
+                padding: EdgeInsets.only(bottom: 12),
+                child: Text(
+                  '通过此方式改密后，云端保险库（订阅备份、聊天记录、聊天密钥备份）无法自动迁移，请改用当前密码验证，或改密后重新备份。',
+                ),
+              ),
+            if (_method == 2)
               QfField(
                 controller: _code,
                 label: '邮箱验证码',
@@ -444,6 +812,14 @@ class _QfChangePasswordDialogState extends State<_QfChangePasswordDialog> {
                   child: const Text('发送验证码'),
                 ),
               )
+            else if (_method == 1)
+              if (_reauthToken == null)
+                OutlinedButton(
+                  onPressed: _busy ? null : _usePasskey,
+                  child: const Text('使用通行密钥验证'),
+                )
+              else
+                const Text('已通过通行密钥验证。')
             else
               QfField(controller: _current, label: '当前密码', obscure: true),
             const SizedBox(height: 12),
@@ -455,18 +831,32 @@ class _QfChangePasswordDialogState extends State<_QfChangePasswordDialog> {
               obscure: true,
               error: _confirmError,
             ),
+            if (_vaultFailed) ...[
+              const SizedBox(height: 12),
+              const Text(
+                '密码已修改，但云端保险库未能同步迁移，请重新备份订阅与聊天记录。',
+                style: TextStyle(color: Colors.red),
+              ),
+            ],
           ],
         ),
       ),
       actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(false),
-          child: const Text('取消'),
-        ),
-        FilledButton(
-          onPressed: _busy ? null : _submit,
-          child: const Text('确认修改'),
-        ),
+        if (_vaultFailed)
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('我知道了'),
+          )
+        else ...[
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: _busy ? null : _submit,
+            child: const Text('确认修改'),
+          ),
+        ],
       ],
     );
   }
@@ -669,7 +1059,7 @@ class _QfFeedbackPageState extends State<QfFeedbackPage> {
   }
 }
 
-class QfBlockingPage extends StatelessWidget {
+class QfBlockingPage extends StatefulWidget {
   final String title;
   final String body;
   final QfUpdateCheck? update;
@@ -684,7 +1074,98 @@ class QfBlockingPage extends StatelessWidget {
   });
 
   @override
+  State<QfBlockingPage> createState() => _QfBlockingPageState();
+}
+
+class _QfBlockingPageState extends State<QfBlockingPage> {
+  bool _later = false;
+
+  bool get _isGuestQuota => widget.onSwitchAccount != null;
+
+  @override
   Widget build(BuildContext context) {
+    if (_isGuestQuota) {
+      return Scaffold(
+        body: SafeArea(
+          child: Center(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(24),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 460),
+                child: Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: _later
+                        ? Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              Text(
+                                widget.title,
+                                textAlign: TextAlign.center,
+                                style: AppTextStyle.pageTitle.of(context),
+                              ),
+                              const SizedBox(height: 16),
+                              const Text(
+                                '您已选择暂不登录。今日访客额度恢复或登录后，可继续使用全部功能。',
+                                textAlign: TextAlign.center,
+                              ),
+                              const SizedBox(height: 24),
+                              FilledButton(
+                                onPressed: widget.onSwitchAccount,
+                                child: const Text('登录账号'),
+                              ),
+                              const SizedBox(height: 8),
+                              OutlinedButton(
+                                onPressed: () =>
+                                    QfUpdateFlow.runManualCheck(context),
+                                child: const Text('检查更新'),
+                              ),
+                              const SizedBox(height: 8),
+                              TextButton(
+                                onPressed: () => setState(() => _later = false),
+                                child: const Text('返回登录提示'),
+                              ),
+                            ],
+                          )
+                        : Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              Text(
+                                widget.title,
+                                textAlign: TextAlign.center,
+                                style: AppTextStyle.pageTitle.of(context),
+                              ),
+                              const SizedBox(height: 16),
+                              const Text(
+                                '当日免费 2 小时额度已用完，登录畅享不限额，还有积分好礼相送',
+                                textAlign: TextAlign.center,
+                              ),
+                              const SizedBox(height: 24),
+                              FilledButton(
+                                onPressed: widget.onSwitchAccount,
+                                child: const Text('登录账号'),
+                              ),
+                              const SizedBox(height: 8),
+                              OutlinedButton(
+                                onPressed: () => setState(() => _later = true),
+                                child: const Text('暂不登录'),
+                              ),
+                              const SizedBox(height: 8),
+                              TextButton(
+                                onPressed: () =>
+                                    QfUpdateFlow.runManualCheck(context),
+                                child: const Text('检查更新'),
+                              ),
+                            ],
+                          ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
     return Scaffold(
       body: SafeArea(
         child: Center(
@@ -696,23 +1177,16 @@ class QfBlockingPage extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   Text(
-                    title,
+                    widget.title,
                     textAlign: TextAlign.center,
                     style: AppTextStyle.pageTitle.of(context),
                   ),
                   const SizedBox(height: 16),
-                  Text(body, textAlign: TextAlign.center),
-                  if (update != null &&
-                      update!.decision != QfUpdateDecision.none) ...[
+                  Text(widget.body, textAlign: TextAlign.center),
+                  if (widget.update != null &&
+                      widget.update!.decision != QfUpdateDecision.none) ...[
                     const SizedBox(height: 24),
-                    QfUpdateDownloadPanel(result: update!),
-                  ],
-                  if (onSwitchAccount != null) ...[
-                    const SizedBox(height: 16),
-                    FilledButton(
-                      onPressed: onSwitchAccount,
-                      child: const Text('登录账号'),
-                    ),
+                    QfUpdateDownloadPanel(result: widget.update!),
                   ],
                 ],
               ),
@@ -754,14 +1228,25 @@ class _QfUpdateDownloadPanelState extends State<QfUpdateDownloadPanel> {
         onProgress: (value) {
           if (mounted) setState(() => _progress = value);
         },
+        expectedSha256: widget.result.sha256,
+        expectedSizeBytes: widget.result.sizeBytes,
       );
       if (mounted) setState(() => _status = '下载完成，正在打开安装');
-      await QfUpdateService.install(file);
-      if (mounted) setState(() => _status = '已打开安装程序，请按提示完成安装');
+      final launched = await QfUpdateService.install(file);
+      if (mounted) {
+        setState(() {
+          if (launched) {
+            _status = '已打开安装程序，请按提示完成安装';
+          } else {
+            _status = '自动安装未能启动，请前往官网下载最新版安装包。';
+            _downloading = false;
+          }
+        });
+      }
     } catch (e) {
       if (mounted) {
         setState(() {
-          _status = '下载失败，请检查网络后重试';
+          _status = e is QfApiException ? e.message : '下载失败，请检查网络后重试';
           _downloading = false;
         });
       }
@@ -915,6 +1400,8 @@ class _QfAppealPageState extends State<QfAppealPage> {
   final _password = TextEditingController();
   final _content = TextEditingController();
   int? _remaining;
+  int? _limit;
+  String? _quotaError;
   bool _checking = false;
   bool _busy = false;
 
@@ -924,9 +1411,6 @@ class _QfAppealPageState extends State<QfAppealPage> {
   void initState() {
     super.initState();
     _account.text = widget.initialAccount;
-    if (_account.text.isNotEmpty) {
-      _checkQuota();
-    }
   }
 
   @override
@@ -937,25 +1421,41 @@ class _QfAppealPageState extends State<QfAppealPage> {
     super.dispose();
   }
 
-  Future<void> _checkQuota() async {
-    final account = _account.text.trim();
-    if (account.isEmpty) return;
-    setState(() => _checking = true);
+  Future<bool> _checkQuota() async {
+    final identifier = _account.text.trim();
+    if (identifier.isEmpty || _password.text.isEmpty) {
+      setState(() => _quotaError = '请先填写账户 ID 或邮箱与登录密码，再查询剩余申诉次数');
+      return false;
+    }
+    setState(() {
+      _checking = true;
+      _quotaError = null;
+    });
     try {
       final data = await QfHttp.send(
-        'GET',
-        '${widget.serverBaseUrl}/appeals/quota'
-            '?account=${Uri.encodeQueryComponent(account)}',
+        'POST',
+        '${widget.serverBaseUrl}/appeals/quota',
+        body: {'identifier': identifier, 'password': _password.text},
       );
       if (mounted) {
         setState(() {
           final remaining = data['remaining'];
+          final limit = data['limit'];
           _remaining = remaining is num ? remaining.toInt() : null;
+          _limit = limit is num ? limit.toInt() : null;
           _checking = false;
         });
       }
-    } catch (_) {
-      if (mounted) setState(() => _checking = false);
+      return true;
+    } on QfApiException catch (e) {
+      if (mounted) {
+        setState(() {
+          _checking = false;
+          _remaining = null;
+          _quotaError = e.message;
+        });
+      }
+      return false;
     }
   }
 
@@ -966,15 +1466,15 @@ class _QfAppealPageState extends State<QfAppealPage> {
       qfToast(context, '请完整填写账户、密码与申诉说明');
       return;
     }
-    await _checkQuota();
-    if (_exhausted) return;
+    final quotaOk = await _checkQuota();
+    if (!quotaOk || _exhausted) return;
     setState(() => _busy = true);
     try {
       final result = await QfHttp.send(
         'POST',
         '${widget.serverBaseUrl}/appeals',
         body: {
-          'account': _account.text.trim(),
+          'identifier': _account.text.trim(),
           'password': _password.text,
           'content': _content.text.trim(),
         },
@@ -1002,13 +1502,21 @@ class _QfAppealPageState extends State<QfAppealPage> {
           TextField(
             controller: _account,
             decoration: const InputDecoration(labelText: '账户 ID 或邮箱'),
-            onSubmitted: (_) => _checkQuota(),
           ),
           const SizedBox(height: 12),
           TextField(
             controller: _password,
             obscureText: true,
             decoration: const InputDecoration(labelText: '登录密码'),
+            onSubmitted: (_) => _checkQuota(),
+          ),
+          const SizedBox(height: 8),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton(
+              onPressed: _checking ? null : _checkQuota,
+              child: const Text('查询剩余申诉次数'),
+            ),
           ),
           const SizedBox(height: 12),
           TextField(
@@ -1023,12 +1531,14 @@ class _QfAppealPageState extends State<QfAppealPage> {
           const SizedBox(height: 8),
           if (_checking)
             const Text('正在查询剩余申诉次数……')
+          else if (_quotaError != null)
+            Text(_quotaError!, style: const TextStyle(color: Colors.red))
           else if (_remaining != null)
             Text(
-              '剩余申诉次数：$_remaining（${widget.permanent ? '永久封禁共 2 次' : '共 3 次'}）',
+              '剩余申诉次数：$_remaining（共 ${_limit ?? (widget.permanent ? 2 : 3)} 次）',
             )
           else
-            const Text('填写账户后将自动查询剩余申诉次数'),
+            const Text('填写账户与密码后，可查询剩余申诉次数'),
           if (_exhausted)
             const Padding(
               padding: EdgeInsets.only(top: 8),
