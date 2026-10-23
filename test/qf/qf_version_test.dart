@@ -6,11 +6,13 @@ import 'package:flutter_test/flutter_test.dart';
 QfReleaseManifest _manifest({
   String latest = '1.0.0',
   String retiredBelow = '0.0.0',
+  String minUsable = '0.0.0',
   bool maintenance = false,
 }) {
   return QfReleaseManifest.fromJson({
     'latestVersion': latest,
     'retiredBelowVersion': retiredBelow,
+    'minUsableVersion': minUsable,
     'maintenance': maintenance,
     'serverBaseUrl': 'https://example.invalid',
     'googleClientId': 'top-level-id',
@@ -27,8 +29,11 @@ QfReleaseManifest _manifest({
 
 void main() {
   test('version parse and compare', () {
-    expect(QfVersion.tryParse('1.2.3')!.compareTo(QfVersion(1, 2, 4)), -1);
-    expect(QfVersion.tryParse('v1.0.0'), QfVersion(1, 0, 0));
+    expect(
+      QfVersion.tryParse('1.2.3')!.compareTo(const QfVersion(1, 2, 4)),
+      -1,
+    );
+    expect(QfVersion.tryParse('v1.0.0'), const QfVersion(1, 0, 0));
     expect(QfVersion.tryParse('bad'), isNull);
   });
 
@@ -54,6 +59,67 @@ void main() {
     expect(
       decide('0.9.1', _manifest(retiredBelow: '1.0.0', maintenance: true)),
       QfUpdateDecision.maintenance,
+    );
+  });
+
+  test('update decision honours minUsableVersion', () {
+    QfUpdateDecision decide(String current, QfReleaseManifest manifest) {
+      return decideQfUpdate(
+        current: QfVersion.tryParse(current)!,
+        manifest: manifest,
+      );
+    }
+
+    expect(
+      decide('1.0.0', _manifest(latest: '1.0.1', minUsable: '1.0.1')),
+      QfUpdateDecision.force,
+    );
+    expect(
+      decide('1.0.0', _manifest(latest: '1.0.1', minUsable: '1.0.0')),
+      QfUpdateDecision.minor,
+    );
+    expect(
+      decide('1.0.1', _manifest(latest: '1.0.2', minUsable: '1.0.1')),
+      QfUpdateDecision.minor,
+    );
+    expect(
+      decide('1.0.0', _manifest(latest: '2.0.0', minUsable: '1.0.0')),
+      QfUpdateDecision.force,
+    );
+    expect(
+      decide(
+        '0.9.0',
+        _manifest(latest: '1.0.1', retiredBelow: '1.0.0', minUsable: '1.0.1'),
+      ),
+      QfUpdateDecision.retired,
+    );
+  });
+
+  test('manifest minUsableVersion parsing', () {
+    final manifest = _manifest(latest: '1.0.1', minUsable: '1.0.1');
+    expect(manifest.minUsableVersion, '1.0.1');
+    expect(manifest.toJson()['minUsableVersion'], '1.0.1');
+    final roundTripped = QfReleaseManifest.fromJson(manifest.toJson());
+    expect(roundTripped.minUsableVersion, '1.0.1');
+    expect(roundTripped.toJson(), manifest.toJson());
+
+    final withoutField = QfReleaseManifest.fromJson({
+      'latestVersion': '1.0.1',
+      'retiredBelowVersion': '0.0.0',
+      'maintenance': false,
+      'serverBaseUrl': 'https://example.invalid',
+      'googleClientId': 'top-level-id',
+      'platforms': {
+        'android': {'downloadUrl': '', 'notes': 'n'},
+      },
+    });
+    expect(withoutField.minUsableVersion, '0.0.0');
+    expect(
+      decideQfUpdate(
+        current: QfVersion.tryParse('1.0.0')!,
+        manifest: withoutField,
+      ),
+      QfUpdateDecision.minor,
     );
   });
 

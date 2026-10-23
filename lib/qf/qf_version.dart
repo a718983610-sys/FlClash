@@ -53,6 +53,7 @@ enum QfUpdateDecision { none, minor, force, retired, maintenance }
 class QfReleaseManifest {
   final String latestVersion;
   final String retiredBelowVersion;
+  final String minUsableVersion;
   final bool maintenance;
   final String serverBaseUrl;
   final String googleClientId;
@@ -61,6 +62,7 @@ class QfReleaseManifest {
   const QfReleaseManifest({
     required this.latestVersion,
     required this.retiredBelowVersion,
+    this.minUsableVersion = '0.0.0',
     required this.maintenance,
     required this.serverBaseUrl,
     required this.googleClientId,
@@ -82,6 +84,7 @@ class QfReleaseManifest {
     return QfReleaseManifest(
       latestVersion: (json['latestVersion'] ?? '').toString(),
       retiredBelowVersion: (json['retiredBelowVersion'] ?? '0.0.0').toString(),
+      minUsableVersion: (json['minUsableVersion'] ?? '0.0.0').toString(),
       maintenance: json['maintenance'] == true,
       serverBaseUrl: (json['serverBaseUrl'] ?? '').toString(),
       googleClientId: (json['googleClientId'] ?? '').toString(),
@@ -93,6 +96,7 @@ class QfReleaseManifest {
     return {
       'latestVersion': latestVersion,
       'retiredBelowVersion': retiredBelowVersion,
+      'minUsableVersion': minUsableVersion,
       'maintenance': maintenance,
       'serverBaseUrl': serverBaseUrl,
       'googleClientId': googleClientId,
@@ -163,6 +167,10 @@ QfUpdateDecision decideQfUpdate({
   final retiredBelow = QfVersion.tryParse(manifest.retiredBelowVersion);
   if (retiredBelow != null && current < retiredBelow) {
     return QfUpdateDecision.retired;
+  }
+  final minUsable = QfVersion.tryParse(manifest.minUsableVersion);
+  if (minUsable != null && current < minUsable && current < latest) {
+    return QfUpdateDecision.force;
   }
   if (current.major < latest.major) return QfUpdateDecision.force;
   if (current < latest) return QfUpdateDecision.minor;
