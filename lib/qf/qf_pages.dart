@@ -233,6 +233,17 @@ class QfLoginForm extends StatefulWidget {
   State<QfLoginForm> createState() => _QfLoginFormState();
 }
 
+Future<bool> qfRefreshGoogleRuntime() async {
+  if (QfGoogleAuth.isConfigured) return true;
+  final manifest = await QfManifestService.fetchRemote();
+  if (manifest == null) return QfGoogleAuth.isConfigured;
+  QfRuntime.googleClientId = manifest.googleClientIdFor(
+    QfUpdateService.platformKey,
+  );
+  QfRuntime.googleWebClientId = manifest.googleClientId;
+  return QfGoogleAuth.isConfigured;
+}
+
 class _QfLoginFormState extends State<QfLoginForm> {
   final _email = TextEditingController();
   final _password = TextEditingController();
@@ -245,6 +256,18 @@ class _QfLoginFormState extends State<QfLoginForm> {
   bool _dual = false;
   bool _busy = false;
   bool _remember = true;
+
+  @override
+  void initState() {
+    super.initState();
+    if (!QfGoogleAuth.isConfigured) {
+      unawaited(
+        qfRefreshGoogleRuntime().then((_) {
+          if (mounted) setState(() {});
+        }),
+      );
+    }
+  }
 
   @override
   void dispose() {
@@ -429,14 +452,28 @@ class _QfLoginFormState extends State<QfLoginForm> {
             account: _email.text.trim(),
           );
         } else {
-          qfToast(context, e.message);
+          qfToast(context, qfAccountErrorMessage(e));
         }
       }
-    } catch (_) {
-      if (mounted) qfToast(context, '通行密钥验证未完成，请重试或改用密码登录');
+    } catch (e) {
+      if (mounted) qfToast(context, qfPasskeyFailureText(e));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  Future<void> _googleLoginTap() async {
+    if (_busy) return;
+    if (!QfGoogleAuth.isConfigured) {
+      final ready = await qfRefreshGoogleRuntime();
+      if (!mounted) return;
+      if (!ready) {
+        qfToast(context, QfCopy.googleNotConfiguredHint);
+        return;
+      }
+      setState(() {});
+    }
+    await _googleLogin();
   }
 
   Future<void> _googleLogin() async {
@@ -599,7 +636,7 @@ class _QfLoginFormState extends State<QfLoginForm> {
         ),
         const SizedBox(height: 8),
         OutlinedButton(
-          onPressed: googleReady && !_busy ? _googleLogin : null,
+          onPressed: _busy ? null : _googleLoginTap,
           child: const Text('使用谷歌账号登录'),
         ),
         Row(

@@ -331,4 +331,29 @@ void main() {
       expect(prefs.getString('qf_access_token'), isNull);
     });
   });
+
+  group('unavailable login methods must explain themselves', () {
+    testWidgets('google button explains when not configured', (tester) async {
+      tester.view.physicalSize = const Size(1080, 2600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      SharedPreferences.setMockInitialValues({});
+      final session = _FakeAccountSession();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(body: QfLoginForm(session: session)),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      final button = find.widgetWithText(OutlinedButton, '使用谷歌账号登录');
+      expect(button, findsOneWidget);
+      expect(tester.widget<OutlinedButton>(button).onPressed, isNotNull);
+      await tester.tap(button);
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
+      expect(find.text(QfCopy.googleNotConfiguredHint), findsOneWidget);
+    });
+
+  });
 }
