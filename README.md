@@ -29,3 +29,15 @@
 
 - 安卓签名密钥为机主专属，所有版本同一把，丢了将无法覆盖更新——请离线备份。
 - 上游文档与原始说明见上游仓库，本仓库仅作个人自维护用途。
+
+## 版本清单 qfclash-release.json
+
+QFClash 1.0.0 及以上客户端启动时读取本文件（仓库根目录），用于版本政策与服务配置，字段说明：
+
+- `latestVersion`：最新版本号。客户端当前版本主版本号低于它时触发大版本强制更新；同主版本低于它时提示小版本更新。
+- `minUsableVersion`：最低可用版本说明字段（与强制更新口径对应）。
+- `retiredBelowVersion`：停服线。当前版本低于该版本时显示「该版本已停止服务」窗口。
+- `maintenance`：系统维护开关。为 `true` 时，所有客户端启动即显示「系统维护中」窗口（无按钮、不可关闭），置回 `false` 后自动恢复。
+- `serverBaseUrl`：账号服务地址。客户端不写死地址，以本字段为准。
+- `googleClientId`：谷歌登录客户端 ID（顶层为通用值，可被平台值覆盖）。
+- `platforms.android` / `platforms.windows`：分平台配置，含 `downloadUrl`（应用内更新下载地址，留空则从同版本 GitHub Release 自动获取）、`notes`（更新说明，面向用户的官方口吻）、`googleClientId`（该平台谷歌登录客户端 ID）。
