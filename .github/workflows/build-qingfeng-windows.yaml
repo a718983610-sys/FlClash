@@ -8,6 +8,9 @@ name: build-qingfeng-windows
 on:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build-windows:
     runs-on: windows-2022
@@ -30,6 +33,23 @@ jobs:
         with:
           flutter-version: '3.47.6'
           channel: stable
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      # 与安卓 workflow 同一步：子模块里的 ca-certificates.crt 是 0 字节
+      # 占位文件，不拉真包则 Windows 核心内嵌空证书包，HTTPS 校验无根证书。
+      - name: Fetch CA certificates
+        shell: pwsh
+        env:
+          CA_BUNDLE: cacert-2026-09-25.pem
+          CA_BUNDLE_SHA256: a41b5d356aea97a529fe27e0f7316d2f9d946d75927476cf9cf1b90637d00505
+        run: |
+          $bundle = "core/Clash.Meta/component/ca/ca-certificates.crt"
+          curl.exe -fsSL --retry 3 -o $bundle "https://curl.se/ca/$env:CA_BUNDLE"
+          if ($LASTEXITCODE -ne 0) { throw "CA bundle download failed" }
+          $hash = (Get-FileHash $bundle -Algorithm SHA256).Hash.ToLower()
+          if ($hash -ne $env:CA_BUNDLE_SHA256) { throw "CA bundle hash mismatch: $hash" }
 
       - name: Build and package Windows (official setup.dart)
         shell: pwsh
@@ -59,4 +79,8 @@ jobs:
           $zipNew = "./dist/QFClash-Windows-v$version.zip"
           Move-Item $exe.FullName $exeNew -Force
           Move-Item $zip.FullName $zipNew -Force
-          gh release create $tag $pre --title "QFClash Windows版 v$version" --notes "QFClash Windows 版：QFClash-Windows-v$version.exe 是安装包（推荐，含后台服务）；QFClash-Windows-v$version.zip 是便携版（解压即用）。安卓版请到标签 android-v 开头的发布里下载，不要下错。" $exeNew $zipNew
+          # 注意：$pre 为空时不能直接内插进命令（pwsh 会传一个空字符串参数，
+          # gh 会把它当成文件通配而报 "no matches found"）——用参数数组拼。
+          $createArgs = @($tag, '--title', "QFClash Windows版 v$version", '--notes', "QFClash Windows 版：QFClash-Windows-v$version.exe 是安装包（推荐，含后台服务）；QFClash-Windows-v$version.zip 是便携版（解压即用）。安卓版请到标签 android-v 开头的发布里下载，不要下错。", $exeNew, $zipNew)
+          if ($pre) { $createArgs += '--prerelease' }
+          gh release create @createArgs
