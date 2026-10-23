@@ -409,6 +409,7 @@ class _QfRecoveryAppealPageState extends State<QfRecoveryAppealPage> {
               ),
               if (controllers.length > 1)
                 IconButton(
+                  tooltip: '删除此行',
                   onPressed: () {
                     setState(() {
                       controllers.removeAt(i).dispose();
