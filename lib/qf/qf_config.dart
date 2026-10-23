@@ -131,6 +131,7 @@ class QfCopy {
   static const String qrCameraUnsupported = '当前设备不支持相机扫码，请导入二维码图片。';
   static const String qrNoCodeFound = '图片中没有识别到有效的二维码';
   static const String googleNotConfiguredHint = '谷歌登录尚未完成配置，请改用邮箱或账户 ID 登录。';
+  static const String actionFailedRetry = '操作没有完成，请检查网络后重试；如果连续失败，请稍后再试。';
   static const String attachmentsTitle = '我的附件';
   static const String attachmentsEmpty = '暂无附件';
   static const String attachmentsDeleteHint = '删除后文件将进入 7 天待删除期，期满后彻底清除。';

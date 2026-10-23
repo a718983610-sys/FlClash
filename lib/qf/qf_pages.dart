@@ -88,6 +88,183 @@ class _QfSendAborted implements Exception {
   const _QfSendAborted();
 }
 
+enum QfFailureKind {
+  network,
+  rejected,
+  credential,
+  cancelled,
+  unsupported,
+  validation,
+  unknown,
+}
+
+class QfFailure {
+  final QfFailureKind kind;
+  final String message;
+
+  const QfFailure(this.kind, this.message);
+}
+
+/// 登录链失败分类：网络不可达走定稿口径，业务拒绝回服务端原文，
+/// 凭据/取消/不支持单列，未知异常给可操作兜底文案（不外泄原始报错）。
+QfFailure qfClassifyAuthError(Object error, {bool guest = false}) {
+  if (error is _QfSendAborted) {
+    return const QfFailure(QfFailureKind.validation, '');
+  }
+  if (error is QfPasskeyException) {
+    final message = error.message;
+    if (message.contains('已取消')) {
+      return QfFailure(QfFailureKind.cancelled, message);
+    }
+    if (message.contains('不支持')) {
+      return QfFailure(QfFailureKind.unsupported, message);
+    }
+    return QfFailure(QfFailureKind.rejected, message);
+  }
+  if (error is MissingPluginException || error is PlatformException) {
+    final message = qfPasskeyFailureText(error);
+    if (message.contains('已取消')) {
+      return QfFailure(QfFailureKind.cancelled, message);
+    }
+    if (message.contains('不支持')) {
+      return QfFailure(QfFailureKind.unsupported, message);
+    }
+    return QfFailure(QfFailureKind.rejected, message);
+  }
+  if (error is QfGoogleAuthException) {
+    final message = error.message;
+    if (message.contains('已取消')) {
+      return QfFailure(QfFailureKind.cancelled, message);
+    }
+    if (message.contains('尚未完成配置') || message.contains('暂不支持')) {
+      return QfFailure(QfFailureKind.unsupported, message);
+    }
+    return QfFailure(QfFailureKind.rejected, message);
+  }
+  if (error is QfApiException) {
+    if (error.isNetworkFailure) {
+      return QfFailure(
+        QfFailureKind.network,
+        guest ? qfGuestErrorMessage(error) : qfAccountErrorMessage(error),
+      );
+    }
+    if (error.code == 'NOT_CONFIGURED') {
+      return QfFailure(QfFailureKind.unsupported, error.message);
+    }
+    if (error.status == 401 ||
+        error.status == 403 ||
+        error.code == 'BAD_CREDENTIALS' ||
+        error.code == 'INVALID_CREDENTIALS') {
+      return QfFailure(QfFailureKind.credential, error.message);
+    }
+    return QfFailure(
+      QfFailureKind.rejected,
+      guest ? qfGuestErrorMessage(error) : error.message,
+    );
+  }
+  return const QfFailure(QfFailureKind.unknown, QfCopy.actionFailedRetry);
+}
+
+/// 登录链通用动作按钮：忙态只锁自身、点击即呈现进度，
+/// 失败经分类器内联呈现（对话框场景可关内联改走 onFailure 自行呈现）。
+class QfActionButton extends StatefulWidget {
+  final String label;
+  final String busyLabel;
+  final Future<void> Function() onAction;
+  final QfFailure Function(Object error)? classify;
+  final void Function(QfFailure failure)? onFailure;
+  final bool filled;
+  final bool showInlineError;
+  final bool enabled;
+
+  const QfActionButton({
+    super.key,
+    required this.label,
+    required this.onAction,
+    this.busyLabel = '处理中……',
+    this.classify,
+    this.onFailure,
+    this.filled = true,
+    this.showInlineError = true,
+    this.enabled = true,
+  });
+
+  @override
+  State<QfActionButton> createState() => _QfActionButtonState();
+}
+
+class _QfActionButtonState extends State<QfActionButton> {
+  bool _busy = false;
+  QfFailure? _failure;
+
+  Future<void> _tap() async {
+    if (_busy || !widget.enabled) return;
+    setState(() {
+      _busy = true;
+      _failure = null;
+    });
+    try {
+      await widget.onAction();
+      if (mounted) setState(() => _busy = false);
+    } catch (e) {
+      final failure = widget.classify?.call(e) ?? qfClassifyAuthError(e);
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _failure = failure;
+        });
+      }
+      if (failure.kind != QfFailureKind.validation) {
+        widget.onFailure?.call(failure);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final child = _busy
+        ? Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+              const SizedBox(width: 8),
+              Text(widget.busyLabel),
+            ],
+          )
+        : Text(widget.label);
+    final onPressed = _busy || !widget.enabled ? null : _tap;
+    final button = widget.filled
+        ? FilledButton(onPressed: onPressed, child: child)
+        : OutlinedButton(onPressed: onPressed, child: child);
+    final failure = _failure;
+    if (!widget.showInlineError ||
+        failure == null ||
+        failure.message.isEmpty) {
+      return button;
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        button,
+        Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: Text(
+            failure.message,
+            textAlign: TextAlign.center,
+            style: AppTextStyle.caption1
+                .of(context)
+                .copyWith(color: Theme.of(context).colorScheme.error),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class QfCodeSendButton extends StatefulWidget {
   final Future<int?> Function() onSend;
   final void Function(Object error)? onError;
@@ -153,7 +330,8 @@ class _QfCodeSendButtonState extends State<QfCodeSendButton> {
       if (onError != null) {
         onError(e);
       } else {
-        qfToast(context, qfAccountErrorMessage(e));
+        final message = qfClassifyAuthError(e).message;
+        if (message.isNotEmpty) qfToast(context, message);
       }
     }
   }
@@ -196,7 +374,6 @@ class QfEntryPage extends StatefulWidget {
 
 class _QfEntryPageState extends State<QfEntryPage> {
   bool _register = false;
-  bool _busy = false;
 
   Future<void> _enterGuest() async {
     final confirmed = await showDialog<bool>(
@@ -220,15 +397,8 @@ class _QfEntryPageState extends State<QfEntryPage> {
         );
       },
     );
-    if (confirmed != true || !mounted) return;
-    setState(() => _busy = true);
-    try {
-      await widget.session.enterGuest();
-    } on QfApiException catch (e) {
-      if (mounted) qfToast(context, qfGuestErrorMessage(e));
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
+    if (confirmed != true || !mounted) throw const _QfSendAborted();
+    await widget.session.enterGuest();
   }
 
   @override
@@ -269,9 +439,12 @@ class _QfEntryPageState extends State<QfEntryPage> {
                   const SizedBox(height: 24),
                   const Divider(),
                   const SizedBox(height: 8),
-                  OutlinedButton(
-                    onPressed: _busy ? null : _enterGuest,
-                    child: const Text('免登录使用（访客模式）'),
+                  QfActionButton(
+                    label: '免登录使用（访客模式）',
+                    busyLabel: '正在进入访客模式……',
+                    filled: false,
+                    classify: (e) => qfClassifyAuthError(e, guest: true),
+                    onAction: _enterGuest,
                   ),
                   const SizedBox(height: 4),
                   Text(
@@ -346,8 +519,8 @@ class _QfLoginFormState extends State<QfLoginForm> {
   String? _passwordError;
   String? _codeError;
   String? _stepUpError;
+  String? _stepUpFailureText;
   bool _dual = false;
-  bool _busy = false;
   bool _remember = true;
 
   @override
@@ -374,33 +547,29 @@ class _QfLoginFormState extends State<QfLoginForm> {
   Future<void> _verifyStepUp() async {
     setState(() {
       _stepUpError = _stepUpCode.text.trim().isEmpty ? '请输入验证码' : null;
+      _stepUpFailureText = null;
     });
-    if (_stepUpError != null) return;
-    setState(() => _busy = true);
+    if (_stepUpError != null) throw const _QfSendAborted();
     try {
       await widget.session.verifyStepUp(_stepUpCode.text.trim());
     } on QfApiException catch (e) {
-      if (mounted) {
-        if (e.code == 'ACCOUNT_FROZEN') {
-          final action = await qfShowFrozenDialog(
+      if (e.code == 'ACCOUNT_FROZEN' && mounted) {
+        final action = await qfShowFrozenDialog(
+          context,
+          message: e.message,
+          frozenAt: (e.data['passwordFrozenAt'] as num?)?.toInt(),
+        );
+        if (mounted) {
+          await qfHandleFrozenAction(
             context,
-            message: e.message,
-            frozenAt: (e.data['passwordFrozenAt'] as num?)?.toInt(),
+            session: widget.session,
+            action: action,
+            account: _email.text.trim(),
           );
-          if (mounted) {
-            await qfHandleFrozenAction(
-              context,
-              session: widget.session,
-              action: action,
-              account: _email.text.trim(),
-            );
-          }
-        } else {
-          qfToast(context, qfAccountErrorMessage(e));
         }
+        return;
       }
-    } finally {
-      if (mounted) setState(() => _busy = false);
+      rethrow;
     }
   }
 
@@ -422,8 +591,9 @@ class _QfLoginFormState extends State<QfLoginForm> {
       _passwordError = _password.text.isEmpty ? '请输入密码' : null;
       _codeError = null;
     });
-    if (_emailError != null || _passwordError != null) return;
-    setState(() => _busy = true);
+    if (_emailError != null || _passwordError != null) {
+      throw const _QfSendAborted();
+    }
     try {
       final outcome = await widget.session.login(
         emailInput: _email.text,
@@ -499,16 +669,13 @@ class _QfLoginFormState extends State<QfLoginForm> {
         } else if (e.code == 'BAD_CREDENTIALS') {
           setState(() => _passwordError = qfAccountErrorMessage(e));
         } else {
-          qfToast(context, qfAccountErrorMessage(e));
+          rethrow;
         }
       }
-    } finally {
-      if (mounted) setState(() => _busy = false);
     }
   }
 
   Future<void> _passkeyLogin() async {
-    setState(() => _busy = true);
     try {
       final options = await widget.session.passkeyLoginOptions(
         _email.text.trim().isEmpty ? null : _email.text.trim(),
@@ -539,32 +706,24 @@ class _QfLoginFormState extends State<QfLoginForm> {
             account: _email.text.trim(),
           );
         } else {
-          qfToast(context, qfAccountErrorMessage(e));
+          rethrow;
         }
       }
-    } catch (e) {
-      if (mounted) qfToast(context, qfPasskeyFailureText(e));
-    } finally {
-      if (mounted) setState(() => _busy = false);
     }
-  }
-
-  Future<void> _googleLoginTap() async {
-    if (_busy) return;
-    if (!QfGoogleAuth.isConfigured) {
-      final ready = await qfRefreshGoogleRuntime();
-      if (!mounted) return;
-      if (!ready) {
-        qfToast(context, QfCopy.googleNotConfiguredHint);
-        return;
-      }
-      setState(() {});
-    }
-    await _googleLogin();
   }
 
   Future<void> _googleLogin() async {
-    setState(() => _busy = true);
+    if (!QfGoogleAuth.isConfigured) {
+      final ready = await qfRefreshGoogleRuntime();
+      if (!ready) {
+        throw const QfApiException(
+          0,
+          'NOT_CONFIGURED',
+          QfCopy.googleNotConfiguredHint,
+        );
+      }
+      if (mounted) setState(() {});
+    }
     try {
       final idToken = await QfGoogleAuth.fetchIdToken();
       await widget.session.googleLogin(idToken, remember: _remember);
@@ -580,8 +739,6 @@ class _QfLoginFormState extends State<QfLoginForm> {
       } else if (widget.session.stepUpPending) {
         setState(() {});
       }
-    } on QfGoogleAuthException catch (e) {
-      if (mounted) qfToast(context, qfAccountErrorMessage(e));
     } on QfApiException catch (e) {
       if (mounted) {
         if (e.code == 'ACCOUNT_FROZEN') {
@@ -606,11 +763,9 @@ class _QfLoginFormState extends State<QfLoginForm> {
             account: _email.text.trim(),
           );
         } else {
-          qfToast(context, qfAccountErrorMessage(e));
+          rethrow;
         }
       }
-    } finally {
-      if (mounted) setState(() => _busy = false);
     }
   }
 
@@ -686,15 +841,30 @@ class _QfLoginFormState extends State<QfLoginForm> {
                 onSend: _resendStepUp,
                 label: '重新发送验证码',
                 resendLabel: '重新发送验证码',
-                enabled: !_busy,
               ),
               const Spacer(),
-              FilledButton(
-                onPressed: _busy ? null : _verifyStepUp,
-                child: const Text('验证并登录'),
+              QfActionButton(
+                label: '验证并登录',
+                busyLabel: '正在验证……',
+                showInlineError: false,
+                onFailure: (failure) {
+                  if (mounted) {
+                    setState(() => _stepUpFailureText = failure.message);
+                  }
+                },
+                onAction: _verifyStepUp,
               ),
             ],
           ),
+          if (_stepUpFailureText != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              _stepUpFailureText!,
+              style: AppTextStyle.caption1
+                  .of(context)
+                  .copyWith(color: Theme.of(context).colorScheme.error),
+            ),
+          ],
           const SizedBox(height: 8),
           const Text(
             '邮箱无法接收验证码？请发送邮件至 a718983610@gmail.com 申请人工核验，并附上您的账户ID或绑定邮箱。',
@@ -710,19 +880,24 @@ class _QfLoginFormState extends State<QfLoginForm> {
           dense: true,
         ),
         const SizedBox(height: 8),
-        FilledButton(
-          onPressed: _busy ? null : _submit,
-          child: const Text('登录'),
+        QfActionButton(
+          label: '登录',
+          busyLabel: '正在登录……',
+          onAction: _submit,
         ),
         const SizedBox(height: 8),
-        OutlinedButton(
-          onPressed: _busy ? null : _passkeyLogin,
-          child: const Text('使用通行密钥登录'),
+        QfActionButton(
+          label: '使用通行密钥登录',
+          busyLabel: '正在验证通行密钥……',
+          filled: false,
+          onAction: _passkeyLogin,
         ),
         const SizedBox(height: 8),
-        OutlinedButton(
-          onPressed: _busy ? null : _googleLoginTap,
-          child: const Text('使用谷歌账号登录'),
+        QfActionButton(
+          label: '使用谷歌账号登录',
+          busyLabel: '正在连接谷歌……',
+          filled: false,
+          onAction: _googleLogin,
         ),
         Row(
           children: [
@@ -759,7 +934,7 @@ class _QfResetPasswordDialogState extends State<QfResetPasswordDialog> {
   final _password = TextEditingController();
   final _confirm = TextEditingController();
   String? _confirmError;
-  bool _busy = false;
+  String? _failureText;
 
   @override
   void initState() {
@@ -782,22 +957,15 @@ class _QfResetPasswordDialogState extends State<QfResetPasswordDialog> {
           ? QfCopy.passwordMismatch
           : null;
     });
-    if (_confirmError != null) return;
-    setState(() => _busy = true);
-    try {
-      await widget.session.resetConfirm(
-        emailInput: _email.text,
-        code: _code.text,
-        newPassword: _password.text,
-      );
-      if (mounted) {
-        Navigator.of(context).pop();
-        qfToast(context, '密码已经重置，请使用新密码登录');
-      }
-    } on QfApiException catch (e) {
-      if (mounted) qfToast(context, qfAccountErrorMessage(e));
-    } finally {
-      if (mounted) setState(() => _busy = false);
+    if (_confirmError != null) throw const _QfSendAborted();
+    await widget.session.resetConfirm(
+      emailInput: _email.text,
+      code: _code.text,
+      newPassword: _password.text,
+    );
+    if (mounted) {
+      Navigator.of(context).pop();
+      qfToast(context, '密码已经重置，请使用新密码登录');
     }
   }
 
@@ -836,6 +1004,15 @@ class _QfResetPasswordDialogState extends State<QfResetPasswordDialog> {
               obscure: true,
               error: _confirmError,
             ),
+            if (_failureText != null) ...[
+              const SizedBox(height: 12),
+              Text(
+                _failureText!,
+                style: AppTextStyle.caption1
+                    .of(context)
+                    .copyWith(color: Theme.of(context).colorScheme.error),
+              ),
+            ],
           ],
         ),
       ),
@@ -844,9 +1021,14 @@ class _QfResetPasswordDialogState extends State<QfResetPasswordDialog> {
           onPressed: () => Navigator.of(context).pop(),
           child: const Text('取消'),
         ),
-        FilledButton(
-          onPressed: _busy ? null : _submit,
-          child: const Text('重置密码'),
+        QfActionButton(
+          label: '重置密码',
+          busyLabel: '正在重置……',
+          showInlineError: false,
+          onFailure: (failure) {
+            if (mounted) setState(() => _failureText = failure.message);
+          },
+          onAction: _submit,
         ),
       ],
     );
@@ -873,7 +1055,6 @@ class _QfRegisterFormState extends State<QfRegisterForm> {
   String? _codeError;
   String? _passwordError;
   String? _confirmError;
-  bool _busy = false;
   String? _ticket;
   String _ticketKey = '';
 
@@ -912,9 +1093,8 @@ class _QfRegisterFormState extends State<QfRegisterForm> {
         _codeError != null ||
         _passwordError != null ||
         _confirmError != null) {
-      return;
+      throw const _QfSendAborted();
     }
-    setState(() => _busy = true);
     try {
       final key = '${_email.text.trim()}|${_code.text.trim()}';
       if (_ticket == null || _ticketKey != key) {
@@ -927,34 +1107,33 @@ class _QfRegisterFormState extends State<QfRegisterForm> {
         usernameInput: _id.text,
       );
     } on QfApiException catch (e) {
-      if (mounted && e.code == 'REGISTRATION_FROZEN') {
+      if (!mounted) return;
+      if (e.code == 'REGISTRATION_FROZEN') {
         widget.session.captureRegistrationFrozen(e);
         await qfShowRegistrationFrozenDialog(
           context,
           message: e.message,
           data: e.data,
         );
-      } else if (mounted) {
-        setState(() {
-          if (e.code.contains('USERNAME') ||
-              e.message.contains('已被注册') ||
-              e.message.contains('账户 ID') ||
-              e.message.contains('账户ID')) {
-            _idError = qfAccountErrorMessage(e);
-          } else if (e.message.contains('验证码')) {
-            _codeError = qfAccountErrorMessage(e);
-            _ticket = null;
-          } else if (e.message.contains('密码')) {
-            _passwordError = qfAccountErrorMessage(e);
-          } else if (e.message.contains('邮箱')) {
-            _emailError = qfAccountErrorMessage(e);
-          } else {
-            _codeError = qfAccountErrorMessage(e);
-          }
-        });
+        return;
       }
-    } finally {
-      if (mounted) setState(() => _busy = false);
+      setState(() {
+        if (e.code.contains('USERNAME') ||
+            e.message.contains('已被注册') ||
+            e.message.contains('账户 ID') ||
+            e.message.contains('账户ID')) {
+          _idError = qfAccountErrorMessage(e);
+        } else if (e.message.contains('验证码')) {
+          _codeError = qfAccountErrorMessage(e);
+          _ticket = null;
+        } else if (e.message.contains('密码')) {
+          _passwordError = qfAccountErrorMessage(e);
+        } else if (e.message.contains('邮箱')) {
+          _emailError = qfAccountErrorMessage(e);
+        } else {
+          _codeError = qfAccountErrorMessage(e);
+        }
+      });
     }
   }
 
@@ -1004,7 +1183,6 @@ class _QfRegisterFormState extends State<QfRegisterForm> {
           keyboardType: TextInputType.number,
           suffix: QfCodeSendButton(
             onSend: _sendRegisterCode,
-            enabled: !_busy,
             onError: (error) {
               if (error is _QfSendAborted) return;
               if (mounted) {
@@ -1014,9 +1192,10 @@ class _QfRegisterFormState extends State<QfRegisterForm> {
           ),
         ),
         const SizedBox(height: 16),
-        FilledButton(
-          onPressed: _busy ? null : _submit,
-          child: const Text('注册并登录'),
+        QfActionButton(
+          label: '注册并登录',
+          busyLabel: '正在注册……',
+          onAction: _submit,
         ),
       ],
     );
@@ -1040,7 +1219,7 @@ class _QfGoogleCompletionDialogState extends State<QfGoogleCompletionDialog> {
   String? _idError;
   String? _passwordError;
   String? _confirmError;
-  bool _busy = false;
+  String? _failureText;
 
   @override
   void dispose() {
@@ -1059,9 +1238,8 @@ class _QfGoogleCompletionDialogState extends State<QfGoogleCompletionDialog> {
           : null;
     });
     if (_idError != null || _passwordError != null || _confirmError != null) {
-      return;
+      throw const _QfSendAborted();
     }
-    setState(() => _busy = true);
     final pw = _password.text;
     try {
       await widget.session.completeGoogleSetup(
@@ -1071,7 +1249,6 @@ class _QfGoogleCompletionDialogState extends State<QfGoogleCompletionDialog> {
       if (mounted) Navigator.of(context).pop();
     } on QfApiException catch (e) {
       if (!mounted) return;
-      setState(() => _busy = false);
       switch (e.code) {
         case 'USERNAME_TAKEN':
         case 'USERNAME_INVALID':
@@ -1111,10 +1288,10 @@ class _QfGoogleCompletionDialogState extends State<QfGoogleCompletionDialog> {
           if (e.message.contains('密码')) {
             setState(() => _passwordError = qfAccountErrorMessage(e));
           } else {
-            qfToast(context, qfAccountErrorMessage(e));
+            rethrow;
           }
         default:
-          qfToast(context, qfAccountErrorMessage(e));
+          rethrow;
       }
     }
   }
@@ -1161,17 +1338,31 @@ class _QfGoogleCompletionDialogState extends State<QfGoogleCompletionDialog> {
               error: _confirmError,
               obscure: true,
             ),
+            if (_failureText != null) ...[
+              const SizedBox(height: 12),
+              Text(
+                _failureText!,
+                style: AppTextStyle.caption1
+                    .of(context)
+                    .copyWith(color: Theme.of(context).colorScheme.error),
+              ),
+            ],
           ],
         ),
       ),
       actions: [
         TextButton(
-          onPressed: _busy ? null : () => Navigator.of(context).pop(),
+          onPressed: () => Navigator.of(context).pop(),
           child: const Text('取消'),
         ),
-        FilledButton(
-          onPressed: _busy ? null : _submit,
-          child: const Text('完成设置'),
+        QfActionButton(
+          label: '完成设置',
+          busyLabel: '正在设置……',
+          showInlineError: false,
+          onFailure: (failure) {
+            if (mounted) setState(() => _failureText = failure.message);
+          },
+          onAction: _submit,
         ),
       ],
     );
@@ -1191,7 +1382,7 @@ class QfCompleteUsernameDialog extends StatefulWidget {
 class _QfCompleteUsernameDialogState extends State<QfCompleteUsernameDialog> {
   final _id = TextEditingController();
   String? _idError;
-  bool _busy = false;
+  String? _failureText;
 
   @override
   void dispose() {
@@ -1201,8 +1392,7 @@ class _QfCompleteUsernameDialogState extends State<QfCompleteUsernameDialog> {
 
   Future<void> _submit() async {
     setState(() => _idError = qfUsernameError(_id.text));
-    if (_idError != null) return;
-    setState(() => _busy = true);
+    if (_idError != null) throw const _QfSendAborted();
     try {
       await widget.session.completeUsername(_id.text.trim());
       if (mounted) {
@@ -1210,12 +1400,7 @@ class _QfCompleteUsernameDialogState extends State<QfCompleteUsernameDialog> {
         qfToast(context, '账户ID已设置。');
       }
     } on QfApiException catch (e) {
-      if (mounted) {
-        setState(() {
-          _busy = false;
-          _idError = qfAccountErrorMessage(e);
-        });
-      }
+      if (mounted) setState(() => _idError = qfAccountErrorMessage(e));
     }
   }
 
@@ -1240,17 +1425,31 @@ class _QfCompleteUsernameDialogState extends State<QfCompleteUsernameDialog> {
               padding: EdgeInsets.only(top: 4),
               child: Text('账户ID一经设置不可更改，请谨慎填写。'),
             ),
+            if (_failureText != null) ...[
+              const SizedBox(height: 12),
+              Text(
+                _failureText!,
+                style: AppTextStyle.caption1
+                    .of(context)
+                    .copyWith(color: Theme.of(context).colorScheme.error),
+              ),
+            ],
           ],
         ),
       ),
       actions: [
         TextButton(
-          onPressed: _busy ? null : () => Navigator.of(context).pop(),
+          onPressed: () => Navigator.of(context).pop(),
           child: const Text('取消'),
         ),
-        FilledButton(
-          onPressed: _busy ? null : _submit,
-          child: const Text('确认设置'),
+        QfActionButton(
+          label: '确认设置',
+          busyLabel: '正在设置……',
+          showInlineError: false,
+          onFailure: (failure) {
+            if (mounted) setState(() => _failureText = failure.message);
+          },
+          onAction: _submit,
         ),
       ],
     );
