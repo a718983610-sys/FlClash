@@ -336,6 +336,44 @@ class QfForumCountsLine extends StatelessWidget {
   }
 }
 
+/// 加载失败呈现：与空态严格分开，带重试入口（F-03）。
+class QfLoadFailure extends StatelessWidget {
+  final VoidCallback onRetry;
+  final String? message;
+  final bool compact;
+
+  const QfLoadFailure({
+    super.key,
+    required this.onRetry,
+    this.message,
+    this.compact = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Text(message ?? QfCopy.forumLoadFailed);
+    final retry = OutlinedButton(
+      onPressed: onRetry,
+      child: const Text('重试'),
+    );
+    if (compact) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [Flexible(child: text), const SizedBox(width: 12), retry],
+        ),
+      );
+    }
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [text, const SizedBox(height: 8), retry],
+      ),
+    );
+  }
+}
+
 class QfForumRewardSection extends StatefulWidget {
   final QfSessionController session;
   final Map<dynamic, dynamic> post;
@@ -451,6 +489,12 @@ class _QfForumPageState extends State<QfForumPage>
   List<dynamic> _camps = const [];
   bool _meLoading = false;
   bool _analyticsLoading = false;
+  bool _boardsFailed = false;
+  bool _campsFailed = false;
+  bool _postsFailed = false;
+  bool _meFailed = false;
+  bool _rewardsFailed = false;
+  bool _analyticsFailed = false;
 
   @override
   void initState() {
@@ -476,22 +520,40 @@ class _QfForumPageState extends State<QfForumPage>
 
   bool get _readOnly => !widget.session.isLoggedIn;
 
-  Future<void> _loadBoards() async {
-    if (!_readOnly) await widget.session.refreshCanAnnounce();
+  Future<void> _fetchBoards() async {
     try {
       final data = await widget.session.forumBoards();
       final boards = data['boards'];
       if (mounted) {
-        setState(() => _boards = boards is List ? boards : const []);
+        setState(() {
+          _boards = boards is List ? boards : const [];
+          _boardsFailed = false;
+        });
       }
-    } catch (_) {}
+    } catch (_) {
+      if (mounted) setState(() => _boardsFailed = true);
+    }
+  }
+
+  Future<void> _fetchCamps() async {
     try {
       final data = await widget.session.forumCamps();
       final camps = data['camps'];
       if (mounted) {
-        setState(() => _camps = camps is List ? camps : const []);
+        setState(() {
+          _camps = camps is List ? camps : const [];
+          _campsFailed = false;
+        });
       }
-    } catch (_) {}
+    } catch (_) {
+      if (mounted) setState(() => _campsFailed = true);
+    }
+  }
+
+  Future<void> _loadBoards() async {
+    if (!_readOnly) await widget.session.refreshCanAnnounce();
+    await _fetchBoards();
+    await _fetchCamps();
     if (!_readOnly) {
       try {
         final profile = await widget.session.forumProfile();
@@ -521,6 +583,7 @@ class _QfForumPageState extends State<QfForumPage>
           } else {
             _posts = [..._posts, ...posts];
           }
+          _postsFailed = false;
           _loading = false;
           _loadingMore = false;
         });
@@ -528,6 +591,7 @@ class _QfForumPageState extends State<QfForumPage>
     } catch (_) {
       if (mounted) {
         setState(() {
+          _postsFailed = true;
           _loading = false;
           _loadingMore = false;
         });
@@ -540,12 +604,25 @@ class _QfForumPageState extends State<QfForumPage>
     setState(() => _meLoading = true);
     try {
       final data = await widget.session.forumMeHome();
-      if (mounted) setState(() => _meHome = data);
-    } catch (_) {}
+      if (mounted) {
+        setState(() {
+          _meHome = data;
+          _meFailed = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) setState(() => _meFailed = true);
+    }
     try {
       final applications = await widget.session.forumRewardApplications();
-      if (mounted) setState(() => _rewardApplications = applications);
+      if (mounted) {
+        setState(() {
+          _rewardApplications = applications;
+          _rewardsFailed = false;
+        });
+      }
     } catch (_) {
+      if (mounted) setState(() => _rewardsFailed = true);
     } finally {
       if (mounted) setState(() => _meLoading = false);
     }
@@ -556,8 +633,14 @@ class _QfForumPageState extends State<QfForumPage>
     setState(() => _analyticsLoading = true);
     try {
       final data = await widget.session.forumAnalytics();
-      if (mounted) setState(() => _analytics = data);
+      if (mounted) {
+        setState(() {
+          _analytics = data;
+          _analyticsFailed = false;
+        });
+      }
     } catch (_) {
+      if (mounted) setState(() => _analyticsFailed = true);
     } finally {
       if (mounted) setState(() => _analyticsLoading = false);
     }
@@ -740,6 +823,10 @@ class _QfForumPageState extends State<QfForumPage>
             ],
           ),
         ),
+        if (_boardsFailed && _boards.isEmpty)
+          QfLoadFailure(compact: true, onRetry: _fetchBoards),
+        if (_campsFailed && _camps.isEmpty)
+          QfLoadFailure(compact: true, onRetry: _fetchCamps),
         if (shownCamps.isNotEmpty) ...[
           const Padding(
             padding: EdgeInsets.fromLTRB(16, 12, 16, 4),
@@ -775,6 +862,8 @@ class _QfForumPageState extends State<QfForumPage>
         Expanded(
           child: _loading
               ? const Center(child: CommonCircleLoading.page())
+              : _postsFailed && _posts.isEmpty
+              ? QfLoadFailure(onRetry: () => _loadPosts(reset: true))
               : _posts.isEmpty
               ? const Center(child: Text('暂无帖子'))
               : ListView.separated(
@@ -782,6 +871,12 @@ class _QfForumPageState extends State<QfForumPage>
                   separatorBuilder: (_, _) => const Divider(height: 1),
                   itemBuilder: (context, index) {
                     if (index == _posts.length) {
+                      if (_postsFailed) {
+                        return QfLoadFailure(
+                          compact: true,
+                          onRetry: () => _loadPosts(reset: false),
+                        );
+                      }
                       return TextButton(
                         onPressed: _loadingMore
                             ? null
@@ -836,10 +931,15 @@ class _QfForumPageState extends State<QfForumPage>
     if (_meLoading && _meHome == null) {
       return const Center(child: CommonCircleLoading.page());
     }
+    if (_meFailed && _meHome == null) {
+      return QfLoadFailure(onRetry: _loadMeHome);
+    }
     final posts = _meHome?['posts'];
     final list = posts is List ? posts : const <dynamic>[];
-    if (list.isEmpty) return const Center(child: Text('暂无帖子'));
-    return ListView.separated(
+    if (list.isEmpty && !_rewardsFailed) {
+      return const Center(child: Text('暂无帖子'));
+    }
+    final listView = ListView.separated(
       itemCount: list.length,
       separatorBuilder: (_, _) => const Divider(height: 1),
       itemBuilder: (context, index) {
@@ -863,12 +963,26 @@ class _QfForumPageState extends State<QfForumPage>
         );
       },
     );
+    if (!_rewardsFailed) return listView;
+    return Column(
+      children: [
+        QfLoadFailure(
+          compact: true,
+          message: QfCopy.forumRewardStatusFailed,
+          onRetry: _loadMeHome,
+        ),
+        Expanded(child: listView),
+      ],
+    );
   }
 
   Widget _myCommentsTab() {
     if (_readOnly) return _loginNeeded('登录后即可查看我的评价');
     if (_meLoading && _meHome == null) {
       return const Center(child: CommonCircleLoading.page());
+    }
+    if (_meFailed && _meHome == null) {
+      return QfLoadFailure(onRetry: _loadMeHome);
     }
     final comments = _meHome?['comments'] ?? _meHome?['replies'];
     final list = comments is List ? comments : const <dynamic>[];
@@ -905,6 +1019,9 @@ class _QfForumPageState extends State<QfForumPage>
     if (_readOnly) return _loginNeeded('登录后即可查看数据分析');
     if (_analyticsLoading && _analytics == null) {
       return const Center(child: CommonCircleLoading.page());
+    }
+    if (_analyticsFailed && _analytics == null) {
+      return QfLoadFailure(onRetry: _loadAnalytics);
     }
     final data = _analytics ?? const <String, dynamic>{};
     return ListView(
@@ -1058,6 +1175,7 @@ class _QfComposePostPageState extends State<_QfComposePostPage> {
   String? _notice;
   List<dynamic> _camps = const [];
   int? _campId;
+  bool _campsFailed = false;
 
   @override
   void initState() {
@@ -1070,9 +1188,14 @@ class _QfComposePostPageState extends State<_QfComposePostPage> {
       final data = await widget.session.forumCamps();
       final camps = data['camps'];
       if (mounted) {
-        setState(() => _camps = camps is List ? camps : const []);
+        setState(() {
+          _camps = camps is List ? camps : const [];
+          _campsFailed = false;
+        });
       }
-    } catch (_) {}
+    } catch (_) {
+      if (mounted) setState(() => _campsFailed = true);
+    }
   }
 
   @override
@@ -1144,6 +1267,8 @@ class _QfComposePostPageState extends State<_QfComposePostPage> {
             ],
             onChanged: (value) => setState(() => _campId = value),
           ),
+          if (_campsFailed)
+            QfLoadFailure(compact: true, onRetry: _loadCamps),
           const SizedBox(height: 12),
           TextField(
             controller: _title,
@@ -1198,6 +1323,8 @@ class _QfForumPostPageState extends State<QfForumPostPage> {
   List<dynamic> _replies = const [];
   List<dynamic> _rewardApplications = const [];
   bool _loading = true;
+  bool _failed = false;
+  bool _rewardsFailed = false;
 
   @override
   void initState() {
@@ -1212,17 +1339,27 @@ class _QfForumPostPageState extends State<QfForumPostPage> {
   }
 
   Future<void> _load() async {
+    if (mounted) {
+      setState(() {
+        _loading = true;
+        _failed = false;
+      });
+    }
     try {
       final data = await widget.session.forumPostDetail(widget.postId);
       var applications = _rewardApplications;
+      var rewardsFailed = false;
       if (!widget.session.isGuest && widget.session.isLoggedIn) {
         try {
           applications = await widget.session.forumRewardApplications();
-        } catch (_) {}
+        } catch (_) {
+          rewardsFailed = true;
+        }
       }
       if (mounted) {
         setState(() {
           _rewardApplications = applications;
+          _rewardsFailed = rewardsFailed;
           final post = data['post'];
           final replies = data['replies'];
           _post = post is Map ? Map<String, dynamic>.from(post) : null;
@@ -1231,7 +1368,12 @@ class _QfForumPostPageState extends State<QfForumPostPage> {
         });
       }
     } catch (_) {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) {
+        setState(() {
+          _failed = true;
+          _loading = false;
+        });
+      }
     }
   }
 
@@ -1344,6 +1486,8 @@ class _QfForumPostPageState extends State<QfForumPostPage> {
       ),
       body: _loading
           ? const Center(child: CommonCircleLoading.page())
+          : post == null && _failed
+          ? QfLoadFailure(onRetry: _load)
           : post == null
           ? const Center(child: Text('帖子不存在或不可见'))
           : Column(
@@ -1393,6 +1537,12 @@ class _QfForumPostPageState extends State<QfForumPostPage> {
                         ],
                       ),
                       const SizedBox(height: 12),
+                      if (_rewardsFailed)
+                        QfLoadFailure(
+                          compact: true,
+                          message: QfCopy.forumRewardStatusFailed,
+                          onRetry: _load,
+                        ),
                       QfForumRewardSection(
                         session: widget.session,
                         post: post,
@@ -1469,6 +1619,7 @@ class QfForumUserPage extends StatefulWidget {
 class _QfForumUserPageState extends State<QfForumUserPage> {
   Map<String, dynamic>? _data;
   bool _loading = true;
+  bool _failed = false;
 
   @override
   void initState() {
@@ -1483,10 +1634,16 @@ class _QfForumUserPageState extends State<QfForumUserPage> {
         setState(() {
           _data = data;
           _loading = false;
+          _failed = false;
         });
       }
     } catch (_) {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _failed = true;
+        });
+      }
     }
   }
 
@@ -1505,6 +1662,8 @@ class _QfForumUserPageState extends State<QfForumUserPage> {
       appBar: AppBar(title: const Text('个人主页')),
       body: _loading
           ? const Center(child: CommonCircleLoading.page())
+          : data == null && _failed
+          ? QfLoadFailure(onRetry: _load)
           : data == null
           ? const Center(child: Text('该用户暂不可见'))
           : ListView(
@@ -1776,6 +1935,7 @@ class QfMyCampsPage extends StatefulWidget {
 class _QfMyCampsPageState extends State<QfMyCampsPage> {
   List<dynamic> _camps = const [];
   bool _loading = true;
+  bool _failed = false;
 
   @override
   void initState() {
@@ -1791,10 +1951,16 @@ class _QfMyCampsPageState extends State<QfMyCampsPage> {
         setState(() {
           _camps = camps is List ? camps : const [];
           _loading = false;
+          _failed = false;
         });
       }
     } catch (_) {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _failed = true;
+        });
+      }
     }
   }
 
@@ -1861,6 +2027,8 @@ class _QfMyCampsPageState extends State<QfMyCampsPage> {
       ),
       body: _loading
           ? const Center(child: CommonCircleLoading.page())
+          : _camps.isEmpty && _failed
+          ? QfLoadFailure(onRetry: _load)
           : _camps.isEmpty
           ? const Center(child: Text(QfCopy.campEmptyMine))
           : ListView.separated(
@@ -1932,6 +2100,7 @@ class QfForumCampListPage extends StatefulWidget {
 class _QfForumCampListPageState extends State<QfForumCampListPage> {
   List<dynamic> _camps = const [];
   bool _loading = true;
+  bool _failed = false;
 
   @override
   void initState() {
@@ -1947,10 +2116,16 @@ class _QfForumCampListPageState extends State<QfForumCampListPage> {
         setState(() {
           _camps = camps is List ? camps : const [];
           _loading = false;
+          _failed = false;
         });
       }
     } catch (_) {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _failed = true;
+        });
+      }
     }
   }
 
@@ -2014,6 +2189,8 @@ class _QfForumCampListPageState extends State<QfForumCampListPage> {
       ),
       body: _loading
           ? const Center(child: CommonCircleLoading.page())
+          : _camps.isEmpty && _failed
+          ? QfLoadFailure(onRetry: _load)
           : _camps.isEmpty
           ? const Center(child: Text('暂无营地'))
           : ListView.separated(
@@ -2069,6 +2246,7 @@ class QfForumCampPage extends StatefulWidget {
 class _QfForumCampPageState extends State<QfForumCampPage> {
   Map<String, dynamic>? _data;
   bool _loading = true;
+  bool _failed = false;
 
   @override
   void initState() {
@@ -2083,10 +2261,16 @@ class _QfForumCampPageState extends State<QfForumCampPage> {
         setState(() {
           _data = data;
           _loading = false;
+          _failed = false;
         });
       }
     } catch (_) {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _failed = true;
+        });
+      }
     }
   }
 
@@ -2162,6 +2346,8 @@ class _QfForumCampPageState extends State<QfForumCampPage> {
       appBar: AppBar(title: const Text('营地详情')),
       body: _loading
           ? const Center(child: CommonCircleLoading.page())
+          : camp == null && _failed
+          ? QfLoadFailure(onRetry: _load)
           : camp == null
           ? const Center(child: Text('营地暂不可见'))
           : ListView(

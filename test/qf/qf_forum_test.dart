@@ -43,6 +43,8 @@ class _FakeForumSession extends QfSessionController {
 
   @override
   Future<Map<String, dynamic>> forumBoards() async {
+    final error = boardsError;
+    if (error != null) throw error;
     return {
       'boards': [
         {'key': 'general', 'name': '综合讨论'},
@@ -61,11 +63,15 @@ class _FakeForumSession extends QfSessionController {
     int offset = 0,
     int limit = 20,
   }) async {
+    final error = postsError;
+    if (error != null) throw error;
     return {'posts': offset == 0 ? posts : const []};
   }
 
   @override
   Future<Map<String, dynamic>> forumCamps() async {
+    final campError = campsError;
+    if (campError != null) throw campError;
     return {
       'camps': [
         {
@@ -109,9 +115,20 @@ class _FakeForumSession extends QfSessionController {
   Map<String, dynamic>? lastEdit;
   List<int> deletedCamps = [];
   List<dynamic> rewardApplicationsData = [];
+  Object? boardsError;
+  Object? campsError;
+  Object? postsError;
+  Object? meHomeError;
+  Object? rewardsError;
+  Object? analyticsError;
+  Object? myCampsError;
+  Object? campDetailError;
+  Object? postDetailError;
 
   @override
   Future<Map<String, dynamic>> forumCampDetail(int campId) async {
+    final error = campDetailError;
+    if (error != null) throw error;
     return campDetailData;
   }
 
@@ -128,6 +145,8 @@ class _FakeForumSession extends QfSessionController {
 
   @override
   Future<Map<String, dynamic>> forumMyCamps() async {
+    final error = myCampsError;
+    if (error != null) throw error;
     return myCampsData;
   }
 
@@ -149,16 +168,22 @@ class _FakeForumSession extends QfSessionController {
 
   @override
   Future<List<dynamic>> forumRewardApplications() async {
+    final error = rewardsError;
+    if (error != null) throw error;
     return rewardApplicationsData;
   }
 
   @override
   Future<Map<String, dynamic>> forumMeHome() async {
+    final error = meHomeError;
+    if (error != null) throw error;
     return {'posts': posts, 'comments': const []};
   }
 
   @override
   Future<Map<String, dynamic>> forumAnalytics() async {
+    final error = analyticsError;
+    if (error != null) throw error;
     return {
       'topTopics': [
         {'name': '网络'},
@@ -172,6 +197,8 @@ class _FakeForumSession extends QfSessionController {
 
   @override
   Future<Map<String, dynamic>> forumPostDetail(int id) async {
+    final error = postDetailError;
+    if (error != null) throw error;
     return {'post': detailPost, 'replies': const []};
   }
 
@@ -710,6 +737,129 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.text('奖励申请状态：已驳回（内容质量不足）'), findsOneWidget);
+    });
+  });
+
+  group('load failure states stay distinct from empty states (F-03)', () {
+    const netError = QfApiException(0, 'NETWORK', '网络连接失败，请检查网络后重试');
+
+    testWidgets('boards failure shows retry and recovers', (tester) async {
+      final session = _FakeForumSession(loggedIn: true, currentUserId: 7)
+        ..boardsError = netError;
+      await tester.pumpWidget(_wrap(QfForumPage(session: session)));
+      await tester.pumpAndSettle();
+      expect(find.text(QfCopy.forumLoadFailed), findsOneWidget);
+      expect(find.text('综合讨论'), findsNothing);
+      session.boardsError = null;
+      await tester.tap(find.text('重试'));
+      await tester.pumpAndSettle();
+      expect(find.text('综合讨论'), findsOneWidget);
+      expect(find.text(QfCopy.forumLoadFailed), findsNothing);
+    });
+
+    testWidgets('posts failure is not the empty state', (tester) async {
+      final session = _FakeForumSession(loggedIn: false)
+        ..postsError = netError;
+      await tester.pumpWidget(_wrap(QfForumPage(session: session)));
+      await tester.pumpAndSettle();
+      expect(find.text(QfCopy.forumLoadFailed), findsOneWidget);
+      expect(find.text('暂无帖子'), findsNothing);
+    });
+
+    testWidgets('empty posts still show the empty state', (tester) async {
+      final session = _FakeForumSession(loggedIn: false)..posts = [];
+      await tester.pumpWidget(_wrap(QfForumPage(session: session)));
+      await tester.pumpAndSettle();
+      expect(find.text('暂无帖子'), findsOneWidget);
+      expect(find.text(QfCopy.forumLoadFailed), findsNothing);
+    });
+
+    testWidgets('my posts tab separates me-home failure from empty', (
+      tester,
+    ) async {
+      final session = _FakeForumSession(loggedIn: true, currentUserId: 7)
+        ..meHomeError = netError;
+      await tester.pumpWidget(_wrap(QfForumPage(session: session)));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('我的帖子'));
+      await tester.pumpAndSettle();
+      expect(find.text(QfCopy.forumLoadFailed), findsOneWidget);
+      expect(find.text('暂无帖子'), findsNothing);
+    });
+
+    testWidgets('reward status failure banners on my posts tab', (
+      tester,
+    ) async {
+      final session = _FakeForumSession(loggedIn: true, currentUserId: 7)
+        ..rewardsError = netError;
+      await tester.pumpWidget(_wrap(QfForumPage(session: session)));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('我的帖子'));
+      await tester.pumpAndSettle();
+      expect(find.text(QfCopy.forumRewardStatusFailed), findsOneWidget);
+    });
+
+    testWidgets('analytics failure shows retry instead of empty data', (
+      tester,
+    ) async {
+      final session = _FakeForumSession(loggedIn: true, currentUserId: 7)
+        ..analyticsError = netError;
+      await tester.pumpWidget(_wrap(QfForumPage(session: session)));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('数据分析'));
+      await tester.pumpAndSettle();
+      expect(find.text(QfCopy.forumLoadFailed), findsOneWidget);
+      expect(find.text('暂无数据'), findsNothing);
+    });
+
+    testWidgets('my camps failure shows retry and recovers to empty', (
+      tester,
+    ) async {
+      final session = _FakeForumSession(loggedIn: true, currentUserId: 7)
+        ..myCampsError = netError;
+      await tester.pumpWidget(_wrap(QfMyCampsPage(session: session)));
+      await tester.pumpAndSettle();
+      expect(find.text(QfCopy.forumLoadFailed), findsOneWidget);
+      expect(find.text(QfCopy.campEmptyMine), findsNothing);
+      session.myCampsError = null;
+      await tester.tap(find.text('重试'));
+      await tester.pumpAndSettle();
+      expect(find.text(QfCopy.campEmptyMine), findsOneWidget);
+    });
+
+    testWidgets('camp list failure is not the empty state', (tester) async {
+      final session = _FakeForumSession(loggedIn: true, currentUserId: 7)
+        ..campsError = netError;
+      await tester.pumpWidget(_wrap(QfForumCampListPage(session: session)));
+      await tester.pumpAndSettle();
+      expect(find.text(QfCopy.forumLoadFailed), findsOneWidget);
+      expect(find.text('暂无营地'), findsNothing);
+    });
+
+    testWidgets('post detail failure shows retry instead of missing post', (
+      tester,
+    ) async {
+      final session = _FakeForumSession(loggedIn: true, currentUserId: 7)
+        ..postDetailError = netError;
+      await tester.pumpWidget(
+        _wrap(QfForumPostPage(session: session, postId: 1)),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text(QfCopy.forumLoadFailed), findsOneWidget);
+      expect(find.text('帖子不存在或不可见'), findsNothing);
+    });
+
+    testWidgets('camp detail failure shows retry instead of invisible', (
+      tester,
+    ) async {
+      final session = _FakeForumSession(loggedIn: true, currentUserId: 7)
+        ..campDetailError = netError;
+      await tester.pumpWidget(
+        _wrap(QfForumCampPage(session: session, campId: 5)),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text(QfCopy.forumLoadFailed), findsOneWidget);
+      expect(find.text('营地暂不可见'), findsNothing);
     });
   });
 }

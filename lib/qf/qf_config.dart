@@ -86,6 +86,8 @@ class QfCopy {
   static const String campEditSubmitted = '修改已提交，审核通过后生效。';
   static const String campEditPendingNote = '有修改正在审核中，审核通过后生效。';
   static const String campEmptyMine = '暂无营地';
+  static const String forumLoadFailed = '加载失败，请检查网络后重试。';
+  static const String forumRewardStatusFailed = '奖励状态加载失败';
   static const String campFormRequired = '营地名称与简介不能为空。';
   static const String campResubmit = '修改并重新提交';
   static const String campResubmitSubmit = '重新提交审核';
