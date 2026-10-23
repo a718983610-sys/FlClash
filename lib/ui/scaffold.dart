@@ -467,25 +467,37 @@ class CommonScaffoldState extends State<CommonScaffold> {
                     ));
   }
 
-  List<Widget> _buildActions(
+  // The bar's slot can be squeezed while the sidebar gives its width back;
+  // the actions scale down to fit it instead of overflowing the bar.
+  Widget _fitBarActions(List<Widget> actions) {
+    return FittedBox(
+      fit: BoxFit.scaleDown,
+      alignment: AlignmentDirectional.centerEnd,
+      child: Row(mainAxisSize: MainAxisSize.min, children: actions),
+    );
+  }
+
+  Widget _buildActions(
     bool hasSearch,
     IconButtonData? primaryAction,
     VoidCallback? backAction,
     _SheetForm form,
   ) {
     if (_sorting) {
-      return genActions([
-        if (widget.canSort)
-          ElasticPress(
-            child: AppBarActionButton(
-              data: sortModeAction(
-                context,
-                sorting: true,
-                onPressed: _toggleSorting,
+      return _fitBarActions(
+        genActions([
+          if (widget.canSort)
+            ElasticPress(
+              child: AppBarActionButton(
+                data: sortModeAction(
+                  context,
+                  sorting: true,
+                  onPressed: _toggleSorting,
+                ),
               ),
             ),
-          ),
-      ], edge: AppBarActionEdge.container);
+        ], edge: AppBarActionEdge.container),
+      );
     }
     final localizations = UiLocalizations.of(context);
     final pop = form.pop;
@@ -541,47 +553,49 @@ class CommonScaffoldState extends State<CommonScaffold> {
           );
     final shown = [?lead, ...fold.shown];
     final grouped = shown.length > 1 ? shown.take(_maxGroupedActions) : null;
-    return genActions([
-      if (grouped != null)
-        TonalButtonGroup(
-          children: [
-            for (final data in grouped) AppBarActionButton(data: data),
-          ],
-        ),
-      for (final data in shown.skip(grouped?.length ?? 0))
-        ElasticPress(
-          enabled: !data.isLoading && data.onPressed != null,
-          child: AppBarActionButton(data: data),
-        ),
-      if (selection.isNotEmpty)
-        TonalButtonGroup(
-          children: [
-            for (final data in selectionGroup) AppBarActionButton(data: data),
-          ],
-        ),
-      for (final data in selectionSingles)
-        ElasticPress(
-          enabled: !data.isLoading && data.onPressed != null,
-          child: AppBarActionButton(data: data),
-        ),
-      for (final action in widgets) ElasticPress(child: action),
-      if (fold.overflow.isNotEmpty)
-        ElasticPress(child: _OverflowMenuButton(items: fold.overflow)),
-      if (pairedPrimary != null)
-        TonalButtonGroup(
-          children: [
-            AppBarActionButton(data: pairedPrimary),
-            _buildSheetPopButton(backAction, useCloseIcon: pop!.useCloseIcon),
-          ],
-        )
-      else if (popAsSuffix)
-        ElasticPress(
-          child: _buildSheetPopButton(
-            backAction,
-            useCloseIcon: pop!.useCloseIcon,
+    return _fitBarActions(
+      genActions([
+        if (grouped != null)
+          TonalButtonGroup(
+            children: [
+              for (final data in grouped) AppBarActionButton(data: data),
+            ],
           ),
-        ),
-    ], edge: AppBarActionEdge.container);
+        for (final data in shown.skip(grouped?.length ?? 0))
+          ElasticPress(
+            enabled: !data.isLoading && data.onPressed != null,
+            child: AppBarActionButton(data: data),
+          ),
+        if (selection.isNotEmpty)
+          TonalButtonGroup(
+            children: [
+              for (final data in selectionGroup) AppBarActionButton(data: data),
+            ],
+          ),
+        for (final data in selectionSingles)
+          ElasticPress(
+            enabled: !data.isLoading && data.onPressed != null,
+            child: AppBarActionButton(data: data),
+          ),
+        for (final action in widgets) ElasticPress(child: action),
+        if (fold.overflow.isNotEmpty)
+          ElasticPress(child: _OverflowMenuButton(items: fold.overflow)),
+        if (pairedPrimary != null)
+          TonalButtonGroup(
+            children: [
+              AppBarActionButton(data: pairedPrimary),
+              _buildSheetPopButton(backAction, useCloseIcon: pop!.useCloseIcon),
+            ],
+          )
+        else if (popAsSuffix)
+          ElasticPress(
+            child: _buildSheetPopButton(
+              backAction,
+              useCloseIcon: pop!.useCloseIcon,
+            ),
+          ),
+      ], edge: AppBarActionEdge.container),
+    );
   }
 
   Widget _buildFootActions(IconButtonData confirmation) {
@@ -682,13 +696,17 @@ class CommonScaffoldState extends State<CommonScaffold> {
                           ),
                         ),
                   actions: [
-                    for (final action in _buildActions(
-                      state.searchState != null,
-                      widget.primaryAction,
-                      backAction,
-                      form,
-                    ))
-                      FadeTransition(opacity: uncovered, child: action),
+                    Flexible(
+                      child: FadeTransition(
+                        opacity: uncovered,
+                        child: _buildActions(
+                          state.searchState != null,
+                          widget.primaryAction,
+                          backAction,
+                          form,
+                        ),
+                      ),
+                    ),
                   ],
                 ),
               );

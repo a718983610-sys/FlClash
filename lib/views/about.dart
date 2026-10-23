@@ -29,7 +29,12 @@ class AboutView extends ConsumerWidget {
   ];
 
   Future<void> _checkUpdate(BuildContext context, WidgetRef ref) async {
-    await QfUpdateFlow.runManualCheck(context);
+    if (ref.read(loadingProvider(LoadingTag.checkUpdate))) {
+      return;
+    }
+    await globalState.loadingRun(() async {
+      await QfUpdateFlow.runManualCheck(context);
+    }, tag: LoadingTag.checkUpdate);
   }
 
   Widget _buildLinkItem({
@@ -136,9 +141,11 @@ class AboutView extends ConsumerWidget {
                 title: const Text('检查更新'),
                 subtitle: const Text('应用内检查并下载新版本'),
                 trailing: const QfInfoButton(topic: 'checkUpdate'),
-                onTap: () {
-                  _checkUpdate(context, ref);
-                },
+                onTap: isLoading
+                    ? null
+                    : () {
+                        _checkUpdate(context, ref);
+                      },
               ),
             ],
           ),
