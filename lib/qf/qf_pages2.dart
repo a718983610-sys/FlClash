@@ -3,6 +3,8 @@ import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:material_ui/material_ui.dart';
 
 import 'qf_api.dart';
+import 'qf_passkey.dart';
+import 'qf_privacy.dart';
 import 'qf_config.dart';
 import 'qf_pages.dart';
 import 'qf_providers.dart';
@@ -38,9 +40,8 @@ class QfUpdateFlow {
           await showDialog<void>(
             context: context,
             barrierDismissible: false,
-            builder: (_) => AlertDialog(
-              content: QfUpdateDownloadPanel(result: check),
-            ),
+            builder: (_) =>
+                AlertDialog(content: QfUpdateDownloadPanel(result: check)),
           );
         }
       case QfUpdateDecision.force:
@@ -74,6 +75,7 @@ class QfSecurityPage extends StatefulWidget {
 class _QfSecurityPageState extends State<QfSecurityPage> {
   Map<String, dynamic>? _me;
   List<dynamic> _devices = const [];
+  List<dynamic> _passkeys = const [];
   bool _loading = true;
 
   @override
@@ -86,10 +88,15 @@ class _QfSecurityPageState extends State<QfSecurityPage> {
     try {
       final me = await widget.session.authed('GET', '/security/me');
       final devices = await widget.session.securityDevices();
+      var passkeys = _passkeys;
+      try {
+        passkeys = await widget.session.passkeyList();
+      } catch (_) {}
       if (mounted) {
         setState(() {
           _me = me;
           _devices = devices;
+          _passkeys = passkeys;
           _loading = false;
         });
       }
@@ -125,6 +132,97 @@ class _QfSecurityPageState extends State<QfSecurityPage> {
     } on QfApiException catch (e) {
       if (mounted) qfToast(context, e.message);
     }
+  }
+
+  Future<String?> _askPassword(String title) async {
+    final controller = TextEditingController();
+    final result = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: Text(title),
+          content: TextField(
+            controller: controller,
+            obscureText: true,
+            decoration: const InputDecoration(labelText: '当前账户密码'),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(controller.text),
+              child: const Text('确认'),
+            ),
+          ],
+        );
+      },
+    );
+    controller.dispose();
+    return (result == null || result.isEmpty) ? null : result;
+  }
+
+  Future<void> _createPasskey() async {
+    final password = await _askPassword('创建通行密钥');
+    if (password == null || !mounted) return;
+    try {
+      final options = await widget.session.passkeyRegisterOptions(password);
+      final response = await QfPasskeyCeremony.register(options);
+      if (!mounted) return;
+      final nameController = TextEditingController(text: '通行密钥');
+      final name = await showDialog<String>(
+        context: context,
+        builder: (dialogContext) {
+          return AlertDialog(
+            title: const Text('通行密钥名称'),
+            content: TextField(
+              controller: nameController,
+              decoration: const InputDecoration(labelText: '名称'),
+            ),
+            actions: [
+              FilledButton(
+                onPressed: () =>
+                    Navigator.of(dialogContext).pop(nameController.text),
+                child: const Text('保存'),
+              ),
+            ],
+          );
+        },
+      );
+      nameController.dispose();
+      await widget.session.passkeyRegisterVerify(
+        response,
+        name: (name == null || name.trim().isEmpty) ? null : name.trim(),
+      );
+      if (mounted) qfToast(context, '通行密钥已创建');
+      await _load();
+    } on QfApiException catch (e) {
+      if (mounted) qfToast(context, e.message);
+    } catch (_) {
+      if (mounted) qfToast(context, '通行密钥创建未完成，请重试');
+    }
+  }
+
+  Future<void> _deletePasskey(Map<dynamic, dynamic> item) async {
+    final password = await _askPassword('删除通行密钥');
+    if (password == null || !mounted) return;
+    try {
+      await widget.session.passkeyDelete((item['id'] as num).toInt(), password);
+      if (mounted) qfToast(context, '通行密钥已删除');
+      await _load();
+    } on QfApiException catch (e) {
+      if (mounted) qfToast(context, e.message);
+    }
+  }
+
+  String _passkeyCreatedLabel(dynamic value) {
+    if (value is num) {
+      return DateTime.fromMillisecondsSinceEpoch(
+        (value * 1000).toInt(),
+      ).toString();
+    }
+    return value?.toString() ?? '';
   }
 
   Future<void> _deleteAccount() async {
@@ -188,10 +286,7 @@ class _QfSecurityPageState extends State<QfSecurityPage> {
                   onTap: _changeEmail,
                 ),
                 const Divider(),
-                Text(
-                  '登录设备',
-                  style: AppTextStyle.headline.of(context),
-                ),
+                Text('登录设备', style: AppTextStyle.headline.of(context)),
                 for (final raw in _devices)
                   if (raw is Map)
                     ListTile(
@@ -210,6 +305,30 @@ class _QfSecurityPageState extends State<QfSecurityPage> {
                               child: const Text('下线'),
                             ),
                     ),
+                const Divider(),
+                Text('通行密钥', style: AppTextStyle.headline.of(context)),
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 4),
+                  child: Text('通行密钥可通过系统生物识别或设备 PIN 快速登录。'),
+                ),
+                for (final raw in _passkeys)
+                  if (raw is Map)
+                    ListTile(
+                      leading: const GlyphIcon(AppGlyphs.verified),
+                      title: Text((raw['name'] ?? '通行密钥').toString()),
+                      subtitle: Text(
+                        '创建时间：${_passkeyCreatedLabel(raw['createdAt'])}',
+                      ),
+                      trailing: TextButton(
+                        onPressed: () => _deletePasskey(raw),
+                        child: const Text('删除'),
+                      ),
+                    ),
+                ListTile(
+                  leading: const GlyphIcon(AppGlyphs.add),
+                  title: const Text('创建通行密钥'),
+                  onTap: _createPasskey,
+                ),
                 const Divider(),
                 ListTile(
                   leading: const GlyphIcon(AppGlyphs.delete),
@@ -267,7 +386,10 @@ class _QfChangePasswordDialogState extends State<_QfChangePasswordDialog> {
         'POST',
         '/security/password/change',
         body: {
-          if (_byCode) 'emailCode': _code.text else 'currentPassword': _current.text,
+          if (_byCode)
+            'emailCode': _code.text
+          else
+            'currentPassword': _current.text,
           'newPassword': _password.text,
         },
       );
@@ -661,10 +783,7 @@ class _QfUpdateDownloadPanelState extends State<QfUpdateDownloadPanel> {
             ),
           ),
           const SizedBox(height: 8),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: Text(notes),
-          ),
+          Align(alignment: Alignment.centerLeft, child: Text(notes)),
           const SizedBox(height: 16),
         ],
         if (_downloading || _progress != null)
@@ -710,6 +829,70 @@ class QfMinorUpdateDialog extends StatelessWidget {
   }
 }
 
+Future<void> qfShowBanDialog(
+  BuildContext context, {
+  required QfSessionController session,
+  required Map<String, dynamic> data,
+  String account = '',
+}) async {
+  final reason = (data['reason'] ?? '').toString();
+  await showDialog<void>(
+    context: context,
+    builder: (dialogContext) {
+      return AlertDialog(
+        title: const Text('账户已被封禁'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(QfSessionController.formatBanNotice(data)),
+            if (reason.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text('封禁原因：$reason'),
+              ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.of(dialogContext).pop();
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => QfAppealPage(
+                    serverBaseUrl: session.serverBaseUrl,
+                    initialAccount: account,
+                    permanent: data['permanent'] == true,
+                  ),
+                ),
+              );
+            },
+            child: const Text('申诉'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('我知道了'),
+          ),
+        ],
+      );
+    },
+  );
+}
+
+class QfPrivacyPage extends StatelessWidget {
+  const QfPrivacyPage({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('隐私说明')),
+      body: const SingleChildScrollView(
+        padding: EdgeInsets.all(16),
+        child: SelectableText(qfPrivacyText),
+      ),
+    );
+  }
+}
 
 class QfAppealPage extends StatefulWidget {
   final String serverBaseUrl;
@@ -891,10 +1074,7 @@ class QfLoginGuidePage extends StatelessWidget {
               const SizedBox(height: 8),
               const Text(QfCopy.loginBenefit, textAlign: TextAlign.center),
               const SizedBox(height: 16),
-              FilledButton(
-                onPressed: onLogin,
-                child: const Text('登录账号'),
-              ),
+              FilledButton(onPressed: onLogin, child: const Text('登录账号')),
             ],
           ),
         ),
@@ -928,10 +1108,7 @@ class QfRestrictedPage extends StatelessWidget {
               const SizedBox(height: 8),
               const Text(QfCopy.loginBenefit, textAlign: TextAlign.center),
               const SizedBox(height: 16),
-              FilledButton(
-                onPressed: onLogin,
-                child: const Text('登录账号'),
-              ),
+              FilledButton(onPressed: onLogin, child: const Text('登录账号')),
               const SizedBox(height: 8),
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,

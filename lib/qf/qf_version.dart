@@ -96,9 +96,7 @@ class QfReleaseManifest {
       'maintenance': maintenance,
       'serverBaseUrl': serverBaseUrl,
       'googleClientId': googleClientId,
-      'platforms': platforms.map(
-        (key, value) => MapEntry(key, value.toJson()),
-      ),
+      'platforms': platforms.map((key, value) => MapEntry(key, value.toJson())),
     };
   }
 

@@ -126,10 +126,8 @@ class _QfForumPageState extends State<QfForumPage> {
     }
     final posted = await Navigator.of(context).push<bool>(
       MaterialPageRoute<bool>(
-        builder: (_) => _QfComposePostPage(
-          session: widget.session,
-          board: _board,
-        ),
+        builder: (_) =>
+            _QfComposePostPage(session: widget.session, board: _board),
       ),
     );
     if (posted == true) {
@@ -176,8 +174,7 @@ class _QfForumPageState extends State<QfForumPage> {
                         selected: _board == raw['key'],
                         onSelected: (_) {
                           setState(
-                            () => _board = (raw['key'] ?? 'general')
-                                .toString(),
+                            () => _board = (raw['key'] ?? 'general').toString(),
                           );
                           _loadPosts(reset: true);
                         },

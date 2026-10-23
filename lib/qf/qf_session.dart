@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'qf_api.dart';
@@ -55,6 +56,9 @@ class QfLoginOutcome {
 
 class QfSessionController extends ChangeNotifier {
   static const String _kMode = 'qf_mode';
+  final FlutterSecureStorage _secure = const FlutterSecureStorage();
+  bool rememberDevice = true;
+
   static const String _kAccess = 'qf_access_token';
   static const String _kRefresh = 'qf_refresh_token';
   static const String _kAccessExp = 'qf_access_expires_at';
@@ -144,10 +148,18 @@ class QfSessionController extends ChangeNotifier {
   Future<void> init({required bool envEmulator}) async {
     _envEmulator = envEmulator;
     final prefs = await SharedPreferences.getInstance();
-    _accessToken = prefs.getString(_kAccess);
-    _refreshToken = prefs.getString(_kRefresh);
-    _accessExpiresAt = prefs.getInt(_kAccessExp) ?? 0;
-    _heartbeatKey = prefs.getString(_kHeartbeatKey);
+    _accessToken = await _secure.read(key: _kAccess);
+    _refreshToken = await _secure.read(key: _kRefresh);
+    _accessExpiresAt =
+        int.tryParse(await _secure.read(key: _kAccessExp) ?? '') ?? 0;
+    _heartbeatKey = await _secure.read(key: _kHeartbeatKey);
+    if (_refreshToken == null && prefs.getString(_kRefresh) != null) {
+      _accessToken = prefs.getString(_kAccess);
+      _refreshToken = prefs.getString(_kRefresh);
+      _accessExpiresAt = prefs.getInt(_kAccessExp) ?? 0;
+      _heartbeatKey = prefs.getString(_kHeartbeatKey);
+      await _storeCredentials();
+    }
     email = prefs.getString(_kEmail);
     username = prefs.getString(_kUsername);
     userId = prefs.getInt(_kUserId);
@@ -174,7 +186,29 @@ class QfSessionController extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> _persistUserSession(Map<String, dynamic> data) async {
+  Future<void> _storeCredentials() async {
+    if (!rememberDevice) return;
+    await _secure.write(key: _kAccess, value: _accessToken ?? '');
+    await _secure.write(key: _kRefresh, value: _refreshToken ?? '');
+    await _secure.write(key: _kAccessExp, value: _accessExpiresAt.toString());
+    await _secure.write(key: _kHeartbeatKey, value: _heartbeatKey ?? '');
+  }
+
+  Future<void> _wipeStoredCredentials() async {
+    for (final key in [_kAccess, _kRefresh, _kAccessExp, _kHeartbeatKey]) {
+      await _secure.delete(key: key);
+    }
+    final prefs = await SharedPreferences.getInstance();
+    for (final key in [_kAccess, _kRefresh, _kAccessExp, _kHeartbeatKey]) {
+      await prefs.remove(key);
+    }
+  }
+
+  Future<void> _persistUserSession(
+    Map<String, dynamic> data, {
+    bool? remember,
+  }) async {
+    if (remember != null) rememberDevice = remember;
     final prefs = await SharedPreferences.getInstance();
     _accessToken = (data['accessToken'] ?? '').toString();
     _refreshToken = (data['refreshToken'] ?? '').toString();
@@ -188,10 +222,14 @@ class QfSessionController extends ChangeNotifier {
     }
     accountDeleting = data['accountDeleting'] == true;
     deletionEffectiveAt = (data['deletionEffectiveAt'] as num?)?.toInt();
-    await prefs.setString(_kAccess, _accessToken ?? '');
-    await prefs.setString(_kRefresh, _refreshToken ?? '');
-    await prefs.setInt(_kAccessExp, _accessExpiresAt);
-    await prefs.setString(_kHeartbeatKey, _heartbeatKey ?? '');
+    if (rememberDevice) {
+      await _storeCredentials();
+      for (final key in [_kAccess, _kRefresh, _kAccessExp, _kHeartbeatKey]) {
+        await prefs.remove(key);
+      }
+    } else {
+      await _wipeStoredCredentials();
+    }
     await prefs.setString(_kEmail, email ?? '');
     await prefs.setString(_kUsername, username ?? '');
     if (userId != null) await prefs.setInt(_kUserId, userId!);
@@ -202,15 +240,9 @@ class QfSessionController extends ChangeNotifier {
   }
 
   Future<void> _clearUserSession() async {
+    await _wipeStoredCredentials();
     final prefs = await SharedPreferences.getInstance();
-    for (final key in [
-      _kAccess,
-      _kRefresh,
-      _kHeartbeatKey,
-      _kEmail,
-      _kUsername,
-      _kUserId,
-    ]) {
+    for (final key in [_kEmail, _kUsername, _kUserId]) {
       await prefs.remove(key);
     }
     _accessToken = null;
@@ -322,22 +354,27 @@ class QfSessionController extends ChangeNotifier {
     required String emailInput,
     required String password,
     String? emailCode,
+    bool remember = true,
   }) async {
     final device = await _deviceBody();
-    final data = await QfHttp.send('POST', '$serverBaseUrl/auth/login', body: {
-      'email': emailInput.trim(),
-      'account': emailInput.trim(),
-      'password': password,
-      if (emailCode != null && emailCode.isNotEmpty) 'emailCode': emailCode,
-      ...device,
-    });
+    final data = await QfHttp.send(
+      'POST',
+      '$serverBaseUrl/auth/login',
+      body: {
+        'email': emailInput.trim(),
+        'account': emailInput.trim(),
+        'password': password,
+        if (emailCode != null && emailCode.isNotEmpty) 'emailCode': emailCode,
+        ...device,
+      },
+    );
     if (data['dualVerifyRequired'] == true) {
       return QfLoginOutcome(
         dualVerifyRequired: true,
         message: (data['message'] ?? '').toString(),
       );
     }
-    await _persistUserSession(data);
+    await _persistUserSession(data, remember: remember);
     await refreshPoints();
     return const QfLoginOutcome();
   }
@@ -350,13 +387,14 @@ class QfSessionController extends ChangeNotifier {
     );
   }
 
-  Future<void> googleLogin(String idToken) async {
+  Future<void> googleLogin(String idToken, {bool remember = true}) async {
     final device = await _deviceBody();
-    final data = await QfHttp.send('POST', '$serverBaseUrl/auth/google', body: {
-      'idToken': idToken,
-      ...device,
-    });
-    await _persistUserSession(data);
+    final data = await QfHttp.send(
+      'POST',
+      '$serverBaseUrl/auth/google',
+      body: {'idToken': idToken, ...device},
+    );
+    await _persistUserSession(data, remember: remember);
     await refreshPoints();
   }
 
@@ -526,20 +564,23 @@ class QfSessionController extends ChangeNotifier {
           trafficBytes: delta,
           envFlags: envFlags,
         );
-        final data = await authed('POST', '/points/heartbeat', body: {
-          'deviceHash': identity.deviceHash,
-          'seq': _pointsSeq,
-          'clientTs': clientTs,
-          'trafficBytes': delta,
-          'env': {
-            'emulator': _envEmulator,
-            'rooted': false,
-            'multiOpen': false,
+        final data = await authed(
+          'POST',
+          '/points/heartbeat',
+          body: {
+            'deviceHash': identity.deviceHash,
+            'seq': _pointsSeq,
+            'clientTs': clientTs,
+            'trafficBytes': delta,
+            'env': {
+              'emulator': _envEmulator,
+              'rooted': false,
+              'multiOpen': false,
+            },
+            'sig': sig,
           },
-          'sig': sig,
-        });
-        if (data['accepted'] == false &&
-            data['reason'] == 'seq_out_of_order') {
+        );
+        if (data['accepted'] == false && data['reason'] == 'seq_out_of_order') {
           _pointsSeq = (data['serverSeq'] as num?)?.toInt() ?? _pointsSeq;
           await prefs.setInt(_kPointsSeq, _pointsSeq);
         }
@@ -580,8 +621,7 @@ class QfSessionController extends ChangeNotifier {
             'sig': sig,
           },
         );
-        if (data['accepted'] == false &&
-            data['reason'] == 'seq_out_of_order') {
+        if (data['accepted'] == false && data['reason'] == 'seq_out_of_order') {
           _guestSeq = (data['serverSeq'] as num?)?.toInt() ?? _guestSeq;
           await prefs.setInt(_kGuestSeq, _guestSeq);
         }
@@ -625,7 +665,12 @@ class QfSessionController extends ChangeNotifier {
     return authed('GET', '/redeem/products');
   }
 
-  Future<Map<String, dynamic>> redeemCreate(int productId) async {
+  Future<Map<String, dynamic>> redeemCreate(
+    int productId, {
+    String? payoutMethod,
+    String? payoutAddress,
+    String? payoutEmail,
+  }) async {
     return authed(
       'POST',
       '/redeem/orders',
@@ -633,9 +678,91 @@ class QfSessionController extends ChangeNotifier {
         'productId': productId,
         'idempotencyKey':
             'qf-${DateTime.now().millisecondsSinceEpoch}-$productId',
+        if (payoutMethod != null) 'payoutMethod': payoutMethod,
+        if (payoutAddress != null) 'payoutAddress': payoutAddress,
+        if (payoutEmail != null) 'payoutEmail': payoutEmail,
       },
       headers: await QfProofHeaders.collect(),
     );
+  }
+
+  Future<void> redeemCodeRequest(int orderId) async {
+    await authed('POST', '/redeem/orders/$orderId/code/request');
+  }
+
+  Future<String> redeemCodeReveal(
+    int orderId,
+    String password,
+    String emailCode,
+  ) async {
+    final data = await authed(
+      'POST',
+      '/redeem/orders/$orderId/code/reveal',
+      body: {'password': password, 'emailCode': emailCode.trim()},
+    );
+    return (data['code'] ?? '').toString();
+  }
+
+  Future<Map<String, dynamic>> passkeyRegisterOptions(String password) async {
+    final data = await authed(
+      'POST',
+      '/passkeys/register/options',
+      body: {'password': password},
+    );
+    final options = data['options'];
+    return options is Map
+        ? Map<String, dynamic>.from(options)
+        : Map<String, dynamic>.from(data);
+  }
+
+  Future<void> passkeyRegisterVerify(
+    Map<String, dynamic> response, {
+    String? name,
+  }) async {
+    await authed(
+      'POST',
+      '/passkeys/register/verify',
+      body: {'response': response, if (name != null) 'name': name},
+    );
+  }
+
+  Future<List<dynamic>> passkeyList() async {
+    final data = await authed('GET', '/passkeys');
+    final list = data['passkeys'] ?? data['items'];
+    return list is List ? list : const [];
+  }
+
+  Future<void> passkeyDelete(int id, String password) async {
+    await authed('DELETE', '/passkeys/$id', body: {'password': password});
+  }
+
+  Future<Map<String, dynamic>> passkeyLoginOptions(String? identifier) async {
+    final data = await QfHttp.send(
+      'POST',
+      '$serverBaseUrl/passkeys/login/options',
+      body: {
+        if (identifier != null && identifier.trim().isNotEmpty)
+          'identifier': identifier.trim(),
+      },
+    );
+    final options = data['options'];
+    return options is Map
+        ? Map<String, dynamic>.from(options)
+        : Map<String, dynamic>.from(data);
+  }
+
+  Future<void> passkeyLoginVerify(
+    Map<String, dynamic> response, {
+    bool remember = true,
+  }) async {
+    final device = await _deviceBody();
+    final data = await QfHttp.send(
+      'POST',
+      '$serverBaseUrl/passkeys/login/verify',
+      body: {'response': response, ...device},
+    );
+    await _persistUserSession(data, remember: remember);
+    await refreshPoints();
   }
 
   Future<List<dynamic>> myOrders() async {
@@ -656,14 +783,19 @@ class QfSessionController extends ChangeNotifier {
     required String appVersion,
   }) async {
     final identity = await QfDeviceIdentity.resolve();
-    await QfHttp.send('POST', '$serverBaseUrl/feedback', body: {
-      'content': content,
-      if (contact != null && contact.isNotEmpty) 'contact': contact,
-      'source': 'app',
-      'platform': identity.platform,
-      'appVersion': appVersion,
-      'deviceHash': identity.deviceHash,
-    }, bearer: _accessToken ?? _guestToken);
+    await QfHttp.send(
+      'POST',
+      '$serverBaseUrl/feedback',
+      body: {
+        'content': content,
+        if (contact != null && contact.isNotEmpty) 'contact': contact,
+        'source': 'app',
+        'platform': identity.platform,
+        'appVersion': appVersion,
+        'deviceHash': identity.deviceHash,
+      },
+      bearer: _accessToken ?? _guestToken,
+    );
   }
 
   Future<Map<String, dynamic>> forumBoards() {
@@ -701,17 +833,19 @@ class QfSessionController extends ChangeNotifier {
     required String title,
     required String content,
   }) {
-    return authed('POST', '/forum/posts', body: {
-      'board': board,
-      'title': title,
-      'content': content,
-    });
+    return authed(
+      'POST',
+      '/forum/posts',
+      body: {'board': board, 'title': title, 'content': content},
+    );
   }
 
   Future<Map<String, dynamic>> forumCreateReply(int postId, String content) {
-    return authed('POST', '/forum/posts/$postId/replies', body: {
-      'content': content,
-    });
+    return authed(
+      'POST',
+      '/forum/posts/$postId/replies',
+      body: {'content': content},
+    );
   }
 
   Future<void> forumReport(int postId) async {

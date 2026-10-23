@@ -102,9 +102,8 @@ class _QfSessionGateState extends ConsumerState<QfSessionGate> {
           await showDialog<void>(
             context: context,
             barrierDismissible: false,
-            builder: (_) => AlertDialog(
-              content: QfUpdateDownloadPanel(result: check),
-            ),
+            builder: (_) =>
+                AlertDialog(content: QfUpdateDownloadPanel(result: check)),
           );
         }
       });
@@ -156,9 +155,9 @@ class _QfSessionGateState extends ConsumerState<QfSessionGate> {
   }
 
   void _openAbout() {
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(builder: (_) => const AboutView()),
-    );
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute<void>(builder: (_) => const AboutView()));
   }
 
   void _openAgreement() {
@@ -184,9 +183,7 @@ class _QfSessionGateState extends ConsumerState<QfSessionGate> {
       listenable: session,
       builder: (context, _) {
         if (!_booted || session.mode == QfMode.unknown) {
-          return const Scaffold(
-            body: Center(child: CommonCircleLoading()),
-          );
+          return const Scaffold(body: Center(child: CommonCircleLoading()));
         }
         final decision = _check?.decision ?? QfUpdateDecision.none;
         if (decision == QfUpdateDecision.maintenance ||
@@ -196,9 +193,7 @@ class _QfSessionGateState extends ConsumerState<QfSessionGate> {
           return QfBlockingPage(
             title: text[0],
             body: text[1],
-            update: decision == QfUpdateDecision.maintenance
-                ? null
-                : _check,
+            update: decision == QfUpdateDecision.maintenance ? null : _check,
           );
         }
         if (session.mode == QfMode.entry) {

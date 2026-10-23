@@ -32,11 +32,17 @@ class QfUpdateCheck {
 }
 
 class QfUpdateService {
-  static String get platformKey =>
-      Platform.isAndroid ? 'android' : Platform.isWindows ? 'windows' : '';
+  static String get platformKey => Platform.isAndroid
+      ? 'android'
+      : Platform.isWindows
+      ? 'windows'
+      : '';
 
-  static String get _tagPrefix =>
-      Platform.isAndroid ? 'android-v' : Platform.isWindows ? 'windows-v' : '';
+  static String get _tagPrefix => Platform.isAndroid
+      ? 'android-v'
+      : Platform.isWindows
+      ? 'windows-v'
+      : '';
 
   static Future<QfUpdateCheck> check(String currentVersion) async {
     final current = QfVersion.tryParse(currentVersion);
@@ -150,7 +156,9 @@ class QfUpdateService {
           await Process.start(file.path, [], mode: ProcessStartMode.detached);
           return true;
         }
-        await Process.start('explorer', [file.parent.path], mode: ProcessStartMode.detached);
+        await Process.start('explorer', [
+          file.parent.path,
+        ], mode: ProcessStartMode.detached);
         return true;
       }
       if (Platform.isAndroid) {

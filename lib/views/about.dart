@@ -120,6 +120,18 @@ class AboutView extends ConsumerWidget {
                 },
               ),
               ListItem(
+                leading: const _LinkBadge(glyph: AppGlyphs.lock),
+                title: const Text('隐私说明'),
+                subtitle: const Text('我们处理哪些数据、为何处理'),
+                onTap: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => const QfPrivacyPage(),
+                    ),
+                  );
+                },
+              ),
+              ListItem(
                 leading: const _LinkBadge(glyph: AppGlyphs.sync),
                 title: const Text('检查更新'),
                 subtitle: const Text('应用内检查并下载新版本'),

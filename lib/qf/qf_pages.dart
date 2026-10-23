@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:ui' as ui;
 
@@ -12,14 +13,13 @@ import 'package:qr_flutter/qr_flutter.dart';
 import 'qf_api.dart';
 import 'qf_config.dart';
 import 'qf_pages2.dart';
+import 'qf_passkey.dart';
 import 'qf_providers.dart';
 import 'qf_session.dart';
 import 'qf_social.dart';
 
 void qfToast(BuildContext context, String message) {
-  ScaffoldMessenger.of(
-    context,
-  ).showSnackBar(SnackBar(content: Text(message)));
+  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
 }
 
 class QfField extends StatelessWidget {
@@ -128,10 +128,7 @@ class _QfEntryPageState extends State<QfEntryPage> {
                     style: AppTextStyle.title1.of(context),
                   ),
                   const SizedBox(height: 8),
-                  const Text(
-                    QfCopy.loginBenefit,
-                    textAlign: TextAlign.center,
-                  ),
+                  const Text(QfCopy.loginBenefit, textAlign: TextAlign.center),
                   const SizedBox(height: 24),
                   SegmentedButton<bool>(
                     segments: const [
@@ -162,8 +159,8 @@ class _QfEntryPageState extends State<QfEntryPage> {
                     style: AppTextStyle.caption1.of(context),
                   ),
                   const SizedBox(height: 16),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
+                  Wrap(
+                    alignment: WrapAlignment.center,
                     children: [
                       TextButton(
                         onPressed: widget.onAbout,
@@ -176,6 +173,16 @@ class _QfEntryPageState extends State<QfEntryPage> {
                       TextButton(
                         onPressed: widget.onAgreement,
                         child: const Text('用户使用协议'),
+                      ),
+                      TextButton(
+                        onPressed: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute<void>(
+                              builder: (_) => const QfPrivacyPage(),
+                            ),
+                          );
+                        },
+                        child: const Text('隐私说明'),
                       ),
                     ],
                   ),
@@ -207,6 +214,7 @@ class _QfLoginFormState extends State<QfLoginForm> {
   String? _codeError;
   bool _dual = false;
   bool _busy = false;
+  bool _remember = true;
 
   @override
   void dispose() {
@@ -238,6 +246,7 @@ class _QfLoginFormState extends State<QfLoginForm> {
         emailInput: _email.text,
         password: _password.text,
         emailCode: _dual ? _code.text : null,
+        remember: _remember,
       );
       if (outcome.dualVerifyRequired && mounted) {
         setState(() => _dual = true);
@@ -299,6 +308,34 @@ class _QfLoginFormState extends State<QfLoginForm> {
     }
   }
 
+  Future<void> _passkeyLogin() async {
+    setState(() => _busy = true);
+    try {
+      final options = await widget.session.passkeyLoginOptions(
+        _email.text.trim().isEmpty ? null : _email.text.trim(),
+      );
+      final response = await QfPasskeyCeremony.authenticate(options);
+      await widget.session.passkeyLoginVerify(response, remember: _remember);
+    } on QfApiException catch (e) {
+      if (mounted) {
+        if (e.code == 'ACCOUNT_BANNED') {
+          await qfShowBanDialog(
+            context,
+            session: widget.session,
+            data: e.data,
+            account: _email.text.trim(),
+          );
+        } else {
+          qfToast(context, e.message);
+        }
+      }
+    } catch (_) {
+      if (mounted) qfToast(context, '通行密钥验证未完成，请重试或改用密码登录');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   Future<void> _forgotPassword() async {
     await showDialog<void>(
       context: context,
@@ -338,10 +375,24 @@ class _QfLoginFormState extends State<QfLoginForm> {
             ),
           ),
         ],
-        const SizedBox(height: 16),
+        CheckboxListTile(
+          value: _remember,
+          onChanged: (value) => setState(() => _remember = value ?? true),
+          title: const Text('记住此设备'),
+          subtitle: const Text('勾选后重开软件免输密码；不勾选则每次启动都需重新登录。'),
+          controlAffinity: ListTileControlAffinity.leading,
+          contentPadding: EdgeInsets.zero,
+          dense: true,
+        ),
+        const SizedBox(height: 8),
         FilledButton(
           onPressed: _busy ? null : _submit,
           child: const Text('登录'),
+        ),
+        const SizedBox(height: 8),
+        OutlinedButton(
+          onPressed: _busy ? null : _passkeyLogin,
+          child: const Text('使用通行密钥登录'),
         ),
         const SizedBox(height: 8),
         OutlinedButton(
@@ -827,7 +878,8 @@ class _QfMyQrCardState extends State<QfMyQrCard> {
     final data = await image.toByteData(format: ui.ImageByteFormat.png);
     if (data == null) return;
     final dir =
-        await getDownloadsDirectory() ?? await getApplicationDocumentsDirectory();
+        await getDownloadsDirectory() ??
+        await getApplicationDocumentsDirectory();
     final file = File('${dir.path}/qfclash-qrcode.png');
     await file.writeAsBytes(data.buffer.asUint8List());
     if (mounted) qfToast(context, '二维码已经保存到 ${file.path}');
@@ -841,10 +893,7 @@ class _QfMyQrCardState extends State<QfMyQrCard> {
         padding: const EdgeInsets.all(16),
         child: Column(
           children: [
-            Text(
-              '我的二维码',
-              style: AppTextStyle.headline.of(context),
-            ),
+            Text('我的二维码', style: AppTextStyle.headline.of(context)),
             const SizedBox(height: 4),
             const Text('好友扫码即可查看您的资料并添加好友'),
             const SizedBox(height: 12),
@@ -869,10 +918,7 @@ class _QfMyQrCardState extends State<QfMyQrCard> {
             Wrap(
               spacing: 12,
               children: [
-                OutlinedButton(
-                  onPressed: _saveQr,
-                  child: const Text('保存二维码'),
-                ),
+                OutlinedButton(onPressed: _saveQr, child: const Text('保存二维码')),
                 OutlinedButton(
                   onPressed: username == null
                       ? null
@@ -998,9 +1044,7 @@ class _QfPointsPageState extends State<QfPointsPage> {
                 for (final raw in _entries)
                   if (raw is Map)
                     ListTile(
-                      title: Text(
-                        _typeLabel((raw['type'] ?? '').toString()),
-                      ),
+                      title: Text(_typeLabel((raw['type'] ?? '').toString())),
                       subtitle: Text(
                         DateTime.fromMillisecondsSinceEpoch(
                           ((raw['created_at'] as num? ?? 0) * 1000).toInt(),
@@ -1079,61 +1123,52 @@ class _QfRedeemPageState extends State<QfRedeemPage> {
   }
 
   Future<void> _redeem(Map<dynamic, dynamic> product) async {
-    final price = (product['pricePoints'] as num?)?.toInt() ?? 0;
-    final confirmed = await showDialog<bool>(
+    final outcome = await showDialog<String>(
       context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          title: const Text('确认兑换'),
-          content: Text(
-            '将花费 $price 积分兑换「${product['name']}」，兑换后余额为 ${_balance - price} 分。'
-            '${product['requiresReview'] == true ? '该商品需人工审核，审核通过后发放兑换码。' : ''}',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(false),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(dialogContext).pop(true),
-              child: const Text('确认兑换'),
-            ),
-          ],
-        );
-      },
+      builder: (_) => _QfRedeemDialog(
+        session: widget.session,
+        product: product,
+        balance: _balance,
+      ),
     );
-    if (confirmed != true) return;
-    try {
-      final result = await widget.session.redeemCreate(
-        (product['id'] as num).toInt(),
-      );
-      final order = result['order'];
-      if (!mounted) return;
-      var message = (result['message'] ?? '兑换成功').toString();
-      if (order is Map && order['code'] != null) {
-        message = '兑换成功，兑换码：${order['code']}（已存入「我的兑换」）';
-      }
-      qfToast(context, message);
+    if (!mounted) return;
+    if (outcome == 'region') {
+      qfToast(context, '该功能在您的国家地区不可用');
+    } else if (outcome == 'done') {
+      qfToast(context, '兑换申请已提交');
       await _load();
       await widget.session.refreshPoints();
-    } on QfApiException catch (e) {
-      if (mounted) {
-        qfToast(
-          context,
-          e.code == 'REGION_UNAVAILABLE' ? '该功能在您的国家地区不可用' : e.message,
-        );
-      }
     }
+  }
+
+  Future<void> _showReveal(Map<dynamic, dynamic> order) async {
+    await showDialog<void>(
+      context: context,
+      builder: (_) => _QfRevealCodeDialog(
+        session: widget.session,
+        orderId: (order['id'] as num).toInt(),
+      ),
+    );
+    await _load();
   }
 
   String _orderStatusLabel(Map<dynamic, dynamic> order) {
     return switch ((order['status'] ?? '').toString()) {
-      'issued' => '已发码',
+      'issued' => '已发放',
       'pending_review' => '待审核',
+      'pending_payout' => '待打款',
+      'paid' => '已打款',
       'rejected' => '已驳回',
       'refunded' => '已退分',
       _ => (order['status'] ?? '').toString(),
     };
+  }
+
+  bool _canRevealCode(Map<dynamic, dynamic> order) {
+    if (order['codeAvailable'] != true) return false;
+    final method = (order['payoutMethod'] ?? order['fulfillment'] ?? '')
+        .toString();
+    return method != 'usdt';
   }
 
   @override
@@ -1150,7 +1185,7 @@ class _QfRedeemPageState extends State<QfRedeemPage> {
                   Padding(
                     padding: EdgeInsets.only(top: 12),
                     child: Text(
-                      '该功能在您的国家地区不可用',
+                      '您所在地区暂不支持福利兑换，积分仍可正常累计。',
                       style: AppTextStyle.body.of(context, emphasized: true),
                     ),
                   ),
@@ -1177,8 +1212,7 @@ class _QfRedeemPageState extends State<QfRedeemPage> {
                               : () => _redeem(raw),
                           child: Text(
                             _balance <
-                                    ((raw['pricePoints'] as num?)?.toInt() ??
-                                        0)
+                                    ((raw['pricePoints'] as num?)?.toInt() ?? 0)
                                 ? '还差 ${((raw['pricePoints'] as num?)?.toInt() ?? 0) - _balance} 分'
                                 : '兑换',
                           ),
@@ -1186,10 +1220,7 @@ class _QfRedeemPageState extends State<QfRedeemPage> {
                       ),
                     ),
                 const SizedBox(height: 16),
-                Text(
-                  '我的兑换',
-                  style: AppTextStyle.headline.of(context),
-                ),
+                Text('我的兑换', style: AppTextStyle.headline.of(context)),
                 if (_orders.isEmpty)
                   const Padding(
                     padding: EdgeInsets.symmetric(vertical: 12),
@@ -1201,12 +1232,329 @@ class _QfRedeemPageState extends State<QfRedeemPage> {
                       title: Text((raw['productName'] ?? '').toString()),
                       subtitle: Text(
                         '${_orderStatusLabel(raw)}'
-                        '${raw['code'] != null ? '\n兑换码：${raw['code']}' : ''}'
+                        '${raw['payoutAddress'] != null ? '\n收款地址：${raw['payoutAddress']}' : ''}'
+                        '${raw['payoutEmail'] != null ? '\n通知邮箱：${raw['payoutEmail']}' : ''}'
+                        '${raw['paidAt'] != null ? '\n打款时间：${DateTime.fromMillisecondsSinceEpoch(((raw['paidAt'] as num) * 1000).toInt())}' : ''}'
                         '${raw['reviewReason'] != null ? '\n驳回原因：${raw['reviewReason']}' : ''}',
                       ),
+                      trailing: _canRevealCode(raw)
+                          ? TextButton(
+                              onPressed: () => _showReveal(raw),
+                              child: const Text('查看兑换码'),
+                            )
+                          : null,
                     ),
               ],
             ),
+    );
+  }
+}
+
+class _QfRedeemDialog extends StatefulWidget {
+  final QfSessionController session;
+  final Map<dynamic, dynamic> product;
+  final int balance;
+
+  const _QfRedeemDialog({
+    required this.session,
+    required this.product,
+    required this.balance,
+  });
+
+  @override
+  State<_QfRedeemDialog> createState() => _QfRedeemDialogState();
+}
+
+class _QfRedeemDialogState extends State<_QfRedeemDialog> {
+  final _address = TextEditingController();
+  final _email = TextEditingController();
+  String _method = 'usdt';
+  String? _fieldError;
+  bool _busy = false;
+
+  String get _fulfillment =>
+      (widget.product['fulfillment'] ?? '').toString().toLowerCase();
+
+  bool get _needsChoice => _fulfillment == 'choice';
+
+  bool get _needsPayout => _needsChoice || _fulfillment == 'usdt';
+
+  @override
+  void initState() {
+    super.initState();
+    _email.text = widget.session.email ?? '';
+  }
+
+  @override
+  void dispose() {
+    _address.dispose();
+    _email.dispose();
+    super.dispose();
+  }
+
+  bool _validate() {
+    if (!_needsPayout) return true;
+    if (_method == 'usdt') {
+      final ok = RegExp(
+        r'^T[1-9A-HJ-NP-Za-km-z]{33}$',
+      ).hasMatch(_address.text.trim());
+      setState(
+        () => _fieldError = ok ? null : '请输入正确的 USDT（TRC20）收款地址（以 T 开头，共 34 位）',
+      );
+      return ok;
+    }
+    final ok = RegExp(
+      r'^[^@\s]+@[^@\s]+\.[^@\s]+$',
+    ).hasMatch(_email.text.trim());
+    setState(() => _fieldError = ok ? null : '请输入正确的邮箱地址');
+    return ok;
+  }
+
+  Future<void> _confirm() async {
+    if (!_validate()) return;
+    setState(() => _busy = true);
+    try {
+      await widget.session.redeemCreate(
+        (widget.product['id'] as num).toInt(),
+        payoutMethod: _needsPayout ? _method : null,
+        payoutAddress: _needsPayout && _method == 'usdt'
+            ? _address.text.trim()
+            : null,
+        payoutEmail: _needsPayout && _method == 'giftcard'
+            ? _email.text.trim()
+            : null,
+      );
+      if (mounted) Navigator.of(context).pop('done');
+    } on QfApiException catch (e) {
+      if (!mounted) return;
+      if (e.code == 'REGION_UNAVAILABLE') {
+        Navigator.of(context).pop('region');
+      } else {
+        setState(() => _busy = false);
+        qfToast(context, e.message);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final price = (widget.product['pricePoints'] as num?)?.toInt() ?? 0;
+    return AlertDialog(
+      title: const Text('确认兑换'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '将花费 $price 积分兑换「${widget.product['name']}」，兑换后余额为 ${widget.balance - price} 分。'
+              '${widget.product['requiresReview'] == true ? '该商品需人工审核，审核通过后发放。' : ''}',
+            ),
+            if (_needsChoice) ...[
+              const SizedBox(height: 16),
+              const Text('请选择发放方式'),
+              const SizedBox(height: 8),
+              SegmentedButton<String>(
+                segments: const [
+                  ButtonSegment<String>(value: 'usdt', label: Text('USDT')),
+                  ButtonSegment<String>(
+                    value: 'giftcard',
+                    label: Text('美区礼品卡'),
+                  ),
+                ],
+                selected: {_method},
+                onSelectionChanged: (value) {
+                  setState(() {
+                    _method = value.first;
+                    _fieldError = null;
+                  });
+                },
+              ),
+            ],
+            if (_needsPayout && _method == 'usdt') ...[
+              const SizedBox(height: 16),
+              TextField(
+                controller: _address,
+                decoration: InputDecoration(
+                  labelText: 'USDT（TRC20）收款地址',
+                  hintText: '以 T 开头，共 34 位',
+                  errorText: _fieldError,
+                ),
+              ),
+              const SizedBox(height: 4),
+              const Text('请仔细核对，打款后无法撤销。'),
+            ],
+            if (_needsPayout && _method == 'giftcard') ...[
+              const SizedBox(height: 16),
+              TextField(
+                controller: _email,
+                keyboardType: TextInputType.emailAddress,
+                decoration: InputDecoration(
+                  labelText: '接收发放通知的邮箱',
+                  errorText: _fieldError,
+                ),
+              ),
+              const SizedBox(height: 4),
+              const Text('该邮箱仅用于接收发放通知与发放信息，兑换码请到「我的兑换」中查看。'),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _busy ? null : () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: _busy ? null : _confirm,
+          child: const Text('确认兑换'),
+        ),
+      ],
+    );
+  }
+}
+
+class _QfRevealCodeDialog extends StatefulWidget {
+  final QfSessionController session;
+  final int orderId;
+
+  const _QfRevealCodeDialog({required this.session, required this.orderId});
+
+  @override
+  State<_QfRevealCodeDialog> createState() => _QfRevealCodeDialogState();
+}
+
+class _QfRevealCodeDialogState extends State<_QfRevealCodeDialog> {
+  final _password = TextEditingController();
+  final _code = TextEditingController();
+  Timer? _cooldownTimer;
+  Timer? _maskTimer;
+  int _cooldown = 0;
+  String? _revealedCode;
+  bool _busy = false;
+
+  @override
+  void dispose() {
+    _cooldownTimer?.cancel();
+    _maskTimer?.cancel();
+    _password.dispose();
+    _code.dispose();
+    super.dispose();
+  }
+
+  Future<void> _requestCode() async {
+    try {
+      await widget.session.redeemCodeRequest(widget.orderId);
+      if (!mounted) return;
+      qfToast(context, '一次性验证码已发送至账号绑定邮箱，10 分钟内有效');
+      setState(() => _cooldown = 60);
+      _cooldownTimer?.cancel();
+      _cooldownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+        if (!mounted) {
+          timer.cancel();
+          return;
+        }
+        setState(() {
+          _cooldown -= 1;
+          if (_cooldown <= 0) timer.cancel();
+        });
+      });
+    } on QfApiException catch (e) {
+      if (mounted) qfToast(context, e.message);
+    }
+  }
+
+  Future<void> _reveal() async {
+    if (_password.text.isEmpty || _code.text.trim().isEmpty) {
+      qfToast(context, '请输入账户密码与邮箱验证码');
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      final code = await widget.session.redeemCodeReveal(
+        widget.orderId,
+        _password.text,
+        _code.text,
+      );
+      if (!mounted) return;
+      setState(() {
+        _revealedCode = code;
+        _busy = false;
+      });
+      _maskTimer = Timer(const Duration(seconds: 60), () {
+        if (mounted) Navigator.of(context).pop();
+      });
+    } on QfApiException catch (e) {
+      if (mounted) {
+        setState(() => _busy = false);
+        qfToast(context, e.message);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('查看兑换码'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (_revealedCode == null) ...[
+              const Text('查看兑换码需完成双重核验：先验证当前账户密码，再输入发送至账号绑定邮箱的一次性验证码。'),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _password,
+                obscureText: true,
+                decoration: const InputDecoration(labelText: '当前账户密码'),
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _code,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(labelText: '邮箱验证码'),
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: _cooldown > 0 ? null : _requestCode,
+                    child: Text(_cooldown > 0 ? '重新发送（$_cooldown 秒）' : '获取验证码'),
+                  ),
+                ],
+              ),
+            ] else ...[
+              const Text('您的兑换码（离开本窗口后将重新遮罩）：'),
+              const SizedBox(height: 8),
+              SelectableText(
+                _revealedCode!,
+                style: AppTextStyle.custom(context, size: 16, leading: 21),
+              ),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        if (_revealedCode != null)
+          TextButton(
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: _revealedCode!));
+              qfToast(context, '兑换码已复制');
+            },
+            child: const Text('复制兑换码'),
+          ),
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('关闭'),
+        ),
+        if (_revealedCode == null)
+          FilledButton(
+            onPressed: _busy ? null : _reveal,
+            child: const Text('验证并查看'),
+          ),
+      ],
     );
   }
 }

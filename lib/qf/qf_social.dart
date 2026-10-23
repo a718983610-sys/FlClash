@@ -37,9 +37,7 @@ extension QfSocialApi on QfSessionController {
     return data;
   }
 
-  Future<Map<String, dynamic>> socialProfileByUsername(
-    String username,
-  ) async {
+  Future<Map<String, dynamic>> socialProfileByUsername(String username) async {
     final data = await authed(
       'GET',
       '/profile/by-username?username=${Uri.encodeQueryComponent(username)}',
@@ -145,9 +143,7 @@ class _QfProfilePageState extends State<QfProfilePage> {
         setState(() {
           _nickname.text = (profile['nickname'] ?? '').toString();
           final avatar = profile['avatarData'];
-          _avatarData = avatar is String && avatar.isNotEmpty
-              ? avatar
-              : null;
+          _avatarData = avatar is String && avatar.isNotEmpty ? avatar : null;
           _hasBackup = profile['keyBackup'] is Map;
           _hasKey = true;
           _loading = false;
@@ -219,8 +215,7 @@ class _QfProfilePageState extends State<QfProfilePage> {
               child: const Text('取消'),
             ),
             FilledButton(
-              onPressed: () =>
-                  Navigator.of(dialogContext).pop(controller.text),
+              onPressed: () => Navigator.of(dialogContext).pop(controller.text),
               child: const Text('确定'),
             ),
           ],
@@ -313,10 +308,7 @@ class _QfProfilePageState extends State<QfProfilePage> {
                 const SizedBox(height: 16),
                 FilledButton(onPressed: _save, child: const Text('保存资料')),
                 const SizedBox(height: 24),
-                Text(
-                  '聊天密钥（端到端加密）',
-                  style: AppTextStyle.headline.of(context),
-                ),
+                Text('聊天密钥（端到端加密）', style: AppTextStyle.headline.of(context)),
                 const SizedBox(height: 8),
                 Text(
                   _hasKey
@@ -540,10 +532,7 @@ class _QfFriendsPageState extends State<QfFriendsPage> {
                     ),
                 if (_requests.isNotEmpty) ...[
                   const SizedBox(height: 16),
-                  Text(
-                    '待处理申请',
-                    style: AppTextStyle.headline.of(context),
-                  ),
+                  Text('待处理申请', style: AppTextStyle.headline.of(context)),
                   for (final raw in _requests)
                     if (raw is Map)
                       ListTile(
@@ -578,10 +567,7 @@ class _QfFriendsPageState extends State<QfFriendsPage> {
                       ),
                 ],
                 const SizedBox(height: 16),
-                Text(
-                  '我的好友',
-                  style: AppTextStyle.headline.of(context),
-                ),
+                Text('我的好友', style: AppTextStyle.headline.of(context)),
                 if (_friends.isEmpty)
                   const Padding(
                     padding: EdgeInsets.symmetric(vertical: 12),
@@ -621,11 +607,11 @@ class _QfFriendsPageState extends State<QfFriendsPage> {
                             icon: const GlyphIcon(AppGlyphs.remove),
                             tooltip: '删除好友',
                             onPressed: () => _act(
-                          () => widget.session.socialFriendDelete(
-                            (raw['userId'] as num).toInt(),
-                          ),
-                          '好友已经删除',
-                        ),
+                              () => widget.session.socialFriendDelete(
+                                (raw['userId'] as num).toInt(),
+                              ),
+                              '好友已经删除',
+                            ),
                           ),
                         ],
                       ),
@@ -722,7 +708,6 @@ class _QfScanPageState extends State<QfScanPage> {
   }
 }
 
-
 class QfFriendProfilePage extends StatelessWidget {
   final QfSessionController session;
   final Map<String, dynamic> friend;
@@ -772,12 +757,13 @@ class QfFriendProfilePage extends StatelessWidget {
           Center(
             child: Column(
               children: [
-                qfAvatar(friend['avatarData']?.toString(), nickname, radius: 40),
-                const SizedBox(height: 12),
-                Text(
+                qfAvatar(
+                  friend['avatarData']?.toString(),
                   nickname,
-                  style: AppTextStyle.headline.of(context),
+                  radius: 40,
                 ),
+                const SizedBox(height: 12),
+                Text(nickname, style: AppTextStyle.headline.of(context)),
                 if (friend['username'] != null)
                   Text('账户 ID：${friend['username']}'),
               ],
@@ -989,8 +975,9 @@ class _QfChatPageState extends State<QfChatPage> {
                       final message = _messages[index];
                       final mine = message['mine'] == true;
                       return Align(
-                        alignment:
-                            mine ? Alignment.centerRight : Alignment.centerLeft,
+                        alignment: mine
+                            ? Alignment.centerRight
+                            : Alignment.centerLeft,
                         child: Container(
                           margin: const EdgeInsets.symmetric(vertical: 4),
                           padding: const EdgeInsets.symmetric(
@@ -1000,9 +987,9 @@ class _QfChatPageState extends State<QfChatPage> {
                           decoration: BoxDecoration(
                             color: mine
                                 ? Theme.of(context).colorScheme.primaryContainer
-                                : Theme.of(context)
-                                    .colorScheme
-                                    .surfaceContainerHighest,
+                                : Theme.of(
+                                    context,
+                                  ).colorScheme.surfaceContainerHighest,
                           ),
                           child: Text((message['text'] ?? '').toString()),
                         ),

@@ -103,9 +103,8 @@ class QfSignalStore extends SignalProtocolStore {
     if (identityKey == null) {
       _entries.remove('identity:${address.getName()}:${address.getDeviceId()}');
     } else {
-      _entries['identity:${address.getName()}:${address.getDeviceId()}'] = base64Encode(
-        identityKey.serialize(),
-      );
+      _entries['identity:${address.getName()}:${address.getDeviceId()}'] =
+          base64Encode(identityKey.serialize());
     }
     await persist();
     return true;
@@ -124,7 +123,8 @@ class QfSignalStore extends SignalProtocolStore {
 
   @override
   Future<IdentityKey?> getIdentity(SignalProtocolAddress address) async {
-    final saved = _entries['identity:${address.getName()}:${address.getDeviceId()}'];
+    final saved =
+        _entries['identity:${address.getName()}:${address.getDeviceId()}'];
     if (saved == null) return null;
     return IdentityKey.fromBytes(base64Decode(saved), 0);
   }
@@ -169,7 +169,9 @@ class QfSignalStore extends SignalProtocolStore {
     final records = <SignedPreKeyRecord>[];
     for (final entry in _entries.entries) {
       if (entry.key.startsWith('signed:')) {
-        records.add(SignedPreKeyRecord.fromSerialized(base64Decode(entry.value)));
+        records.add(
+          SignedPreKeyRecord.fromSerialized(base64Decode(entry.value)),
+        );
       }
     }
     return records;
@@ -197,7 +199,8 @@ class QfSignalStore extends SignalProtocolStore {
 
   @override
   Future<SessionRecord> loadSession(SignalProtocolAddress address) async {
-    final saved = _entries['session:${address.getName()}:${address.getDeviceId()}'];
+    final saved =
+        _entries['session:${address.getName()}:${address.getDeviceId()}'];
     if (saved == null) return SessionRecord();
     return SessionRecord.fromSerialized(base64Decode(saved));
   }
@@ -219,15 +222,16 @@ class QfSignalStore extends SignalProtocolStore {
     SignalProtocolAddress address,
     SessionRecord record,
   ) async {
-    _entries['session:${address.getName()}:${address.getDeviceId()}'] = base64Encode(
-      record.serialize(),
-    );
+    _entries['session:${address.getName()}:${address.getDeviceId()}'] =
+        base64Encode(record.serialize());
     await persist();
   }
 
   @override
   Future<bool> containsSession(SignalProtocolAddress address) async {
-    return _entries.containsKey('session:${address.getName()}:${address.getDeviceId()}');
+    return _entries.containsKey(
+      'session:${address.getName()}:${address.getDeviceId()}',
+    );
   }
 
   @override
@@ -251,10 +255,7 @@ class QfSignalManager {
   static Future<void> ensureInstalled(QfSessionController session) async {
     final store = await QfSignalStore.load();
     if (!await store.containsSignedPreKey(0)) {
-      final signed = generateSignedPreKey(
-        await store.getIdentityKeyPair(),
-        0,
-      );
+      final signed = generateSignedPreKey(await store.getIdentityKeyPair(), 0);
       await store.storeSignedPreKey(0, signed);
       final preKeys = generatePreKeys(0, 100);
       for (final preKey in preKeys) {
@@ -269,9 +270,7 @@ class QfSignalManager {
         final record = await store.loadPreKey(id);
         preKeyList.add({
           'id': id,
-          'publicKey': base64Encode(
-            record.getKeyPair().publicKey.serialize(),
-          ),
+          'publicKey': base64Encode(record.getKeyPair().publicKey.serialize()),
         });
       }
     }
@@ -280,9 +279,7 @@ class QfSignalManager {
         'registrationId': store.registrationId,
         'identityKey': store.identityPublicB64,
         'signedPreKeyId': 0,
-        'signedPreKey': base64Encode(
-          signed.getKeyPair().publicKey.serialize(),
-        ),
+        'signedPreKey': base64Encode(signed.getKeyPair().publicKey.serialize()),
         'signedPreKeySignature': base64Encode(signed.signature),
         'preKeys': preKeyList,
       },
@@ -400,10 +397,7 @@ class QfSignalManager {
     final kek = _argon2id(password, salt);
     final plain = Uint8List.fromList(utf8.encode(jsonEncode(store.toJson())));
     final cipher = GCMBlockCipher(AESEngine())
-      ..init(
-        true,
-        AEADParameters(KeyParameter(kek), 128, nonce, Uint8List(0)),
-      );
+      ..init(true, AEADParameters(KeyParameter(kek), 128, nonce, Uint8List(0)));
     final sealed = cipher.process(plain);
     return {
       'v': '2',
@@ -458,12 +452,7 @@ class QfSignalManager {
         ),
       );
     final out = Uint8List(32);
-    generator.deriveKey(
-      Uint8List.fromList(utf8.encode(password)),
-      0,
-      out,
-      0,
-    );
+    generator.deriveKey(Uint8List.fromList(utf8.encode(password)), 0, out, 0);
     return out;
   }
 }
