@@ -152,6 +152,48 @@ void main() {
     });
   });
 
+  group('W3-10 WinINET proxy backup', () {
+    const sample = '''
+
+HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings
+    ProxyEnable    REG_DWORD    0x1
+    ProxyServer    REG_SZ    http://corp.example:8080
+    ProxyOverride    REG_SZ    *.local;<local>
+''';
+
+    test('parses reg query output', () {
+      final backup = WinInetProxyBackup.fromRegOutput(sample);
+      expect(backup.enable, isTrue);
+      expect(backup.server, 'http://corp.example:8080');
+      expect(backup.bypass, '*.local;<local>');
+      expect(backup.pointsAtCore, isFalse);
+    });
+
+    test('restore commands write server, bypass and enable back', () {
+      const backup = WinInetProxyBackup(
+        enable: true,
+        server: 'http://corp.example:8080',
+        bypass: '*.local',
+      );
+      final commands = backup.restoreCommands(r'HKCU\Software\Test');
+      expect(commands.length, 3);
+      expect(commands[0], contains('ProxyServer'));
+      expect(commands[0].last, '/f');
+      expect(commands[1], contains('ProxyOverride'));
+      expect(commands[2], contains('ProxyEnable'));
+      expect(commands[2], contains('1'));
+      const off = WinInetProxyBackup(enable: false, server: '', bypass: '');
+      expect(off.restoreCommands('k')[2], contains('0'));
+      expect(off.pointsAtCore, isFalse);
+      const core = WinInetProxyBackup(
+        enable: true,
+        server: '127.0.0.1:7890',
+        bypass: '',
+      );
+      expect(core.pointsAtCore, isTrue);
+    });
+  });
+
   group('W5-02 manifest fail-open extensions', () {
     QfReleaseManifest manifest({
       bool maintenance = false,
