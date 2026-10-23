@@ -37,6 +37,48 @@ void _mockSecureStore(Map<String, String> store) {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  group('W6-14 signal store secure migration', () {
+    test('legacy plaintext store migrates to secure storage', () async {
+      final secure = <String, String>{};
+      _mockSecureStore(secure);
+      final pair = generateIdentityKeyPair();
+      final legacyJson = jsonEncode({
+        'identity': base64Encode(pair.serialize()),
+        'registrationId': 4242,
+        'bundlePublished': true,
+        'entries': <String, String>{},
+      });
+      SharedPreferences.setMockInitialValues({
+        'qf_signal_store_v1': legacyJson,
+      });
+      QfSignalStore.resetCache();
+      final store = await QfSignalStore.load();
+      expect(
+        store.identityPublicB64,
+        base64Encode(pair.getPublicKey().serialize()),
+      );
+      expect(store.bundlePublished, isTrue);
+      expect(secure['qf_signal_store_v1'], legacyJson);
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString('qf_signal_store_v1'), isNull);
+      QfSignalStore.resetCache();
+      final again = await QfSignalStore.load();
+      expect(again.identityPublicB64, store.identityPublicB64);
+    });
+
+    test('fresh store persists to secure storage only', () async {
+      final secure = <String, String>{};
+      _mockSecureStore(secure);
+      SharedPreferences.setMockInitialValues({});
+      QfSignalStore.resetCache();
+      final store = await QfSignalStore.load();
+      expect(store.identityPublicB64, isNotEmpty);
+      expect(secure['qf_signal_store_v1'], isNotNull);
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString('qf_signal_store_v1'), isNull);
+    });
+  });
+
   group('W5-02 manifest fail-open extensions', () {
     QfReleaseManifest manifest({
       bool maintenance = false,

@@ -20,6 +20,35 @@ import 'qf_social.dart';
 
 class QfSignalStore extends SignalProtocolStore {
   static const String _prefsKey = 'qf_signal_store_v1';
+  static const FlutterSecureStorage _secure = FlutterSecureStorage();
+  static const Duration _secureTimeout = Duration(milliseconds: 500);
+  static bool? _secureOk;
+
+  static Future<String?> _secureRead() async {
+    if (_secureOk == false) return null;
+    try {
+      final value = await _secure.read(key: _prefsKey).timeout(_secureTimeout);
+      _secureOk = true;
+      return value;
+    } catch (_) {
+      _secureOk = false;
+      return null;
+    }
+  }
+
+  static Future<bool> _secureWrite(String value) async {
+    if (_secureOk == false) return false;
+    try {
+      await _secure
+          .write(key: _prefsKey, value: value)
+          .timeout(_secureTimeout);
+      _secureOk = true;
+      return true;
+    } catch (_) {
+      _secureOk = false;
+      return false;
+    }
+  }
 
   IdentityKeyPair _identityPair;
   int _registrationId;
@@ -34,9 +63,24 @@ class QfSignalStore extends SignalProtocolStore {
   static Future<QfSignalStore> load() async {
     if (_cached != null) return _cached!;
     final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString(_prefsKey);
-    if (raw != null && raw.isNotEmpty) {
-      final data = Map<String, dynamic>.from(jsonDecode(raw) as Map);
+    final raw = await _secureRead();
+    String? resolved = raw;
+    if (resolved == null) {
+      // Migrate the legacy plaintext copy (identity private key included)
+      // into secure storage; the plaintext is dropped only once the secure
+      // copy actually landed, so a broken secure store cannot lose it.
+      final legacy = prefs.getString(_prefsKey);
+      if (legacy != null && legacy.isNotEmpty) {
+        resolved = legacy;
+        if (await _secureWrite(legacy)) {
+          await prefs.remove(_prefsKey);
+        }
+      }
+    } else {
+      await prefs.remove(_prefsKey);
+    }
+    if (resolved != null && resolved.isNotEmpty) {
+      final data = Map<String, dynamic>.from(jsonDecode(resolved) as Map);
       final store = QfSignalStore._(
         IdentityKeyPair.fromSerialized(
           base64Decode((data['identity'] ?? '').toString()),
@@ -69,7 +113,11 @@ class QfSignalStore extends SignalProtocolStore {
 
   static Future<void> replaceFromJson(Map<String, dynamic> data) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_prefsKey, jsonEncode(data));
+    if (await _secureWrite(jsonEncode(data))) {
+      await prefs.remove(_prefsKey);
+    } else {
+      await prefs.setString(_prefsKey, jsonEncode(data));
+    }
     resetCache();
   }
 
@@ -84,7 +132,13 @@ class QfSignalStore extends SignalProtocolStore {
 
   Future<void> persist() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_prefsKey, jsonEncode(toJson()));
+    if (await _secureWrite(jsonEncode(toJson()))) {
+      await prefs.remove(_prefsKey);
+    } else {
+      // Secure storage unavailable: keep the blob in preferences rather
+      // than losing the identity; load() migrates it on a later launch.
+      await prefs.setString(_prefsKey, jsonEncode(toJson()));
+    }
   }
 
   String get identityPublicB64 =>
