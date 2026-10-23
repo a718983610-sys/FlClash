@@ -1,5 +1,6 @@
 export 'app_localizations.dart';
 export 'app_ports.dart';
+export 'auto_select_fastest.dart';
 export 'backup.dart';
 export 'changelog.dart';
 export 'cidr.dart';

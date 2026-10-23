@@ -196,6 +196,7 @@
   "appIconDesign": "アプリアイコンのデザイン",
   "autoCloseConnections": "接続を自動的に閉じる",
   "autoCloseConnectionsDesc": "プロキシを切り替えると、既存の接続を自動的に閉じます。",
+  "autoSelectFastest": "最速ノードを自動選択",
   "onlyStatisticsProxy": "プロキシトラフィックのみ集計",
   "showNotificationStopAction": "通知に停止ボタンを表示",
   "pureBlackMode": "ピュアブラックモード",

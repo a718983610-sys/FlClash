@@ -455,7 +455,8 @@ class SetupAction extends _$SetupAction {
         ? await setupState.script?.content
         : null;
     final hasScript = scriptContent?.isNotEmpty == true;
-    final profileBase = !isCustom && !hasScript
+    final autoSelectFastest = ref.read(appSettingProvider).autoSelectFastest;
+    final profileBase = !isCustom && !hasScript && !autoSelectFastest
         ? await _core.getProfileBase(profileId)
         : null;
     Map<String, dynamic> rawConfig = isCustom
@@ -471,6 +472,9 @@ class SetupAction extends _$SetupAction {
     final rules = isCustom ? setupState.rules : <Rule>[];
     if (hasScript) {
       rawConfig = await handleEvaluate(scriptContent!, rawConfig);
+    }
+    if (autoSelectFastest) {
+      rawConfig = applyAutoSelectFastest(rawConfig);
     }
     final directory = await appPath.profilesPath;
     final injected = await _resolveInjectedProviders(

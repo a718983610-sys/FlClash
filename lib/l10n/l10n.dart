@@ -1510,6 +1510,16 @@ class AppLocalizations {
     );
   }
 
+  /// `Auto-select fastest node`
+  String get autoSelectFastest {
+    return Intl.message(
+      'Auto-select fastest node',
+      name: 'autoSelectFastest',
+      desc: '',
+      args: [],
+    );
+  }
+
   /// `Only count proxy traffic`
   String get onlyStatisticsProxy {
     return Intl.message(
@@ -7797,8 +7807,7 @@ class AppLocalizations {
   String customImportDroppedSubRules(num count, Object label) {
     return Intl.plural(
       count,
-      one:
-          '1 SUB-RULE rule was dropped, since custom profiles do not support sub-rules',
+      one: '1 SUB-RULE rule was dropped, since custom profiles do not support sub-rules',
       other:
           '$label SUB-RULE rules were dropped, since custom profiles do not support sub-rules',
       name: 'customImportDroppedSubRules',

@@ -334,6 +334,11 @@ class GeneralView extends ConsumerWidget {
   List<Widget> _connectionItems() {
     return [
       const TestUrlItem(),
+      _appSettingToggle(
+        title: (l) => l.autoSelectFastest,
+        select: (state) => state.autoSelectFastest,
+        update: (state, value) => state.copyWith(autoSelectFastest: value),
+      ),
       _clashToggle(
         title: (l) => l.unifiedDelay,
         select: (state) => state.unifiedDelay,

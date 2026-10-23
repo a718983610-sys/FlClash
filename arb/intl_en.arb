@@ -196,6 +196,7 @@
   "appIconDesign": "App icon design",
   "autoCloseConnections": "Auto close connections",
   "autoCloseConnectionsDesc": "Auto close connections drops open connections when you switch proxies.",
+  "autoSelectFastest": "Auto-select fastest node",
   "onlyStatisticsProxy": "Only count proxy traffic",
   "showNotificationStopAction": "Stop button in notification",
   "pureBlackMode": "Pure black mode",

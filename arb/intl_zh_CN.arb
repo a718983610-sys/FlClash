@@ -196,6 +196,7 @@
   "appIconDesign": "应用图标设计",
   "autoCloseConnections": "自动关闭连接",
   "autoCloseConnectionsDesc": "自动关闭连接会在切换代理后断开已有连接。",
+  "autoSelectFastest": "自动选最快节点",
   "onlyStatisticsProxy": "仅统计代理流量",
   "showNotificationStopAction": "通知栏显示停止按钮",
   "pureBlackMode": "纯黑模式",
