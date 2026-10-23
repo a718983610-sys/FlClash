@@ -75,6 +75,12 @@ class QfSessionController extends ChangeNotifier {
   static const String _kRemember = 'qf_remember_device';
   static const String _kGuestExhaustedLocal = 'qf_guest_exhausted_local';
   static const String _kGuestBlockedCore = 'qf_guest_blocked_core';
+  static const String _kGuestLedgerDay = 'qf_guest_ledger_day';
+  static const String _kGuestLedgerUsedSec = 'qf_guest_ledger_used_sec';
+  static const String _kGuestOfflineSince = 'qf_guest_offline_since';
+  static const String _kGuestOfflineAccruedSec = 'qf_guest_offline_accrued_sec';
+  static const String _kGuestReconcileId = 'qf_guest_reconcile_id';
+  static const int guestDailyLimitSeconds = 7200;
 
   static bool startupHeldForQuota = false;
 
@@ -95,13 +101,19 @@ class QfSessionController extends ChangeNotifier {
   int? userId;
   bool accountDeleting = false;
   int? deletionEffectiveAt;
+  bool canAnnounce = false;
   QfGuestUsage? guestUsage;
   bool guestExhausted = false;
+  bool guestOffline = false;
+  Timer? _offlineTimer;
+  int _offlineLastTickSec = 0;
+  int Function() nowSecFn = () => DateTime.now().millisecondsSinceEpoch ~/ 1000;
   String? heartbeatNotice;
   Map<String, dynamic>? pointsMe;
 
   bool Function()? isRunningFn;
   int Function()? trafficTotalFn;
+  Future<void> Function()? onAuthenticatedFn;
   Future<void> Function()? onGuestExhaustedFn;
   Future<void> Function()? onForceDisconnectFn;
 
@@ -302,6 +314,18 @@ class QfSessionController extends ChangeNotifier {
       } else {
         await _clearUserSession();
         mode = QfMode.entry;
+      }
+    } else if (storedMode == 'guest' &&
+        _guestToken == null &&
+        (prefs.getInt(_kGuestOfflineSince) ?? 0) > 0) {
+      mode = QfMode.guest;
+      guestOffline = true;
+      final used = await _guestLedgerUsedToday(prefs);
+      guestUsage = _localGuestUsage(used);
+      guestExhausted = guestUsage?.exhausted ?? false;
+      if (!guestExhausted) {
+        _offlineLastTickSec = nowSecFn();
+        _startOfflineTimer();
       }
     } else if (storedMode == 'guest' && _guestToken != null) {
       mode = QfMode.guest;
@@ -964,6 +988,7 @@ class QfSessionController extends ChangeNotifier {
     final was = guestExhausted;
     guestExhausted = guestUsage?.exhausted ?? false;
     final prefs = await SharedPreferences.getInstance();
+    await _saveGuestLedger(prefs, guestUsage?.usedSeconds ?? 0);
     await prefs.setBool(_kGuestExhaustedLocal, guestExhausted);
     await _syncGuestBlockedCore();
     notifyListeners();
@@ -974,19 +999,149 @@ class QfSessionController extends ChangeNotifier {
 
   Future<void> enterGuest() async {
     final identity = await QfDeviceIdentity.resolve();
-    final data = await QfHttp.send(
-      'POST',
-      '$serverBaseUrl/guest/register',
-      body: {'deviceHash': identity.deviceHash, 'platform': identity.platform},
-    );
+    final Map<String, dynamic> data;
+    try {
+      data = await QfHttp.send(
+        'POST',
+        '$serverBaseUrl/guest/register',
+        body: {
+          'deviceHash': identity.deviceHash,
+          'platform': identity.platform,
+        },
+      );
+    } on QfApiException catch (e) {
+      if (!e.isNetworkFailure) rethrow;
+      await _enterOfflineGuest();
+      return;
+    }
     final prefs = await SharedPreferences.getInstance();
     _guestToken = (data['guestToken'] ?? '').toString();
     _guestHeartbeatKey = (data['heartbeatKey'] ?? '').toString();
-    await prefs.setString(_kGuestToken, _guestToken ?? '');
-    await prefs.setString(_kGuestKey, _guestHeartbeatKey ?? '');
+    await _storeGuestCredentials();
     await prefs.setString(_kMode, 'guest');
+    await prefs.setInt(_kGuestOfflineSince, 0);
+    guestOffline = false;
     mode = QfMode.guest;
     await _applyGuestUsage(data, notifyExhaustedTransition: false);
+  }
+
+  String _guestTodayKey() {
+    final now = DateTime.fromMillisecondsSinceEpoch(nowSecFn() * 1000);
+    return '${now.year}-${now.month}-${now.day}';
+  }
+
+  Future<int> _guestLedgerUsedToday(SharedPreferences prefs) async {
+    if (prefs.getString(_kGuestLedgerDay) != _guestTodayKey()) return 0;
+    return prefs.getInt(_kGuestLedgerUsedSec) ?? 0;
+  }
+
+  Future<void> _saveGuestLedger(SharedPreferences prefs, int usedSec) async {
+    await prefs.setString(_kGuestLedgerDay, _guestTodayKey());
+    await prefs.setInt(_kGuestLedgerUsedSec, usedSec);
+  }
+
+  QfGuestUsage _localGuestUsage(int usedSec) {
+    final exhausted = usedSec >= guestDailyLimitSeconds;
+    return QfGuestUsage(
+      dailyLimitSeconds: guestDailyLimitSeconds,
+      usedSeconds: usedSec,
+      remainingSeconds: exhausted ? 0 : guestDailyLimitSeconds - usedSec,
+      exhausted: exhausted,
+    );
+  }
+
+  void _startOfflineTimer() {
+    _offlineTimer?.cancel();
+    _offlineTimer = Timer.periodic(
+      const Duration(seconds: 15),
+      (_) => unawaited(tickOfflineGuest()),
+    );
+  }
+
+  Future<void> _enterOfflineGuest() async {
+    final prefs = await SharedPreferences.getInstance();
+    final used = await _guestLedgerUsedToday(prefs);
+    guestOffline = true;
+    _guestToken = null;
+    _guestHeartbeatKey = null;
+    await prefs.setString(_kMode, 'guest');
+    mode = QfMode.guest;
+    guestUsage = _localGuestUsage(used);
+    guestExhausted = guestUsage?.exhausted ?? false;
+    await prefs.setBool(_kGuestExhaustedLocal, guestExhausted);
+    if (!guestExhausted) {
+      final now = nowSecFn();
+      final freshSegment = (prefs.getInt(_kGuestOfflineSince) ?? 0) <= 0;
+      await prefs.setInt(_kGuestOfflineSince, now);
+      _offlineLastTickSec = now;
+      // One stable reconcile id per offline segment: a fresh segment always
+      // mints a new id; re-entering an ongoing segment keeps the old one.
+      var reconcileId = prefs.getString(_kGuestReconcileId);
+      if (freshSegment || reconcileId == null || reconcileId.isEmpty) {
+        final identity = await QfDeviceIdentity.resolve();
+        final hash = identity.deviceHash;
+        reconcileId =
+            'offline-${hash.length > 12 ? hash.substring(0, 12) : hash}-$now';
+        await prefs.setString(_kGuestReconcileId, reconcileId);
+      }
+      _startOfflineTimer();
+    }
+    await _syncGuestBlockedCore();
+    notifyListeners();
+  }
+
+  Future<void> tickOfflineGuest() async {
+    if (!guestOffline || guestExhausted) return;
+    final now = nowSecFn();
+    final delta = now - _offlineLastTickSec;
+    if (delta <= 0) return;
+    _offlineLastTickSec = now;
+    final prefs = await SharedPreferences.getInstance();
+    final used = await _guestLedgerUsedToday(prefs) + delta;
+    final accrued = (prefs.getInt(_kGuestOfflineAccruedSec) ?? 0) + delta;
+    await _saveGuestLedger(prefs, used);
+    await prefs.setInt(_kGuestOfflineAccruedSec, accrued);
+    guestUsage = _localGuestUsage(used);
+    if ((guestUsage?.exhausted ?? false) && !guestExhausted) {
+      guestExhausted = true;
+      await prefs.setBool(_kGuestExhaustedLocal, true);
+      await _syncGuestBlockedCore();
+      _offlineTimer?.cancel();
+      await _runDisconnectCallback();
+    }
+    notifyListeners();
+  }
+
+  Future<void> tryRecoverOfflineGuest() async {
+    if (!guestOffline || mode != QfMode.guest) return;
+    final identity = await QfDeviceIdentity.resolve();
+    final Map<String, dynamic> data;
+    try {
+      data = await QfHttp.send(
+        'POST',
+        '$serverBaseUrl/guest/register',
+        body: {
+          'deviceHash': identity.deviceHash,
+          'platform': identity.platform,
+        },
+      );
+    } on QfApiException catch (e) {
+      if (e.isNetworkFailure) return;
+      heartbeatNotice = e.message;
+      await exitGuestToEntry();
+      return;
+    } catch (_) {
+      return;
+    }
+    await tickOfflineGuest();
+    final prefs = await SharedPreferences.getInstance();
+    _guestToken = (data['guestToken'] ?? '').toString();
+    _guestHeartbeatKey = (data['heartbeatKey'] ?? '').toString();
+    await _storeGuestCredentials();
+    await prefs.setInt(_kGuestOfflineSince, 0);
+    guestOffline = false;
+    _offlineTimer?.cancel();
+    await _applyGuestUsage(data, notifyExhaustedTransition: true);
   }
 
   Future<void> refreshGuestUsage() async {
@@ -1008,9 +1163,12 @@ class QfSessionController extends ChangeNotifier {
   }
 
   Future<void> exitGuestToEntry() async {
+    _offlineTimer?.cancel();
+    guestOffline = false;
     await _disconnectProxy();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_kMode, 'entry');
+    await prefs.setInt(_kGuestOfflineSince, 0);
     mode = QfMode.entry;
     await _syncGuestBlockedCore();
     notifyListeners();
@@ -1070,6 +1228,11 @@ class QfSessionController extends ChangeNotifier {
     if (!running) return;
     _beating = true;
     try {
+      if (mode == QfMode.guest && guestOffline) {
+        await tickOfflineGuest();
+        await tryRecoverOfflineGuest();
+        return;
+      }
       final total = trafficTotalFn?.call() ?? 0;
       var delta = total - _lastTrafficTotal;
       if (delta < 0) delta = total;
@@ -1122,21 +1285,26 @@ class QfSessionController extends ChangeNotifier {
           _guestToken != null &&
           _guestHeartbeatKey != null) {
         final prefs = await SharedPreferences.getInstance();
-        _guestSeq += 1;
-        await prefs.setInt(_kGuestSeq, _guestSeq);
+        // The sequence is only committed after a successful response: a
+        // rejected heartbeat (e.g. a reconcile 400, which the server raises
+        // before consuming the sequence) must be retryable with the same seq.
+        final nextSeq = _guestSeq + 1;
         final sig = qfHeartbeatSignature(
           key: _guestHeartbeatKey!,
-          seq: _guestSeq,
+          seq: nextSeq,
           clientTs: clientTs,
           trafficBytes: delta,
           envFlags: envFlags,
         );
+        final pendingAccrued = prefs.getInt(_kGuestOfflineAccruedSec) ?? 0;
+        final accruedSend = pendingAccrued.clamp(0, 7200);
+        final reconcileId = prefs.getString(_kGuestReconcileId);
         final data = await QfHttp.send(
           'POST',
           '$serverBaseUrl/guest/heartbeat',
           bearer: _guestToken,
           body: {
-            'seq': _guestSeq,
+            'seq': nextSeq,
             'clientTs': clientTs,
             'trafficBytes': delta,
             'env': {
@@ -1145,8 +1313,18 @@ class QfSessionController extends ChangeNotifier {
               'multiOpen': multiOpen,
             },
             'sig': sig,
+            if (accruedSend > 0 && reconcileId != null)
+              'offlineAccruedSec': accruedSend,
+            if (accruedSend > 0 && reconcileId != null)
+              'reconcileId': reconcileId,
           },
         );
+        _guestSeq = nextSeq;
+        await prefs.setInt(_kGuestSeq, _guestSeq);
+        if (pendingAccrued > 0 && data['accepted'] != false) {
+          await prefs.setInt(_kGuestOfflineAccruedSec, 0);
+          await prefs.remove(_kGuestReconcileId);
+        }
         if (data['accepted'] == false && data['reason'] == 'seq_out_of_order') {
           _guestSeq = (data['serverSeq'] as num?)?.toInt() ?? _guestSeq;
           await prefs.setInt(_kGuestSeq, _guestSeq);
