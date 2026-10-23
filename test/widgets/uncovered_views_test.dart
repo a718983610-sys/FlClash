@@ -7,6 +7,9 @@ import 'package:fl_clash/l10n/l10n.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/pages/editor.dart';
 import 'package:fl_clash/providers/providers.dart';
+import 'package:fl_clash/qf/qf_providers.dart';
+import 'package:fl_clash/qf/qf_update.dart';
+import 'package:fl_clash/qf/qf_version.dart';
 import 'package:fl_clash/state.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/views/about.dart';
@@ -202,6 +205,19 @@ void main() {
   testWidgets('about view shows progress while checking for updates', (
     tester,
   ) async {
+    QfRuntime.appVersion = '0.9.1';
+    QfUpdateService.platformKeyOverride = 'windows';
+    QfUpdateService.manifestFetcherForTest = () async =>
+        QfReleaseManifest.fromJson({
+          'latestVersion': '0.9.1',
+          'maintenance': false,
+        });
+    addTearDown(() {
+      QfRuntime.appVersion = '';
+      QfUpdateService.platformKeyOverride = null;
+      QfUpdateService.manifestFetcherForTest = null;
+    });
+
     final container = _containerFor(tester);
 
     await tester.pumpWidget(
