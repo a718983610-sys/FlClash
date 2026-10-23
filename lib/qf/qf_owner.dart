@@ -762,7 +762,7 @@ class _QfOwnerUserPageState extends State<QfOwnerUserPage> {
           '/owner/users/$uid/disconnect',
           body: {...creds, 'reasonCode': 'SECURITY_RISK'},
         );
-        return '已静默断开 ${data['disconnected']} 条连接。';
+        return '断开指令已发送，将在对方下一次心跳时生效（已排队 ${data['queuedDevices'] ?? 0} 台设备）。';
       },
     );
   }

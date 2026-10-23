@@ -479,6 +479,17 @@ class QfSessionController extends ChangeNotifier {
     } catch (_) {}
   }
 
+  Future<void> _applyServerCommands(Map<String, dynamic> data) async {
+    final commands = data['commands'];
+    if (commands is! List) return;
+    for (final command in commands) {
+      if (command is Map && command['type'] == 'disconnect') {
+        await _runDisconnectCallback();
+        return;
+      }
+    }
+  }
+
   Future<void> _disconnectProxy() async {
     stopHeartbeat();
     await _runDisconnectCallback();
@@ -1300,6 +1311,7 @@ class QfSessionController extends ChangeNotifier {
         if (data['settled'] != null) {
           await refreshPoints();
         }
+        await _applyServerCommands(data);
       } else if (mode == QfMode.guest &&
           _guestToken != null &&
           _guestHeartbeatKey != null) {
