@@ -448,7 +448,6 @@ class HomeBackScopeContainer extends ConsumerWidget {
   }
 }
 
-
 Widget? _qfGuestSubstitute(
   BuildContext context,
   WidgetRef ref,
@@ -474,9 +473,9 @@ Widget? _qfGuestSubstitute(
   return QfRestrictedPage(
     onLogin: () => session.exitGuestToEntry(),
     onAbout: () {
-      Navigator.of(context).push(
-        MaterialPageRoute<void>(builder: (_) => const AboutView()),
-      );
+      Navigator.of(
+        context,
+      ).push(MaterialPageRoute<void>(builder: (_) => const AboutView()));
     },
     onCheckUpdate: () => QfUpdateFlow.runManualCheck(context),
   );

@@ -36,9 +36,7 @@ class Navigation implements NavigationPort {
         label: PageLabel.forum,
         builder: (context) => QfForumPage(
           key: const GlobalObjectKey(PageLabel.forum),
-          session: ProviderScope.containerOf(
-            context,
-          ).read(qfSessionProvider),
+          session: ProviderScope.containerOf(context).read(qfSessionProvider),
         ),
         modes: [NavigationItemMode.desktop, NavigationItemMode.mobile],
       ),
@@ -53,9 +51,7 @@ class Navigation implements NavigationPort {
         label: PageLabel.friends,
         builder: (context) => QfFriendsPage(
           key: const GlobalObjectKey(PageLabel.friends),
-          session: ProviderScope.containerOf(
-            context,
-          ).read(qfSessionProvider),
+          session: ProviderScope.containerOf(context).read(qfSessionProvider),
         ),
         modes: [NavigationItemMode.desktop, NavigationItemMode.mobile],
       ),
@@ -64,9 +60,7 @@ class Navigation implements NavigationPort {
         label: PageLabel.mine,
         builder: (context) => QfMinePage(
           key: const GlobalObjectKey(PageLabel.mine),
-          session: ProviderScope.containerOf(
-            context,
-          ).read(qfSessionProvider),
+          session: ProviderScope.containerOf(context).read(qfSessionProvider),
         ),
         modes: [NavigationItemMode.desktop, NavigationItemMode.mobile],
       ),

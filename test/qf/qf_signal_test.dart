@@ -134,10 +134,7 @@ void main() {
     await QfSignalStore.load();
     final restored = await QfSignalManager.restoreBackup(backup, 'wrong');
     expect(restored, isFalse);
-    final ok = await QfSignalManager.restoreBackup(
-      backup,
-      'correct horse 42',
-    );
+    final ok = await QfSignalManager.restoreBackup(backup, 'correct horse 42');
     expect(ok, isTrue);
     final restoredStore = await QfSignalStore.load();
     expect(restoredStore.identityPublicB64, identityBefore);
