@@ -62,4 +62,8 @@ jobs:
           $zipNew = "./dist/QFClash-Windows-v$version.zip"
           Move-Item $exe.FullName $exeNew -Force
           Move-Item $zip.FullName $zipNew -Force
-          gh release create $tag $pre --title "QFClash Windows版 v$version" --notes "QFClash Windows 版：QFClash-Windows-v$version.exe 是安装包（推荐，含后台服务）；QFClash-Windows-v$version.zip 是便携版（解压即用）。安卓版请到标签 android-v 开头的发布里下载，不要下错。" $exeNew $zipNew
+          # 注意：$pre 为空时不能直接内插进命令（pwsh 会传一个空字符串参数，
+          # gh 会把它当成文件通配而报 "no matches found"）——用参数数组拼。
+          $createArgs = @($tag, '--title', "QFClash Windows版 v$version", '--notes', "QFClash Windows 版：QFClash-Windows-v$version.exe 是安装包（推荐，含后台服务）；QFClash-Windows-v$version.zip 是便携版（解压即用）。安卓版请到标签 android-v 开头的发布里下载，不要下错。", $exeNew, $zipNew)
+          if ($pre) { $createArgs += '--prerelease' }
+          gh release create @createArgs
