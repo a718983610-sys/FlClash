@@ -13,6 +13,7 @@ import 'package:qr_flutter/qr_flutter.dart';
 import 'qf_api.dart';
 import 'qf_config.dart';
 import 'qf_google.dart';
+import 'qf_owner.dart';
 import 'qf_pages2.dart';
 import 'qf_passkey.dart';
 import 'qf_providers.dart';
@@ -1614,6 +1615,7 @@ class QfMinePage extends StatelessWidget {
                   );
                 },
               ),
+              QfOwnerEntryTile(session: session),
               ListTile(
                 leading: const GlyphIcon(AppGlyphs.sync),
                 title: const Text('软件更新'),
