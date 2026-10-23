@@ -6,7 +6,6 @@ class QfConfig {
       'https://qfclash-account.a718983610.workers.dev';
   static const String agreementVersion = '3.0';
   static const String contactEmail = 'a718983610@gmail.com';
-  static const String googleComingSoon = '谷歌登录即将上线，敬请期待';
 }
 
 String? qfUsernameError(String input) {

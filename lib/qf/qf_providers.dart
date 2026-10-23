@@ -8,5 +8,6 @@ final qfSessionProvider = Provider<QfSessionController>(
 
 class QfRuntime {
   static String googleClientId = '';
+  static String googleWebClientId = '';
   static String appVersion = '';
 }

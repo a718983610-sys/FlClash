@@ -88,6 +88,7 @@ class _QfSessionGateState extends ConsumerState<QfSessionGate> {
       QfRuntime.googleClientId = manifest.googleClientIdFor(
         QfUpdateService.platformKey,
       );
+      QfRuntime.googleWebClientId = manifest.googleClientId;
       if (session.isGuest) {
         await session.refreshGuestUsage();
       }

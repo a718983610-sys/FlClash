@@ -12,6 +12,7 @@ import 'package:qr_flutter/qr_flutter.dart';
 
 import 'qf_api.dart';
 import 'qf_config.dart';
+import 'qf_google.dart';
 import 'qf_pages2.dart';
 import 'qf_passkey.dart';
 import 'qf_providers.dart';
@@ -336,6 +337,31 @@ class _QfLoginFormState extends State<QfLoginForm> {
     }
   }
 
+  Future<void> _googleLogin() async {
+    setState(() => _busy = true);
+    try {
+      final idToken = await QfGoogleAuth.fetchIdToken();
+      await widget.session.googleLogin(idToken, remember: _remember);
+    } on QfGoogleAuthException catch (e) {
+      if (mounted) qfToast(context, e.message);
+    } on QfApiException catch (e) {
+      if (mounted) {
+        if (e.code == 'ACCOUNT_BANNED') {
+          await qfShowBanDialog(
+            context,
+            session: widget.session,
+            data: e.data,
+            account: _email.text.trim(),
+          );
+        } else {
+          qfToast(context, e.message);
+        }
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   Future<void> _forgotPassword() async {
     await showDialog<void>(
       context: context,
@@ -345,7 +371,7 @@ class _QfLoginFormState extends State<QfLoginForm> {
 
   @override
   Widget build(BuildContext context) {
-    final googleReady = QfRuntime.googleClientId.isNotEmpty;
+    final googleReady = QfGoogleAuth.isConfigured;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -396,20 +422,9 @@ class _QfLoginFormState extends State<QfLoginForm> {
         ),
         const SizedBox(height: 8),
         OutlinedButton(
-          onPressed: googleReady
-              ? () => qfToast(context, QfConfig.googleComingSoon)
-              : null,
+          onPressed: googleReady && !_busy ? _googleLogin : null,
           child: const Text('使用谷歌账号登录'),
         ),
-        if (!googleReady)
-          Padding(
-            padding: EdgeInsets.only(top: 4),
-            child: Text(
-              QfConfig.googleComingSoon,
-              textAlign: TextAlign.center,
-              style: AppTextStyle.caption1.of(context),
-            ),
-          ),
         Align(
           alignment: Alignment.centerRight,
           child: TextButton(

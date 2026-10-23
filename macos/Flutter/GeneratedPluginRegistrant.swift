@@ -14,6 +14,7 @@ import file_selector_macos
 import flutter_local_notifications
 import flutter_secure_storage_darwin
 import flutter_timezone
+import google_sign_in_ios
 import mobile_scanner
 import package_info_plus
 import passkeys_darwin
@@ -36,6 +37,7 @@ func RegisterGeneratedPlugins(registry: FlutterPluginRegistry) {
   FlutterLocalNotificationsPlugin.register(with: registry.registrar(forPlugin: "FlutterLocalNotificationsPlugin"))
   FlutterSecureStorageDarwinPlugin.register(with: registry.registrar(forPlugin: "FlutterSecureStorageDarwinPlugin"))
   FlutterTimezonePlugin.register(with: registry.registrar(forPlugin: "FlutterTimezonePlugin"))
+  GoogleSignInPlugin.register(with: registry.registrar(forPlugin: "GoogleSignInPlugin"))
   MobileScannerPlugin.register(with: registry.registrar(forPlugin: "MobileScannerPlugin"))
   FPPPackageInfoPlusPlugin.register(with: registry.registrar(forPlugin: "FPPPackageInfoPlusPlugin"))
   PasskeysPlugin.register(with: registry.registrar(forPlugin: "PasskeysPlugin"))
