@@ -80,6 +80,8 @@ dependencies:
   flutter_timezone: ^5.1.1
   flutter_secure_storage: ^11.2.0
   passkeys: ^2.23.1
+  workmanager: ^0.10.10
+  flutter_local_notifications: ^22.3.2
 dev_dependencies:
   flutter_test:
     sdk: flutter

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:device_info_plus/device_info_plus.dart';
@@ -18,6 +19,7 @@ import 'qf_pages2.dart';
 import 'qf_providers.dart';
 import 'qf_session.dart';
 import 'qf_update.dart';
+import 'qf_update_notify.dart';
 import 'qf_version.dart';
 
 class QfSessionGate extends ConsumerStatefulWidget {
@@ -38,10 +40,21 @@ class _QfSessionGateState extends ConsumerState<QfSessionGate> {
 
   QfSessionController get _session => ref.read(qfSessionProvider);
 
+  Timer? _updateNotifyTimer;
+
   @override
   void initState() {
     super.initState();
+    QfUpdateNotify.registerTapHandler(() {
+      if (mounted) QfUpdateFlow.runManualCheck(context);
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) => _boot());
+  }
+
+  @override
+  void dispose() {
+    _updateNotifyTimer?.cancel();
+    super.dispose();
   }
 
   Future<void> _stopCore() async {
@@ -90,6 +103,27 @@ class _QfSessionGateState extends ConsumerState<QfSessionGate> {
       _check = check;
       _booted = true;
     });
+    unawaited(QfUpdateNotify.registerBackgroundChecks());
+    unawaited(QfUpdateNotify.requestPermissionOnce());
+    if (Platform.isWindows) {
+      _updateNotifyTimer = Timer.periodic(const Duration(hours: 6), (_) {
+        unawaited(QfUpdateNotify.runBackgroundCheckNow());
+      });
+    }
+    if ((check.decision == QfUpdateDecision.minor ||
+            check.decision == QfUpdateDecision.force) &&
+        check.manifest != null) {
+      unawaited(QfUpdateNotify.markNotified(check.manifest!.latestVersion));
+    }
+    if (check.decision == QfUpdateDecision.none ||
+        check.decision == QfUpdateDecision.minor) {
+      final fromNotification = await QfUpdateNotify.launchedFromNotification();
+      if (fromNotification && mounted) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) QfUpdateFlow.runManualCheck(context);
+        });
+      }
+    }
     if (check.decision == QfUpdateDecision.minor && !_minorShown) {
       _minorShown = true;
       WidgetsBinding.instance.addPostFrameCallback((_) async {
