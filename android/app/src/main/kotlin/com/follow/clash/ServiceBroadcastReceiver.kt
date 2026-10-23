@@ -34,7 +34,11 @@ class ServiceBroadcastReceiver : BroadcastReceiver() {
 
     private suspend fun handleAction(action: String) {
         when (action) {
-            BroadcastAction.VPN_START_REQUESTED.action -> ServiceState.handleStartAction()
+            BroadcastAction.VPN_START_REQUESTED.action -> {
+                if (!GlobalState.application.qfGuestBlockedCore) {
+                    ServiceState.handleStartAction()
+                }
+            }
 
             BroadcastAction.VPN_REVOKED.action -> ServiceState.handleVpnRevokeAction()
         }

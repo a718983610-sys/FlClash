@@ -17,6 +17,7 @@ import 'qf_config.dart';
 import 'qf_pages.dart';
 import 'qf_pages2.dart';
 import 'qf_providers.dart';
+import 'qf_recovery.dart';
 import 'qf_session.dart';
 import 'qf_update.dart';
 import 'qf_update_notify.dart';
@@ -37,10 +38,31 @@ class _QfSessionGateState extends ConsumerState<QfSessionGate> {
   bool _minorShown = false;
   String? _regionMessage;
   bool _regionShown = false;
+  bool _regionQueued = false;
+  bool _banQueued = false;
+  bool _frozenQueued = false;
+  bool _minorQueued = false;
+  bool _dialogBusy = false;
+  QfUpdateCheck? _minorCheck;
+  String _pendingBanNotice = '';
+  String _pendingBanReason = '';
+  String _pendingBanAccount = '';
+  String _pendingFrozenNotice = '';
+  String _pendingFrozenAccount = '';
+  int? _pendingFrozenAt;
 
   QfSessionController get _session => ref.read(qfSessionProvider);
 
   Timer? _updateNotifyTimer;
+  Timer? _manifestTimer;
+
+  bool get _blockingActive {
+    final decision = _check?.decision ?? QfUpdateDecision.none;
+    return decision == QfUpdateDecision.maintenance ||
+        decision == QfUpdateDecision.retired ||
+        decision == QfUpdateDecision.force ||
+        (_session.isGuest && _session.guestExhausted);
+  }
 
   @override
   void initState() {
@@ -54,6 +76,7 @@ class _QfSessionGateState extends ConsumerState<QfSessionGate> {
   @override
   void dispose() {
     _updateNotifyTimer?.cancel();
+    _manifestTimer?.cancel();
     super.dispose();
   }
 
@@ -78,6 +101,7 @@ class _QfSessionGateState extends ConsumerState<QfSessionGate> {
       return (traffic.up + traffic.down).toInt();
     };
     session.onGuestExhaustedFn = _stopCore;
+    session.onForceDisconnectFn = _stopCore;
     try {
       QfRuntime.appVersion = (await PackageInfo.fromPlatform()).version;
     } catch (_) {}
@@ -96,6 +120,12 @@ class _QfSessionGateState extends ConsumerState<QfSessionGate> {
     if (session.isGuest && session.guestExhausted) {
       await _stopCore();
     }
+    if (QfSessionController.startupHeldForQuota) {
+      QfSessionController.startupHeldForQuota = false;
+      if (!(session.isGuest && session.guestExhausted)) {
+        await ref.read(setupActionProvider.notifier).initStatus();
+      }
+    }
     await _checkRegion();
     session.startHeartbeat();
     final check = await QfUpdateService.check(QfRuntime.appVersion);
@@ -104,6 +134,11 @@ class _QfSessionGateState extends ConsumerState<QfSessionGate> {
       _check = check;
       _booted = true;
     });
+    _manifestTimer?.cancel();
+    _manifestTimer = Timer.periodic(
+      const Duration(minutes: 5),
+      (_) => unawaited(_recheckManifest()),
+    );
     unawaited(QfUpdateNotify.registerBackgroundChecks());
     unawaited(QfUpdateNotify.requestPermissionOnce());
     if (Platform.isWindows) {
@@ -127,21 +162,200 @@ class _QfSessionGateState extends ConsumerState<QfSessionGate> {
     }
     if (check.decision == QfUpdateDecision.minor && !_minorShown) {
       _minorShown = true;
-      WidgetsBinding.instance.addPostFrameCallback((_) async {
-        if (!mounted) return;
-        final accepted = await showDialog<bool>(
-          context: context,
-          builder: (_) => QfMinorUpdateDialog(result: check),
-        );
-        if (accepted == true && mounted) {
-          await showDialog<void>(
-            context: context,
-            barrierDismissible: false,
-            builder: (_) =>
-                AlertDialog(content: QfUpdateDownloadPanel(result: check)),
+      _minorCheck = check;
+      _minorQueued = true;
+      _scheduleDialogs();
+    }
+  }
+
+  Future<void> _recheckManifest() async {
+    if (!mounted || !_booted) return;
+    final check = await QfUpdateService.check(QfRuntime.appVersion);
+    if (!mounted || check.manifest == null) return;
+    _session.applyServerBaseUrl(check.manifest!.serverBaseUrl);
+    final previous = _check?.decision ?? QfUpdateDecision.none;
+    if (check.decision == previous) return;
+    setState(() => _check = check);
+    if (check.decision == QfUpdateDecision.maintenance ||
+        check.decision == QfUpdateDecision.retired ||
+        check.decision == QfUpdateDecision.force) {
+      await _stopCore();
+    }
+  }
+
+  void _scheduleDialogs() {
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => unawaited(_drainDialogs()),
+    );
+  }
+
+  Future<void> _drainDialogs() async {
+    if (_dialogBusy || !mounted || _blockingActive) return;
+    if (_regionQueued) {
+      _regionQueued = false;
+      await _presentRegionDialog();
+    } else if (_banQueued) {
+      _banQueued = false;
+      await _presentBanDialog();
+    } else if (_frozenQueued) {
+      _frozenQueued = false;
+      await _presentFrozenDialog();
+    } else if (_minorQueued) {
+      _minorQueued = false;
+      await _presentMinorDialog();
+    } else {
+      return;
+    }
+    if (mounted) _scheduleDialogs();
+  }
+
+  Future<void> _presentRegionDialog() async {
+    final message = _regionMessage;
+    if (message == null) return;
+    _dialogBusy = true;
+    var shown = false;
+    try {
+      await showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) {
+          shown = true;
+          return AlertDialog(
+            content: Text(message),
+            actions: [
+              FilledButton(
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: const Text('确认'),
+              ),
+            ],
           );
-        }
-      });
+        },
+      );
+    } catch (_) {
+      shown = false;
+    } finally {
+      _dialogBusy = false;
+    }
+    if (shown) {
+      _regionShown = true;
+      _regionMessage = null;
+      final prefs = await SharedPreferences.getInstance();
+      final now = DateTime.now();
+      await prefs.setString(
+        'qf_region_last_shown',
+        '${now.year}-${now.month}-${now.day}',
+      );
+    }
+  }
+
+  Future<void> _presentBanDialog() async {
+    final notice = _pendingBanNotice;
+    if (notice.isEmpty) return;
+    final reason = _pendingBanReason;
+    final account = _pendingBanAccount;
+    final session = _session;
+    _dialogBusy = true;
+    try {
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) {
+          return AlertDialog(
+            title: const Text('账户已被封禁'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(notice),
+                if (reason.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Text('封禁原因：$reason'),
+                  ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  Navigator.of(dialogContext).pop();
+                  Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => QfAppealPage(
+                        serverBaseUrl: session.serverBaseUrl,
+                        initialAccount: account,
+                        permanent: notice.contains('永久封禁'),
+                      ),
+                    ),
+                  );
+                },
+                child: const Text('申诉'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: const Text('我知道了'),
+              ),
+            ],
+          );
+        },
+      );
+    } catch (_) {
+    } finally {
+      _dialogBusy = false;
+      _pendingBanNotice = '';
+      _pendingBanReason = '';
+      _pendingBanAccount = '';
+    }
+  }
+
+  Future<void> _presentFrozenDialog() async {
+    final notice = _pendingFrozenNotice;
+    if (notice.isEmpty) return;
+    final account = _pendingFrozenAccount;
+    final frozenAt = _pendingFrozenAt;
+    _dialogBusy = true;
+    try {
+      final action = await qfShowFrozenDialog(
+        context,
+        message: notice,
+        frozenAt: frozenAt,
+      );
+      if (mounted) {
+        await qfHandleFrozenAction(
+          context,
+          session: _session,
+          action: action,
+          account: account,
+        );
+      }
+    } catch (_) {
+    } finally {
+      _dialogBusy = false;
+      _pendingFrozenNotice = '';
+      _pendingFrozenAccount = '';
+      _pendingFrozenAt = null;
+    }
+  }
+
+  Future<void> _presentMinorDialog() async {
+    final check = _minorCheck;
+    if (check == null) return;
+    _dialogBusy = true;
+    try {
+      final accepted = await showDialog<bool>(
+        context: context,
+        builder: (_) => QfMinorUpdateDialog(result: check),
+      );
+      if (accepted == true && mounted) {
+        await showDialog<void>(
+          context: context,
+          barrierDismissible: false,
+          builder: (_) =>
+              AlertDialog(content: QfUpdateDownloadPanel(result: check)),
+        );
+      }
+    } catch (_) {
+    } finally {
+      _dialogBusy = false;
+      _minorCheck = null;
     }
   }
 
@@ -158,35 +372,52 @@ class _QfSessionGateState extends ConsumerState<QfSessionGate> {
       if (data['restricted'] == true) {
         final message = (data['message'] ?? '').toString();
         if (message.isNotEmpty) {
-          await prefs.setString('qf_region_last_shown', today);
           _regionMessage = message;
         }
       }
     } catch (_) {}
   }
 
-  void _showRegionDialog() {
-    final message = _regionMessage;
-    if (message == null || _regionShown) return;
-    _regionShown = true;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      showDialog<void>(
-        context: context,
-        barrierDismissible: false,
-        builder: (dialogContext) {
-          return AlertDialog(
-            content: Text(message),
-            actions: [
-              FilledButton(
-                onPressed: () => Navigator.of(dialogContext).pop(),
-                child: const Text('确认'),
-              ),
-            ],
-          );
-        },
-      );
-    });
+  void _queueRegionDialog() {
+    if (_regionMessage == null || _regionShown || _regionQueued) return;
+    _regionQueued = true;
+    _scheduleDialogs();
+  }
+
+  void _queueBanDialog(
+    String notice,
+    String reason,
+    String account,
+    void Function() consume,
+  ) {
+    if (_banQueued || _pendingBanNotice.isNotEmpty) {
+      consume();
+      return;
+    }
+    _pendingBanNotice = notice;
+    _pendingBanReason = reason;
+    _pendingBanAccount = account;
+    consume();
+    _banQueued = true;
+    _scheduleDialogs();
+  }
+
+  void _queueFrozenDialog(
+    String notice,
+    String account,
+    int? frozenAt,
+    void Function() consume,
+  ) {
+    if (_frozenQueued || _pendingFrozenNotice.isNotEmpty) {
+      consume();
+      return;
+    }
+    _pendingFrozenNotice = notice;
+    _pendingFrozenAccount = account;
+    _pendingFrozenAt = frozenAt;
+    consume();
+    _frozenQueued = true;
+    _scheduleDialogs();
   }
 
   void _openAbout() {
@@ -220,6 +451,10 @@ class _QfSessionGateState extends ConsumerState<QfSessionGate> {
         if (!_booted || session.mode == QfMode.unknown) {
           return const Scaffold(body: Center(child: CommonCircleLoading()));
         }
+        if (!_blockingActive &&
+            (_regionQueued || _banQueued || _frozenQueued || _minorQueued)) {
+          _scheduleDialogs();
+        }
         final decision = _check?.decision ?? QfUpdateDecision.none;
         if (decision == QfUpdateDecision.maintenance ||
             decision == QfUpdateDecision.retired ||
@@ -232,57 +467,24 @@ class _QfSessionGateState extends ConsumerState<QfSessionGate> {
           );
         }
         if (session.mode == QfMode.entry) {
-          _showRegionDialog();
+          _queueRegionDialog();
           final notice = session.banNotice;
           if (notice != null) {
-            final reason = session.banReason;
-            final account = session.banAccount;
-            final permanent = notice.contains('永久封禁');
-            session.consumeBanNotice();
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (!mounted) return;
-              showDialog<void>(
-                context: context,
-                builder: (dialogContext) {
-                  return AlertDialog(
-                    title: const Text('账户已被封禁'),
-                    content: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(notice),
-                        if (reason.isNotEmpty)
-                          Padding(
-                            padding: const EdgeInsets.only(top: 8),
-                            child: Text('封禁原因：$reason'),
-                          ),
-                      ],
-                    ),
-                    actions: [
-                      TextButton(
-                        onPressed: () {
-                          Navigator.of(dialogContext).pop();
-                          Navigator.of(context).push(
-                            MaterialPageRoute<void>(
-                              builder: (_) => QfAppealPage(
-                                serverBaseUrl: session.serverBaseUrl,
-                                initialAccount: account,
-                                permanent: permanent,
-                              ),
-                            ),
-                          );
-                        },
-                        child: const Text('申诉'),
-                      ),
-                      FilledButton(
-                        onPressed: () => Navigator.of(dialogContext).pop(),
-                        child: const Text('我知道了'),
-                      ),
-                    ],
-                  );
-                },
-              );
-            });
+            _queueBanDialog(
+              notice,
+              session.banReason,
+              session.banAccount,
+              session.consumeBanNotice,
+            );
+          }
+          final frozenNotice = session.frozenNotice;
+          if (frozenNotice != null) {
+            _queueFrozenDialog(
+              frozenNotice,
+              session.frozenAccount,
+              session.frozenAt,
+              session.consumeFrozenNotice,
+            );
           }
           return QfEntryPage(
             session: session,
@@ -291,12 +493,48 @@ class _QfSessionGateState extends ConsumerState<QfSessionGate> {
             onAgreement: _openAgreement,
           );
         }
-        _showRegionDialog();
+        _queueRegionDialog();
         if (session.isGuest && session.guestExhausted) {
-          return QfBlockingPage(
-            title: QfCopy.quotaTitle,
-            body: QfCopy.quotaBody,
-            onSwitchAccount: () => session.exitGuestToEntry(),
+          return Stack(
+            fit: StackFit.expand,
+            children: [
+              widget.child,
+              Positioned.fill(
+                child: ColoredBox(
+                  color: context.colorScheme.scrim.withValues(alpha: 0.54),
+                  child: Theme(
+                    data: Theme.of(
+                      context,
+                    ).copyWith(scaffoldBackgroundColor: Colors.transparent),
+                    child: QfBlockingPage(
+                      title: QfCopy.quotaTitle,
+                      body: QfCopy.quotaBody,
+                      onSwitchAccount: () => session.exitGuestToEntry(),
+                    ),
+                  ),
+                ),
+              ),
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 24,
+                child: SafeArea(
+                  child: Center(
+                    child: Material(
+                      type: MaterialType.transparency,
+                      child: TextButton(
+                        onPressed: _openAbout,
+                        style: TextButton.styleFrom(
+                          backgroundColor: context.colorScheme.surface,
+                          foregroundColor: context.colorScheme.onSurface,
+                        ),
+                        child: const Text('关于'),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
           );
         }
         return widget.child;

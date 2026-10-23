@@ -1,7 +1,8 @@
 import 'dart:io';
 
+import 'package:crypto/crypto.dart' as crypto;
+import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import 'qf_api.dart';
 import 'qf_config.dart';
@@ -13,6 +14,8 @@ class QfUpdateCheck {
   final String notes;
   final String downloadUrl;
   final String latestVersion;
+  final String sha256;
+  final int? sizeBytes;
 
   const QfUpdateCheck({
     required this.decision,
@@ -20,6 +23,8 @@ class QfUpdateCheck {
     required this.notes,
     required this.downloadUrl,
     required this.latestVersion,
+    this.sha256 = '',
+    this.sizeBytes,
   });
 
   static const QfUpdateCheck none = QfUpdateCheck(
@@ -63,6 +68,8 @@ class QfUpdateService {
     final platformRelease = manifest.platformRelease(platformKey);
     var notes = platformRelease?.notes ?? '';
     var downloadUrl = platformRelease?.downloadUrl ?? '';
+    final expectedSha256 = platformRelease?.sha256 ?? '';
+    final expectedSizeBytes = platformRelease?.sizeBytes;
     if (notes.isEmpty || downloadUrl.isEmpty) {
       final release = await _fetchPlatformRelease(manifest.latestVersion);
       if (release != null) {
@@ -79,6 +86,8 @@ class QfUpdateService {
       notes: notes,
       downloadUrl: downloadUrl,
       latestVersion: manifest.latestVersion,
+      sha256: expectedSha256,
+      sizeBytes: expectedSizeBytes,
     );
   }
 
@@ -117,6 +126,8 @@ class QfUpdateService {
   static Future<File> download(
     String url, {
     required void Function(double progress) onProgress,
+    String? expectedSha256,
+    int? expectedSizeBytes,
   }) async {
     final dir = await getTemporaryDirectory();
     final fileName = Uri.parse(url).pathSegments.isEmpty
@@ -143,29 +154,76 @@ class QfUpdateService {
       await sink.flush();
       await sink.close();
       onProgress(1);
-      return file;
     } finally {
       client.close(force: true);
     }
+    var sha = (expectedSha256 ?? '').trim().toLowerCase();
+    var size = expectedSizeBytes;
+    if (sha.isEmpty || size == null) {
+      final cached = await QfManifestService.loadCached();
+      final release = cached?.platformRelease(platformKey);
+      if (sha.isEmpty) sha = (release?.sha256 ?? '').trim().toLowerCase();
+      size ??= release?.sizeBytes;
+    }
+    await _verifyDownloadedFile(file, sha256: sha, sizeBytes: size);
+    return file;
   }
 
+  static Future<void> _verifyDownloadedFile(
+    File file, {
+    required String sha256,
+    required int? sizeBytes,
+  }) async {
+    if (sizeBytes != null) {
+      final actualSize = await file.length();
+      if (actualSize != sizeBytes) {
+        await _deleteQuietly(file);
+        throw const QfApiException(0, 'INTEGRITY', '更新包校验失败（大小不一致），已删除，请重新下载');
+      }
+    }
+    if (sha256.isNotEmpty) {
+      if (!RegExp(r'^[0-9a-f]{64}$').hasMatch(sha256)) {
+        await _deleteQuietly(file);
+        throw const QfApiException(0, 'INTEGRITY', '更新包校验失败（校验信息无效），已删除，请重新下载');
+      }
+      final digest = await crypto.sha256.bind(file.openRead()).first;
+      if (digest.toString().toLowerCase() != sha256) {
+        await _deleteQuietly(file);
+        throw const QfApiException(
+          0,
+          'INTEGRITY',
+          '更新包校验失败（内容不完整或已被篡改），已删除，请重新下载',
+        );
+      }
+    }
+  }
+
+  static Future<void> _deleteQuietly(File file) async {
+    try {
+      if (await file.exists()) await file.delete();
+    } catch (_) {}
+  }
+
+  static const MethodChannel _appChannel = MethodChannel(
+    'com.follow.clash/app',
+  );
+
+  /// Returns true only when an installer was actually launched.
   static Future<bool> install(File file) async {
     try {
+      if (!await file.exists()) return false;
       if (Platform.isWindows) {
-        if (file.path.toLowerCase().endsWith('.exe')) {
-          await Process.start(file.path, [], mode: ProcessStartMode.detached);
-          return true;
-        }
-        await Process.start('explorer', [
-          file.parent.path,
-        ], mode: ProcessStartMode.detached);
+        final lower = file.path.toLowerCase();
+        if (!lower.endsWith('.exe') && !lower.endsWith('.msi')) return false;
+        await Process.start(file.path, [], mode: ProcessStartMode.detached);
         return true;
       }
       if (Platform.isAndroid) {
-        return await launchUrl(
-          Uri.file(file.path),
-          mode: LaunchMode.externalApplication,
-        );
+        if (!file.path.toLowerCase().endsWith('.apk')) return false;
+        return await _appChannel.invokeMethod<bool>('installApk', {
+              'path': file.path,
+            }) ??
+            false;
       }
     } catch (_) {
       return false;

@@ -1,10 +1,14 @@
+import 'dart:async';
+
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/providers.dart';
 import 'package:flutter/foundation.dart' show visibleForTesting;
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:tray/tray.dart';
 
 import 'app_localizations.dart';
+import 'dialog.dart';
 import 'l10n_labels.dart';
 import 'app_ports.dart';
 import 'constant.dart';
@@ -104,6 +108,19 @@ class AppTray implements TrayPort {
     await updateTitle(showTrayTitle: trayState.showTrayTitle, traffic: traffic);
   }
 
+  Future<void> _startFromTrayIfAllowed(void Function() start) async {
+    var blocked = false;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      blocked = prefs.getBool('qf_guest_blocked_core') ?? false;
+    } catch (_) {}
+    if (blocked) {
+      dialogs.showNotifier('访客可用时间已用完或尚未登录，登录后才能开启代理。');
+      return;
+    }
+    start();
+  }
+
   Future<void> updateTitle({
     required bool showTrayTitle,
     required Traffic traffic,
@@ -146,7 +163,13 @@ class AppTray implements TrayPort {
             : appLocalizations.start,
         checked: false,
         detail: shortcut(HotAction.start),
-        onSelected: commonAction.toggleRunning,
+        onSelected: () {
+          if (trayState.isStart) {
+            commonAction.toggleRunning();
+            return;
+          }
+          unawaited(_startFromTrayIfAllowed(commonAction.toggleRunning));
+        },
       ),
       if (isMacOS)
         TrayMenuCheckbox(

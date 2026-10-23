@@ -11,6 +11,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 
+import '../../qf/qf_providers.dart';
 import 'edit.dart';
 import 'layout.dart';
 import 'style.dart';
@@ -88,29 +89,70 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
           ),
       ],
       // The providers learn a resize a frame late, too late for the cards.
-      body: LayoutBuilder(
-        builder: (context, constraints) {
-          final room = constraints.biggest / scale;
-          final layout = DashboardDensity.of(room);
-          return DashboardDensityScope(
-            density: layout,
-            scale: scale,
-            child: layout.isDesktop
-                ? _DesktopDashboard(
-                    platform: platform,
-                    columns: dashboardColumnsOf(room.width),
-                    gap: gap,
-                  )
-                : _MobileDashboard(
-                    platform: platform,
-                    gap: gap,
-                    editing: editing,
-                    cardKeyOf: _cardKeyOf,
-                    onDone: () => _setEditing(false),
-                  ),
-          );
-        },
+      body: Column(
+        children: [
+          const _QfGuestRemainingBanner(),
+          Expanded(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final room = constraints.biggest / scale;
+                final layout = DashboardDensity.of(room);
+                return DashboardDensityScope(
+                  density: layout,
+                  scale: scale,
+                  child: layout.isDesktop
+                      ? _DesktopDashboard(
+                          platform: platform,
+                          columns: dashboardColumnsOf(room.width),
+                          gap: gap,
+                        )
+                      : _MobileDashboard(
+                          platform: platform,
+                          gap: gap,
+                          editing: editing,
+                          cardKeyOf: _cardKeyOf,
+                          onDone: () => _setEditing(false),
+                        ),
+                );
+              },
+            ),
+          ),
+        ],
       ),
+    );
+  }
+}
+
+class _QfGuestRemainingBanner extends ConsumerWidget {
+  const _QfGuestRemainingBanner();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final session = ref.read(qfSessionProvider);
+    return ListenableBuilder(
+      listenable: session,
+      builder: (context, _) {
+        final usage = session.guestUsage;
+        if (!session.isGuest || usage == null) {
+          return const SizedBox.shrink();
+        }
+        final seconds = usage.remainingSeconds;
+        final hours = seconds ~/ 3600;
+        final minutes = (seconds % 3600) ~/ 60;
+        final duration = hours > 0
+            ? '$hours 小时 $minutes 分钟'
+            : minutes > 0
+            ? '$minutes 分钟'
+            : '不足 1 分钟';
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+          child: Text(
+            '今日剩余免费时长：$duration',
+            textAlign: TextAlign.center,
+            style: AppTextStyle.subheadline.of(context),
+          ),
+        );
+      },
     );
   }
 }

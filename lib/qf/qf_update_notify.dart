@@ -111,20 +111,24 @@ class QfUpdateNotify {
     if (current == null) return;
     final decision = decideQfUpdate(manifest: manifest, current: current);
     if (decision != QfUpdateDecision.minor &&
-        decision != QfUpdateDecision.force) {
+        decision != QfUpdateDecision.force &&
+        decision != QfUpdateDecision.retired) {
       return;
     }
+    if (interactive) return;
     final version = manifest.latestVersion;
+    if (version.isEmpty) return;
     final prefs = await SharedPreferences.getInstance();
     if (prefs.getString(_notifiedKey) == version) return;
-    await prefs.setString(_notifiedKey, version);
-    if (interactive) return;
+    final body = decision == QfUpdateDecision.retired
+        ? '当前版本已停止支持，请打开 QFClash 更新到新版本 $version 后继续使用。'
+        : '新版本 $version 已发布，打开 QFClash 即可更新。';
     try {
       final plugin = await _ensurePlugin();
       await plugin.show(
         id: _notificationId,
         title: 'QFClash 更新',
-        body: '新版本 $version 已发布，打开 QFClash 即可更新。',
+        body: body,
         notificationDetails: const NotificationDetails(
           android: AndroidNotificationDetails(
             'qf_updates',
@@ -137,7 +141,10 @@ class QfUpdateNotify {
         ),
         payload: 'update',
       );
-    } catch (_) {}
+    } catch (_) {
+      return;
+    }
+    await prefs.setString(_notifiedKey, version);
   }
 
   static Future<void> checkInBackground() async {

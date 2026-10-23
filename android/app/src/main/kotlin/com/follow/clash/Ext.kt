@@ -33,6 +33,17 @@ val Application.sharedState: SharedState
         SharedState()
     }
 
+// The Dart session layer owns this flag; the `flutter.` prefix and the
+// FlutterSharedPreferences file are how the Dart SharedPreferences API
+// stores it, the same coupling `sharedState` above relies on.
+val Application.qfGuestBlockedCore: Boolean
+    get() = try {
+        getSharedPreferences("FlutterSharedPreferences", MODE_PRIVATE)
+            .getBoolean("flutter.qf_guest_blocked_core", false)
+    } catch (_: Exception) {
+        false
+    }
+
 private var lastToast: Toast? = null
 
 fun Application.showToast(text: String?) {

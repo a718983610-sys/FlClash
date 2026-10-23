@@ -112,11 +112,15 @@ class QfPlatformRelease {
   final String downloadUrl;
   final String notes;
   final String googleClientId;
+  final String sha256;
+  final int? sizeBytes;
 
   const QfPlatformRelease({
     required this.downloadUrl,
     required this.notes,
     this.googleClientId = '',
+    this.sha256 = '',
+    this.sizeBytes,
   });
 
   factory QfPlatformRelease.fromJson(Map<String, dynamic> json) {
@@ -124,7 +128,18 @@ class QfPlatformRelease {
       downloadUrl: (json['downloadUrl'] ?? '').toString(),
       notes: (json['notes'] ?? '').toString(),
       googleClientId: (json['googleClientId'] ?? '').toString(),
+      sha256: (json['sha256'] ?? '').toString().trim().toLowerCase(),
+      sizeBytes: _parseSizeBytes(json['sizeBytes']),
     );
+  }
+
+  static int? _parseSizeBytes(Object? raw) {
+    final value = switch (raw) {
+      final num number => number.toInt(),
+      final String text => int.tryParse(text.trim()),
+      _ => null,
+    };
+    return value != null && value > 0 ? value : null;
   }
 
   Map<String, dynamic> toJson() {
@@ -132,6 +147,8 @@ class QfPlatformRelease {
       'downloadUrl': downloadUrl,
       'notes': notes,
       'googleClientId': googleClientId,
+      'sha256': sha256,
+      'sizeBytes': sizeBytes,
     };
   }
 }

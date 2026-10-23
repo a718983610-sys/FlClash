@@ -13,6 +13,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:rust_api/rust_api.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 extension KeyboardModifierExt on KeyboardModifier {
   HotKeyModifier toHotKeyModifier() {
@@ -118,6 +119,15 @@ class _HotKeyManagerState extends ConsumerState<HotKeyManager> {
     _handleHotKeyAction(HotAction.values[id]);
   }
 
+  Future<bool> _qfGuestBlockedCore() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getBool('qf_guest_blocked_core') ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
   Future<void> _handleHotKeyAction(HotAction action) async {
     final commonAction = ref.read(commonActionProvider.notifier);
     final systemAction = ref.read(systemActionProvider.notifier);
@@ -126,7 +136,11 @@ class _HotKeyManagerState extends ConsumerState<HotKeyManager> {
       case HotAction.mode:
         commonAction.updateMode();
       case HotAction.start:
-        commonAction.toggleRunning();
+        if (!ref.read(isStartProvider) && await _qfGuestBlockedCore()) {
+          dialogs.showNotifier('访客可用时间已用完或尚未登录，登录后才能开启代理。');
+        } else {
+          commonAction.toggleRunning();
+        }
       case HotAction.view:
         unawaited(systemAction.updateVisible());
       case HotAction.proxy:

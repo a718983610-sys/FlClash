@@ -1,9 +1,13 @@
 package com.follow.clash
 
 import android.annotation.SuppressLint
+import android.content.Intent
 import android.os.Build
 import android.service.quicksettings.Tile
+import com.follow.clash.common.Components
+import com.follow.clash.common.GlobalState
 import com.follow.clash.common.QuickAction
+import com.follow.clash.common.intent
 import com.follow.clash.common.quickIntent
 import com.follow.clash.common.toPendingIntent
 import kotlinx.coroutines.CoroutineScope
@@ -14,6 +18,7 @@ import kotlinx.coroutines.launch
 
 class TileService : android.service.quicksettings.TileService() {
     private var scope: CoroutineScope? = null
+    private var currentRunState: RunState = RunState.STOPPED
 
     override fun onStartListening() {
         super.onStartListening()
@@ -30,6 +35,12 @@ class TileService : android.service.quicksettings.TileService() {
     // the panel open after a tap.
     override fun onClick() {
         super.onClick()
+        if (GlobalState.application.qfGuestBlockedCore &&
+            currentRunState == RunState.STOPPED
+        ) {
+            openMainApp()
+            return
+        }
         openQuickAction()
     }
 
@@ -40,6 +51,7 @@ class TileService : android.service.quicksettings.TileService() {
     }
 
     private fun updateTile(runState: RunState) {
+        currentRunState = runState
         qsTile?.apply {
             state = when (runState) {
                 RunState.STARTED -> Tile.STATE_ACTIVE
@@ -53,6 +65,19 @@ class TileService : android.service.quicksettings.TileService() {
     @SuppressLint("StartActivityAndCollapseDeprecated")
     private fun openQuickAction() {
         val intent = QuickAction.TOGGLE.quickIntent
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            startActivityAndCollapse(intent.toPendingIntent)
+        } else {
+            @Suppress("DEPRECATION")
+            startActivityAndCollapse(intent)
+        }
+    }
+
+    @SuppressLint("StartActivityAndCollapseDeprecated")
+    private fun openMainApp() {
+        val intent = Components.mainActivity.intent.apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             startActivityAndCollapse(intent.toPendingIntent)
         } else {

@@ -208,6 +208,10 @@ class AppPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware 
                 result.success(openAppSettings())
             }
 
+            "installApk" -> {
+                result.success(openApkInstaller(call.argument<String>("path")))
+            }
+
             "getLastExitInfo" -> reply(result) {
                 GlobalState.lastExitInfo()
             }
@@ -264,6 +268,40 @@ class AppPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware 
             QuickAction.STOP -> R.drawable.ic_shortcut_stop
             QuickAction.TOGGLE -> R.drawable.ic_shortcut_toggle
         }
+
+    private fun openApkInstaller(path: String?): Boolean {
+        val activity = activity ?: return false
+        if (path.isNullOrEmpty()) return false
+        val file = java.io.File(path)
+        if (!file.exists() || !file.isFile) return false
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+                !activity.packageManager.canRequestPackageInstalls()
+            ) {
+                val settings = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply {
+                    data = "package:${activity.packageName}".toUri()
+                }
+                activity.startActivity(settings)
+                return false
+            }
+            val uri = androidx.core.content.FileProvider.getUriForFile(
+                activity,
+                "${activity.packageName}.fileprovider",
+                file,
+            )
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "application/vnd.android.package-archive")
+                addFlags(
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                        Intent.FLAG_ACTIVITY_NEW_TASK,
+                )
+            }
+            activity.startActivity(intent)
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
 
     private fun openAppSettings(): Boolean {
         val activity = activity ?: return false
