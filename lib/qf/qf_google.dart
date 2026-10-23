@@ -104,7 +104,7 @@ class QfGoogleAuth {
       if (code == null || code.isEmpty) {
         throw const QfGoogleAuthException('谷歌登录失败：未取得授权码，请重试。');
       }
-      return _exchangeCode(
+      return await _exchangeCode(
         code: code,
         verifier: verifier,
         redirectUri: redirectUri,

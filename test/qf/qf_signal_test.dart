@@ -56,7 +56,6 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     QfSignalStore.resetCache();
     final bob = await _installPersona();
-    final bobBundle = await _bundleOf(bob);
 
     final bobAddress = SignalProtocolAddress('1001', 1);
     await SessionBuilder.fromSignalStore(
