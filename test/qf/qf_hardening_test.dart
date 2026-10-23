@@ -5,10 +5,14 @@ import 'dart:typed_data';
 import 'package:fl_clash/common/proxy.dart';
 import 'package:fl_clash/qf/qf_data_migration.dart';
 import 'package:fl_clash/qf/qf_qr.dart';
+import 'package:fl_clash/qf/qf_session.dart';
 import 'package:fl_clash/qf/qf_signal.dart';
+import 'package:fl_clash/qf/qf_social.dart';
 import 'package:fl_clash/qf/qf_update.dart';
 import 'package:fl_clash/qf/qf_version.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:material_ui/material_ui.dart' as mui;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
 import 'package:libsignal_protocol_dart/libsignal_protocol_dart.dart';
@@ -306,6 +310,62 @@ HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settin
       expect(await QfUpdateService.retryManifestOnce(), isTrue);
       expect(pushed, isNotNull);
       expect(pushed!.decision, QfUpdateDecision.maintenance);
+    });
+  });
+
+  group('avatar chain (user report: upload shows no change)', () {
+    final pngA = base64Decode(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=',
+    );
+    final pngB = base64Decode(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+    );
+
+    test('mime normalization follows the server whitelist', () {
+      expect(qfAvatarMimeFor('a.png', 'image/png'), 'image/png');
+      expect(qfAvatarMimeFor('a.jpg', 'image/jpg'), 'image/jpeg');
+      expect(qfAvatarMimeFor('a.jpg', 'image/bmp'), 'image/jpeg');
+      expect(qfAvatarMimeFor('a.PNG', null), 'image/png');
+      expect(qfAvatarMimeFor('a.jfif', 'image/bmp'), '');
+      expect(qfAvatarMimeFor('a.webp', ''), 'image/webp');
+    });
+
+    test('uploaded avatar busts stale-stamp cache entries', () {
+      const userId = 91001;
+      qfStoreCachedAvatar(userId, 100, pngA);
+      expect(qfCachedAvatar(userId, 100), pngA);
+      qfApplyUploadedAvatar(userId, 200, pngB);
+      expect(qfEffectiveAvatarStamp(userId, 100), 200);
+      expect(qfCachedAvatar(userId, 100), pngB);
+      expect(qfCachedAvatar(userId, 200), pngB);
+      expect(qfCachedAvatar(userId, null), pngB);
+    });
+
+    testWidgets('mounted avatar widget swaps to the uploaded image', (
+      tester,
+    ) async {
+      const userId = 91002;
+      qfStoreCachedAvatar(userId, 100, pngA);
+      final session = QfSessionController();
+      Widget host() => MaterialApp(
+        home: Scaffold(
+          body: QfAvatarImage(
+            session: session,
+            userId: userId,
+            name: '测',
+            avatarUpdatedAt: 100,
+          ),
+        ),
+      );
+      await tester.pumpWidget(host());
+      await tester.pump();
+      mui.CircleAvatar avatar = tester.widget(find.byType(mui.CircleAvatar));
+      expect((avatar.backgroundImage as MemoryImage).bytes, pngA);
+      qfApplyUploadedAvatar(userId, 200, pngB);
+      await tester.pumpWidget(host());
+      await tester.pump();
+      avatar = tester.widget(find.byType(mui.CircleAvatar));
+      expect((avatar.backgroundImage as MemoryImage).bytes, pngB);
     });
   });
 }

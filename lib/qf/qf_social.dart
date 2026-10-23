@@ -234,6 +234,7 @@ int _qfTsMillis(dynamic raw) {
 
 final Map<int, Uint8List?> _qfAvatarCache = {};
 final Map<String, Uint8List?> _qfAvatarStampedCache = {};
+final Map<int, dynamic> _qfLatestAvatarStamp = {};
 
 const int qfAvatarMaxBytes = 200 * 1024;
 
@@ -241,11 +242,26 @@ String qfAvatarCacheKey(int userId, dynamic avatarUpdatedAt) {
   return '$userId@${avatarUpdatedAt ?? ''}';
 }
 
+/// 进程内已知最新头像戳：展示侧以它为准，避免旧戳挡住新头像。
+dynamic qfEffectiveAvatarStamp(int userId, dynamic avatarUpdatedAt) {
+  final latest = _qfLatestAvatarStamp[userId];
+  if (latest == null) return avatarUpdatedAt;
+  if (avatarUpdatedAt == null) return latest;
+  return _qfTsMillis(avatarUpdatedAt) > _qfTsMillis(latest)
+      ? avatarUpdatedAt
+      : latest;
+}
+
 void qfSetCachedAvatar(int userId, Uint8List bytes) {
   _qfAvatarCache[userId] = bytes;
 }
 
 Uint8List? qfCachedAvatar(int userId, dynamic avatarUpdatedAt) {
+  final latest = _qfLatestAvatarStamp[userId];
+  if (latest != null) {
+    final stamped = _qfAvatarStampedCache[qfAvatarCacheKey(userId, latest)];
+    if (stamped != null) return stamped;
+  }
   if (avatarUpdatedAt != null) {
     return _qfAvatarStampedCache[qfAvatarCacheKey(userId, avatarUpdatedAt)];
   }
@@ -259,16 +275,33 @@ void qfStoreCachedAvatar(
 ) {
   if (avatarUpdatedAt != null) {
     _qfAvatarStampedCache[qfAvatarCacheKey(userId, avatarUpdatedAt)] = bytes;
+    final latest = _qfLatestAvatarStamp[userId];
+    if (latest == null ||
+        _qfTsMillis(avatarUpdatedAt) > _qfTsMillis(latest)) {
+      _qfLatestAvatarStamp[userId] = avatarUpdatedAt;
+    }
   } else {
     _qfAvatarCache[userId] = bytes;
   }
 }
 
+/// 上传落地：以回执新戳写入并淘汰旧戳条目，各展示面下次构建即见新头像。
+void qfApplyUploadedAvatar(int userId, dynamic newStamp, Uint8List bytes) {
+  final stamp = newStamp ?? 'u${DateTime.now().millisecondsSinceEpoch}';
+  _qfAvatarCache[userId] = bytes;
+  _qfLatestAvatarStamp[userId] = stamp;
+  _qfAvatarStampedCache.removeWhere((key, _) => key.startsWith('$userId@'));
+  _qfAvatarStampedCache[qfAvatarCacheKey(userId, stamp)] = bytes;
+}
+
 Future<({Uint8List bytes, bool compressed})> qfCompressAvatarBytes(
   Uint8List bytes, {
   int maxBytes = qfAvatarMaxBytes,
+  bool force = false,
 }) async {
-  if (bytes.length <= maxBytes) return (bytes: bytes, compressed: false);
+  if (!force && bytes.length <= maxBytes) {
+    return (bytes: bytes, compressed: false);
+  }
   for (final size in [512, 384, 256, 192, 128]) {
     try {
       final codec = await ui.instantiateImageCodec(
@@ -290,6 +323,26 @@ Future<({Uint8List bytes, bool compressed})> qfCompressAvatarBytes(
   return (bytes: bytes, compressed: false);
 }
 
+const Set<String> qfAvatarMimeWhitelist = {
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+  'image/gif',
+};
+
+/// mime 归一化：只认服务端白名单，其次按扩展名推断，推不出返回空串。
+String qfAvatarMimeFor(String fileName, String? declared) {
+  var mime = (declared ?? '').trim().toLowerCase();
+  if (mime == 'image/jpg') mime = 'image/jpeg';
+  if (qfAvatarMimeWhitelist.contains(mime)) return mime;
+  final name = fileName.toLowerCase();
+  if (name.endsWith('.png')) return 'image/png';
+  if (name.endsWith('.webp')) return 'image/webp';
+  if (name.endsWith('.gif')) return 'image/gif';
+  if (name.endsWith('.jpg') || name.endsWith('.jpeg')) return 'image/jpeg';
+  return '';
+}
+
 Future<Uint8List?> qfPickAndUploadAvatar(QfSessionController session) async {
   final picker = ImagePicker();
   final file = await picker.pickImage(
@@ -300,7 +353,8 @@ Future<Uint8List?> qfPickAndUploadAvatar(QfSessionController session) async {
   );
   if (file == null) return null;
   final rawBytes = await file.readAsBytes();
-  final result = await qfCompressAvatarBytes(rawBytes);
+  var mime = qfAvatarMimeFor(file.name, file.mimeType);
+  final result = await qfCompressAvatarBytes(rawBytes, force: mime.isEmpty);
   final bytes = result.bytes;
   if (bytes.length > qfAvatarMaxBytes) {
     throw const QfApiException(
@@ -309,14 +363,18 @@ Future<Uint8List?> qfPickAndUploadAvatar(QfSessionController session) async {
       '头像图片过大，已尝试压缩仍超过 200KB，请选择较小的图片',
     );
   }
-  await session.socialUpdateProfile({
-    'avatar': {
-      'mime': result.compressed ? 'image/png' : _qfAvatarMime(file),
-      'dataBase64': base64Encode(bytes),
-    },
+  if (result.compressed) mime = 'image/png';
+  if (mime.isEmpty) mime = 'image/jpeg';
+  final response = await session.socialUpdateProfile({
+    'avatar': {'mime': mime, 'dataBase64': base64Encode(bytes)},
   });
   final userId = session.userId;
-  if (userId != null) qfSetCachedAvatar(userId, bytes);
+  if (userId != null) {
+    dynamic stamp = response['avatarUpdatedAt'];
+    final profile = response['profile'];
+    if (stamp == null && profile is Map) stamp = profile['avatarUpdatedAt'];
+    qfApplyUploadedAvatar(userId, stamp, bytes);
+  }
   return bytes;
 }
 
@@ -350,6 +408,8 @@ class _QfMyAvatarButtonState extends State<QfMyAvatarButton> {
       }
     } on QfApiException catch (e) {
       if (mounted) qfToast(context, e.message);
+    } catch (_) {
+      if (mounted) qfToast(context, QfCopy.avatarUpdateFailed);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -427,7 +487,7 @@ class _QfAvatarImageState extends State<QfAvatarImage> {
   Future<void> _resolve() async {
     final userId = widget.userId;
     if (userId == null || widget.hasAvatar == false) return;
-    final stamp = widget.avatarUpdatedAt;
+    final stamp = qfEffectiveAvatarStamp(userId, widget.avatarUpdatedAt);
     if (stamp != null &&
         _qfAvatarStampedCache.containsKey(qfAvatarCacheKey(userId, stamp))) {
       _bytes = _qfAvatarStampedCache[qfAvatarCacheKey(userId, stamp)];
@@ -458,16 +518,6 @@ class _QfAvatarImageState extends State<QfAvatarImage> {
     }
     return _qfLetterAvatar(widget.name, widget.radius);
   }
-}
-
-String _qfAvatarMime(XFile file) {
-  final declared = file.mimeType;
-  if (declared != null && declared.isNotEmpty) return declared;
-  final name = file.name.toLowerCase();
-  if (name.endsWith('.png')) return 'image/png';
-  if (name.endsWith('.webp')) return 'image/webp';
-  if (name.endsWith('.gif')) return 'image/gif';
-  return 'image/jpeg';
 }
 
 class QfProfilePage extends StatefulWidget {
@@ -636,6 +686,8 @@ class _QfProfilePageState extends State<QfProfilePage> {
       }
     } on QfApiException catch (e) {
       if (mounted) qfToast(context, '头像保存失败：${e.message}');
+    } catch (_) {
+      if (mounted) qfToast(context, QfCopy.avatarUpdateFailed);
     }
   }
 

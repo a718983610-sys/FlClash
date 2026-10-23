@@ -404,7 +404,10 @@ void main() {
       expect(qfAvatarCacheKey(7, 100), isNot(qfAvatarCacheKey(7, 200)));
       qfStoreCachedAvatar(7, 100, Uint8List.fromList([1]));
       expect(qfCachedAvatar(7, 100), isNotNull);
-      expect(qfCachedAvatar(7, 200), isNull);
+      // 展示以进程内已知最新版本为准：持更新戳的调用先回已知最新图占位，
+      // 由 _resolve 按 effective stamp 拉取新图（「上传后没变化」修复口径）。
+      expect(qfCachedAvatar(7, 200), isNotNull);
+      expect(qfEffectiveAvatarStamp(7, 200), 200);
     });
 
     test('small avatar bytes pass through uncompressed', () async {

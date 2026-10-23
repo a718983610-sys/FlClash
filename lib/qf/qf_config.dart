@@ -127,6 +127,7 @@ class QfCopy {
       '当前网络无法连接账户服务器（当前网络可能需要代理）。您可以先以访客模式使用，或开启代理后重试。';
   static const String networkGuestUnreachable = '当前网络无法连接服务器，请检查网络后重试。';
   static const String storageSaveFailed = '无法安全保存登录状态，请重试。';
+  static const String avatarUpdateFailed = '头像更新失败，请重试。';
   static const String qrCameraUnsupported = '当前设备不支持相机扫码，请导入二维码图片。';
   static const String qrNoCodeFound = '图片中没有识别到有效的二维码';
   static const String googleNotConfiguredHint = '谷歌登录尚未完成配置，请改用邮箱或账户 ID 登录。';
