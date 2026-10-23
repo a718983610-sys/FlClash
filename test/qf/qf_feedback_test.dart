@@ -7,6 +7,7 @@ import 'package:fl_clash/qf/qf_http_client.dart';
 import 'package:fl_clash/qf/qf_pages.dart';
 import 'package:fl_clash/qf/qf_passkey.dart';
 import 'package:fl_clash/qf/qf_session.dart';
+import 'package:fl_clash/ui/loading.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -133,7 +134,7 @@ void main() {
       );
       await tester.tap(find.widgetWithText(FilledButton, '主按钮'));
       await tester.pump();
-      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      expect(find.byType(CommonCircleLoading), findsOneWidget);
       expect(find.text('正在处理……'), findsOneWidget);
       final sibling = find.widgetWithText(OutlinedButton, '旁按钮');
       expect(tester.widget<OutlinedButton>(sibling).onPressed, isNotNull);
@@ -143,7 +144,7 @@ void main() {
       gate.complete();
       await tester.pump();
       await tester.pump();
-      expect(find.byType(CircularProgressIndicator), findsNothing);
+      expect(find.byType(CommonCircleLoading), findsNothing);
       expect(find.text('主按钮'), findsOneWidget);
     });
 
