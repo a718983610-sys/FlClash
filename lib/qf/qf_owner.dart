@@ -106,7 +106,7 @@ class _OwnerVerifyDialog extends StatefulWidget {
 }
 
 class _OwnerVerifyDialogState extends State<_OwnerVerifyDialog> {
-  final _password = <redacted>
+  final _password = TextEditingController();
   String? _error;
   bool _busy = false;
 
@@ -317,9 +317,7 @@ class _QfOwnerUsersPageState extends State<QfOwnerUsersPage> {
                 Expanded(
                   child: TextField(
                     controller: _query,
-                    decoration: const InputDecoration(
-                      labelText: '搜索（支持开头匹配）',
-                    ),
+                    decoration: const InputDecoration(labelText: '搜索（支持开头匹配）'),
                     onSubmitted: (_) {
                       _page = 0;
                       _load();
@@ -341,7 +339,9 @@ class _QfOwnerUsersPageState extends State<QfOwnerUsersPage> {
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Align(
               alignment: Alignment.centerLeft,
-              child: Text('共 $_total 个用户。${_maskNote()}；完整邮箱仅可在用户详情中经身份核验后单条查看。'),
+              child: Text(
+                '共 $_total 个用户。${_maskNote()}；完整邮箱仅可在用户详情中经身份核验后单条查看。',
+              ),
             ),
           ),
           const SizedBox(height: 8),
@@ -356,8 +356,7 @@ class _QfOwnerUsersPageState extends State<QfOwnerUsersPage> {
                     itemCount: _users.length,
                     itemBuilder: (context, i) {
                       final u = Map<String, dynamic>.from(_users[i] as Map);
-                      final restricted =
-                          (u['restricted'] as Map?) ?? const {};
+                      final restricted = (u['restricted'] as Map?) ?? const {};
                       final flags = <String>[
                         if (restricted['hasActiveBan'] == true)
                           restricted['banLevel'] == 'permanent'
@@ -469,11 +468,8 @@ class _QfOwnerUserPageState extends State<QfOwnerUserPage> {
   Future<Map<String, dynamic>> _tab(String name) =>
       session.authed('GET', '/owner/users/$uid/$name');
 
-  Widget _kv(String label, String value) => ListTile(
-    dense: true,
-    title: Text(label),
-    subtitle: Text(value),
-  );
+  Widget _kv(String label, String value) =>
+      ListTile(dense: true, title: Text(label), subtitle: Text(value));
 
   Future<void> _viewEmail() async {
     await _ownerSensitive(
@@ -698,7 +694,9 @@ class _QfOwnerUserPageState extends State<QfOwnerUserPage> {
         final body = <String, dynamic>{
           ...creds,
           'level': level,
-          'reasonText': reason.text.trim().isEmpty ? '违反用户协议' : reason.text.trim(),
+          'reasonText': reason.text.trim().isEmpty
+              ? '违反用户协议'
+              : reason.text.trim(),
           'alsoBanDevices': alsoDevices,
         };
         if (level == 'timed') {
@@ -874,8 +872,10 @@ class _QfOwnerUserPageState extends State<QfOwnerUserPage> {
                           build: (data) => _riskView(data),
                         ),
                         _OwnerAsyncTab(
-                          load: () =>
-                              session.authed('GET', '/owner/users/$uid/audit?limit=50'),
+                          load: () => session.authed(
+                            'GET',
+                            '/owner/users/$uid/audit?limit=50',
+                          ),
                           build: (data) => _auditView(data),
                         ),
                       ],
@@ -1034,9 +1034,7 @@ class _QfOwnerUserPageState extends State<QfOwnerUserPage> {
           '通行密钥',
           passkey['hasPasskey'] == true ? '已创建 ${passkey['count']} 个' : '未创建',
         ),
-        const ListTile(
-          subtitle: Text('出于隐私保护，管理台不展示连接来源地址与访问目标。'),
-        ),
+        const ListTile(subtitle: Text('出于隐私保护，管理台不展示连接来源地址与访问目标。')),
         if (devices.isEmpty) const ListTile(subtitle: Text('暂无设备记录。')),
         for (final raw in devices)
           Builder(
@@ -1225,7 +1223,10 @@ class _QfOwnerReviewsPageState extends State<QfOwnerReviewsPage> {
     try {
       final rows = <Widget>[];
       if (_kind == 'forum') {
-        final data = await session.authed('GET', '/owner/reviews/forum-pending');
+        final data = await session.authed(
+          'GET',
+          '/owner/reviews/forum-pending',
+        );
         void addGroup(List<dynamic>? items, String label, String type) {
           for (final raw in items ?? []) {
             final p = Map<String, dynamic>.from(raw as Map);
@@ -1298,19 +1299,15 @@ class _QfOwnerReviewsPageState extends State<QfOwnerReviewsPage> {
               [
                 _btn(
                   '批准（解封）',
-                  () => _decide(
-                    '/owner/reviews/appeals/${a['id']}/review',
-                    {'decision': 'approve'},
-                    '批准该申诉',
-                  ),
+                  () => _decide('/owner/reviews/appeals/${a['id']}/review', {
+                    'decision': 'approve',
+                  }, '批准该申诉'),
                 ),
                 _btn(
                   '驳回',
-                  () => _decide(
-                    '/owner/reviews/appeals/${a['id']}/review',
-                    {'decision': 'reject'},
-                    '驳回该申诉',
-                  ),
+                  () => _decide('/owner/reviews/appeals/${a['id']}/review', {
+                    'decision': 'reject',
+                  }, '驳回该申诉'),
                 ),
               ],
             ),
@@ -1330,19 +1327,15 @@ class _QfOwnerReviewsPageState extends State<QfOwnerReviewsPage> {
               [
                 _btn(
                   '批准',
-                  () => _decide(
-                    '/owner/reviews/recovery/${a['id']}/decide',
-                    {'decision': 'approve'},
-                    '批准该找回申诉',
-                  ),
+                  () => _decide('/owner/reviews/recovery/${a['id']}/decide', {
+                    'decision': 'approve',
+                  }, '批准该找回申诉'),
                 ),
                 _btn(
                   '驳回',
-                  () => _decide(
-                    '/owner/reviews/recovery/${a['id']}/decide',
-                    {'decision': 'reject'},
-                    '驳回该找回申诉',
-                  ),
+                  () => _decide('/owner/reviews/recovery/${a['id']}/decide', {
+                    'decision': 'reject',
+                  }, '驳回该找回申诉'),
                 ),
               ],
             ),
@@ -1389,19 +1382,15 @@ class _QfOwnerReviewsPageState extends State<QfOwnerReviewsPage> {
                 }),
                 _btn(
                   '批准',
-                  () => _decide(
-                    '/owner/reviews/rewards/${a['id']}/review',
-                    {'decision': 'approve'},
-                    '批准该奖励申请',
-                  ),
+                  () => _decide('/owner/reviews/rewards/${a['id']}/review', {
+                    'decision': 'approve',
+                  }, '批准该奖励申请'),
                 ),
                 _btn(
                   '驳回',
-                  () => _decide(
-                    '/owner/reviews/rewards/${a['id']}/review',
-                    {'decision': 'reject'},
-                    '驳回该奖励申请',
-                  ),
+                  () => _decide('/owner/reviews/rewards/${a['id']}/review', {
+                    'decision': 'reject',
+                  }, '驳回该奖励申请'),
                 ),
               ],
             ),
@@ -1422,19 +1411,15 @@ class _QfOwnerReviewsPageState extends State<QfOwnerReviewsPage> {
               [
                 _btn(
                   '审核通过',
-                  () => _decide(
-                    '/owner/reviews/orders/${o['id']}/review',
-                    {'decision': 'approve'},
-                    '审核通过该订单',
-                  ),
+                  () => _decide('/owner/reviews/orders/${o['id']}/review', {
+                    'decision': 'approve',
+                  }, '审核通过该订单'),
                 ),
                 _btn(
                   '驳回',
-                  () => _decide(
-                    '/owner/reviews/orders/${o['id']}/review',
-                    {'decision': 'reject'},
-                    '驳回该订单',
-                  ),
+                  () => _decide('/owner/reviews/orders/${o['id']}/review', {
+                    'decision': 'reject',
+                  }, '驳回该订单'),
                 ),
               ],
             ),
