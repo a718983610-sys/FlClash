@@ -16,6 +16,7 @@ import 'qf_recovery.dart';
 import 'qf_signal.dart';
 import 'qf_pages.dart';
 import 'qf_session.dart';
+import 'qf_support.dart';
 
 extension QfSocialApi on QfSessionController {
   Future<Map<String, dynamic>> socialGetProfile() async {
@@ -770,6 +771,7 @@ class _QfFriendsPageState extends State<QfFriendsPage> {
   List<dynamic> _outgoing = const [];
   List<dynamic> _results = const [];
   bool _loading = true;
+  bool _supportDeskVisible = false;
   String? _error;
 
   @override
@@ -796,10 +798,15 @@ class _QfFriendsPageState extends State<QfFriendsPage> {
         incoming = inRaw is List ? inRaw : const [];
         outgoing = outRaw is List ? outRaw : const [];
       } catch (_) {}
+      final deskVisible = await qfSupportDeskVisible(widget.session);
       if (mounted) {
         setState(() {
           final friends = data['friends'];
-          _friends = friends is List ? friends : const [];
+          _friends = qfSupportWithBotEntry(
+            friends is List ? friends : const [],
+            loggedIn: widget.session.isLoggedIn,
+          );
+          _supportDeskVisible = deskVisible;
           _incoming = incoming;
           _outgoing = outgoing;
           _loading = false;
@@ -1037,15 +1044,24 @@ class _QfFriendsPageState extends State<QfFriendsPage> {
                         trailing: const Text('等待对方处理'),
                       ),
                 ],
+                if (_supportDeskVisible) ...[
+                  const SizedBox(height: 16),
+                  QfSupportDeskTile(session: widget.session),
+                ],
+                for (final raw in _friends)
+                  if (raw is Map && qfSupportIsBotEntry(raw))
+                    QfSupportContactTile(session: widget.session, entry: raw),
                 const SizedBox(height: 16),
                 Text('我的好友', style: AppTextStyle.headline.of(context)),
-                if (_friends.isEmpty)
+                if (_friends
+                    .where((raw) => !(raw is Map && qfSupportIsBotEntry(raw)))
+                    .isEmpty)
                   const Padding(
                     padding: EdgeInsets.symmetric(vertical: 12),
                     child: Text('暂无好友，可通过上方搜索添加'),
                   ),
                 for (final raw in _friends)
-                  if (raw is Map)
+                  if (raw is Map && !qfSupportIsBotEntry(raw))
                     _userTile(
                       raw,
                       subtitle: raw['username'] != null

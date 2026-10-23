@@ -52,4 +52,14 @@ class QfCopy {
   static const String forumRewardPending = '审核中';
   static const String forumRewardApproved = '已发放';
   static const String forumRewardRejected = '已驳回';
+  static const String supportBotName = '智能客服';
+  static const String supportAgentName = '人工客服';
+  static const String supportBanner =
+      '本会话为智能客服自动回复，内容不进行端到端加密。'
+      '为保障您的权益，请勿在会话中发送密码、验证码等敏感信息。';
+  static const String supportAutoReplyTag = '自动回复';
+  static const String supportHandoffNotice = '已为您转接人工客服。人工客服的回复将显示在本会话中。';
+  static const String supportHandoffDone = '已转接人工客服，您可以继续在本会话中留言。';
+  static const String supportNotThis = '不是这个';
+  static const String supportDeskTitle = '客服会话';
 }

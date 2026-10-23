@@ -1297,4 +1297,53 @@ class QfSessionController extends ChangeNotifier {
   Future<void> forumUpdateNickname(String nickname) async {
     await authed('PUT', '/forum/profile', body: {'nickname': nickname});
   }
+
+  Future<Map<String, dynamic>> supportSession() {
+    return authed('GET', '/support/session');
+  }
+
+  Future<Map<String, dynamic>> supportAsk({
+    String? sessionId,
+    String? text,
+    bool notThis = false,
+    String? kbId,
+  }) {
+    return authed(
+      'POST',
+      '/support/ask',
+      body: {
+        'sessionId': ?sessionId,
+        if (notThis) 'notThis': true else 'text': text ?? '',
+        'kbId': ?kbId,
+      },
+    );
+  }
+
+  Future<Map<String, dynamic>> supportHandoff(String? sessionId) {
+    return authed('POST', '/support/handoff', body: {'sessionId': ?sessionId});
+  }
+
+  Future<Map<String, dynamic>> supportInbox() {
+    return authed('GET', '/support/inbox');
+  }
+
+  Future<Map<String, dynamic>> supportInboxDetail(String sessionId) {
+    return authed('GET', '/support/inbox/${Uri.encodeComponent(sessionId)}');
+  }
+
+  Future<void> supportInboxReply(String sessionId, String text) async {
+    await authed(
+      'POST',
+      '/support/inbox/${Uri.encodeComponent(sessionId)}/reply',
+      body: {'text': text},
+    );
+  }
+
+  Future<void> supportInboxClose(String sessionId) async {
+    await authed(
+      'POST',
+      '/support/inbox/${Uri.encodeComponent(sessionId)}/close',
+      body: {},
+    );
+  }
 }
