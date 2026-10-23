@@ -104,6 +104,18 @@ class QfReleaseManifest {
     };
   }
 
+  QfReleaseManifest withMaintenance(bool value) {
+    return QfReleaseManifest(
+      latestVersion: latestVersion,
+      retiredBelowVersion: retiredBelowVersion,
+      minUsableVersion: minUsableVersion,
+      maintenance: value,
+      serverBaseUrl: serverBaseUrl,
+      googleClientId: googleClientId,
+      platforms: platforms,
+    );
+  }
+
   QfPlatformRelease? platformRelease(String platform) => platforms[platform];
 
   String googleClientIdFor(String platform) {

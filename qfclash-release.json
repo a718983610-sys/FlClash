@@ -1,7 +1,7 @@
 {
   "googleClientId": "340614194006-7a7anda3p473qjlhr67k6hn3o6aaqu9o.apps.googleusercontent.com",
   "latestVersion": "1.0.0",
-  "maintenance": true,
+  "maintenance": false,
   "minUsableVersion": "1.0.0",
   "platforms": {
     "android": {

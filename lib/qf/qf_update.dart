@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:crypto/crypto.dart' as crypto;
@@ -17,6 +18,7 @@ class QfUpdateCheck {
   final String latestVersion;
   final String sha256;
   final int? sizeBytes;
+  final bool manifestFresh;
 
   const QfUpdateCheck({
     required this.decision,
@@ -26,6 +28,7 @@ class QfUpdateCheck {
     required this.latestVersion,
     this.sha256 = '',
     this.sizeBytes,
+    this.manifestFresh = false,
   });
 
   static const QfUpdateCheck none = QfUpdateCheck(
@@ -38,11 +41,16 @@ class QfUpdateCheck {
 }
 
 class QfUpdateService {
-  static String get platformKey => Platform.isAndroid
-      ? 'android'
-      : Platform.isWindows
-      ? 'windows'
-      : '';
+  static String? platformKeyOverride;
+  static Future<QfReleaseManifest?> Function()? manifestFetcherForTest;
+
+  static String get platformKey =>
+      platformKeyOverride ??
+      (Platform.isAndroid
+          ? 'android'
+          : Platform.isWindows
+          ? 'windows'
+          : '');
 
   static String get _tagPrefix => Platform.isAndroid
       ? 'android-v'
@@ -50,12 +58,30 @@ class QfUpdateService {
       ? 'windows-v'
       : '';
 
+  static String? _lastCheckedVersion;
+  static void Function(QfUpdateCheck)? onFreshCheck;
+
   static Future<QfUpdateCheck> check(String currentVersion) async {
+    _lastCheckedVersion = currentVersion;
     final current = QfVersion.tryParse(currentVersion);
     if (current == null || platformKey.isEmpty) return QfUpdateCheck.none;
-    var manifest = await QfManifestService.fetchRemote();
-    manifest ??= await QfManifestService.loadCached();
-    if (manifest == null) return QfUpdateCheck.none;
+    final fetcher = manifestFetcherForTest ?? QfManifestService.fetchRemote;
+    var manifest = await fetcher();
+    final fresh = manifest != null;
+    if (!fresh) {
+      manifest = await QfManifestService.loadCached();
+      _scheduleManifestRetry();
+      if (manifest == null) return QfUpdateCheck.none;
+      // Fail-open: a stale cached manifest may inform the UI about versions
+      // but must never drive a blocking decision (maintenance/force/retired).
+      return QfUpdateCheck(
+        decision: QfUpdateDecision.none,
+        manifest: manifest,
+        notes: '',
+        downloadUrl: '',
+        latestVersion: manifest.latestVersion,
+      );
+    }
     final decision = decideQfUpdate(current: current, manifest: manifest);
     if (decision == QfUpdateDecision.none) {
       return QfUpdateCheck(
@@ -64,6 +90,7 @@ class QfUpdateService {
         notes: '',
         downloadUrl: '',
         latestVersion: manifest.latestVersion,
+        manifestFresh: true,
       );
     }
     final platformRelease = manifest.platformRelease(platformKey);
@@ -89,7 +116,43 @@ class QfUpdateService {
       latestVersion: manifest.latestVersion,
       sha256: expectedSha256,
       sizeBytes: expectedSizeBytes,
+      manifestFresh: true,
     );
+  }
+
+  static bool _manifestRetryScheduled = false;
+
+  static void _scheduleManifestRetry() {
+    if (_manifestRetryScheduled || manifestFetcherForTest != null) return;
+    _manifestRetryScheduled = true;
+    unawaited(
+      Future<void>(() async {
+        try {
+          await Future<void>.delayed(const Duration(seconds: 5));
+          if (!await retryManifestOnce()) {
+            await Future<void>.delayed(const Duration(seconds: 20));
+            await retryManifestOnce();
+          }
+        } catch (_) {
+        } finally {
+          _manifestRetryScheduled = false;
+        }
+      }),
+    );
+  }
+
+  /// One background re-fetch; on success the verdict is recomputed at once
+  /// and pushed to [onFreshCheck] instead of waiting for the next cycle.
+  static Future<bool> retryManifestOnce() async {
+    final fetcher = manifestFetcherForTest ?? QfManifestService.fetchRemote;
+    final manifest = await fetcher();
+    if (manifest == null) return false;
+    final version = _lastCheckedVersion;
+    final callback = onFreshCheck;
+    if (version != null && callback != null) {
+      callback(await check(version));
+    }
+    return true;
   }
 
   static Future<Map<String, dynamic>?> _fetchPlatformRelease(

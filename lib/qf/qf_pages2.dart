@@ -32,7 +32,12 @@ class QfUpdateFlow {
     if (!context.mounted) return;
     switch (check.decision) {
       case QfUpdateDecision.none:
-        qfToast(context, '当前已经是最新版本');
+        qfToast(
+          context,
+          check.manifestFresh
+              ? '当前已经是最新版本'
+              : QfCopy.networkAccountUnreachable,
+        );
       case QfUpdateDecision.minor:
         final accepted = await showDialog<bool>(
           context: context,

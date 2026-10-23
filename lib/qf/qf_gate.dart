@@ -141,6 +141,7 @@ class _QfSessionGateState extends ConsumerState<QfSessionGate> {
     }
     await _checkRegion();
     session.startHeartbeat();
+    QfUpdateService.onFreshCheck = (_) => unawaited(_recheckManifest());
     final check = await QfUpdateService.check(QfRuntime.appVersion);
     if (!mounted) return;
     setState(() {
@@ -173,12 +174,29 @@ class _QfSessionGateState extends ConsumerState<QfSessionGate> {
         });
       }
     }
-    if (check.decision == QfUpdateDecision.minor && !_minorShown) {
+    if (check.decision == QfUpdateDecision.minor &&
+        !_minorShown &&
+        !await _minorShownToday()) {
       _minorShown = true;
       _minorCheck = check;
       _minorQueued = true;
       _scheduleDialogs();
     }
+  }
+
+  static String _todayKey() {
+    final now = DateTime.now();
+    return '${now.year}-${now.month}-${now.day}';
+  }
+
+  Future<bool> _minorShownToday() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString('qf_minor_shown_date') == _todayKey();
+  }
+
+  Future<void> _markMinorShownToday() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('qf_minor_shown_date', _todayKey());
   }
 
   Future<void> _recheckManifest() async {
@@ -193,6 +211,14 @@ class _QfSessionGateState extends ConsumerState<QfSessionGate> {
         check.decision == QfUpdateDecision.retired ||
         check.decision == QfUpdateDecision.force) {
       await _stopCore();
+    }
+    if (check.decision == QfUpdateDecision.minor &&
+        !_minorShown &&
+        !await _minorShownToday()) {
+      _minorShown = true;
+      _minorCheck = check;
+      _minorQueued = true;
+      _scheduleDialogs();
     }
   }
 
@@ -351,6 +377,7 @@ class _QfSessionGateState extends ConsumerState<QfSessionGate> {
   Future<void> _presentMinorDialog() async {
     final check = _minorCheck;
     if (check == null) return;
+    await _markMinorShownToday();
     _dialogBusy = true;
     try {
       final accepted = await showDialog<bool>(
