@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:fl_clash/ui/ui.dart';
@@ -79,8 +80,15 @@ extension QfSocialApi on QfSessionController {
     return authed('POST', '/friends/request/$requestId/accept');
   }
 
-  Future<Map<String, dynamic>> socialFriendReject(int requestId) async {
-    return authed('POST', '/friends/request/$requestId/reject');
+  Future<Map<String, dynamic>> socialFriendReject(
+    int requestId, {
+    bool neverAgain = false,
+  }) async {
+    return authed(
+      'POST',
+      '/friends/request/$requestId/reject',
+      body: {if (neverAgain) 'neverAgain': true},
+    );
   }
 
   Future<Map<String, dynamic>> socialFriendDelete(int userId) async {
@@ -177,6 +185,20 @@ extension QfSocialApi on QfSessionController {
   }
 }
 
+Map<int, int> qfUnreadByUser(List<dynamic> conversations) {
+  final result = <int, int>{};
+  for (final raw in conversations) {
+    if (raw is! Map) continue;
+    final user = raw['user'];
+    final userId = user is Map
+        ? (user['userId'] as num?)?.toInt()
+        : (raw['userId'] as num?)?.toInt();
+    final unread = (raw['unreadCount'] as num?)?.toInt() ?? 0;
+    if (userId != null && unread > 0) result[userId] = unread;
+  }
+  return result;
+}
+
 Map<String, dynamic> qfChatSendBody(
   int toUserId, {
   required String msgId,
@@ -209,21 +231,87 @@ int _qfTsMillis(dynamic raw) {
 }
 
 final Map<int, Uint8List?> _qfAvatarCache = {};
+final Map<String, Uint8List?> _qfAvatarStampedCache = {};
+
+const int qfAvatarMaxBytes = 200 * 1024;
+
+String qfAvatarCacheKey(int userId, dynamic avatarUpdatedAt) {
+  return '$userId@${avatarUpdatedAt ?? ''}';
+}
 
 void qfSetCachedAvatar(int userId, Uint8List bytes) {
   _qfAvatarCache[userId] = bytes;
 }
 
+Uint8List? qfCachedAvatar(int userId, dynamic avatarUpdatedAt) {
+  if (avatarUpdatedAt != null) {
+    return _qfAvatarStampedCache[qfAvatarCacheKey(userId, avatarUpdatedAt)];
+  }
+  return _qfAvatarCache[userId];
+}
+
+void qfStoreCachedAvatar(
+  int userId,
+  dynamic avatarUpdatedAt,
+  Uint8List? bytes,
+) {
+  if (avatarUpdatedAt != null) {
+    _qfAvatarStampedCache[qfAvatarCacheKey(userId, avatarUpdatedAt)] = bytes;
+  } else {
+    _qfAvatarCache[userId] = bytes;
+  }
+}
+
+Future<({Uint8List bytes, bool compressed})> qfCompressAvatarBytes(
+  Uint8List bytes, {
+  int maxBytes = qfAvatarMaxBytes,
+}) async {
+  if (bytes.length <= maxBytes) return (bytes: bytes, compressed: false);
+  for (final size in [512, 384, 256, 192, 128]) {
+    try {
+      final codec = await ui.instantiateImageCodec(
+        bytes,
+        targetWidth: size,
+        targetHeight: size,
+      );
+      final frame = await codec.getNextFrame();
+      final data = await frame.image.toByteData(format: ui.ImageByteFormat.png);
+      frame.image.dispose();
+      codec.dispose();
+      if (data == null) break;
+      final out = data.buffer.asUint8List();
+      if (out.length <= maxBytes) return (bytes: out, compressed: true);
+    } catch (_) {
+      break;
+    }
+  }
+  return (bytes: bytes, compressed: false);
+}
+
 Future<Uint8List?> qfPickAndUploadAvatar(QfSessionController session) async {
   final picker = ImagePicker();
-  final file = await picker.pickImage(source: ImageSource.gallery);
+  final file = await picker.pickImage(
+    source: ImageSource.gallery,
+    maxWidth: 512,
+    maxHeight: 512,
+    imageQuality: 85,
+  );
   if (file == null) return null;
-  final bytes = await file.readAsBytes();
-  if (bytes.length > 200 * 1024) {
-    throw const QfApiException(0, 'AVATAR_TOO_LARGE', '头像图片过大，请选择小于 200KB 的图片');
+  final rawBytes = await file.readAsBytes();
+  final result = await qfCompressAvatarBytes(rawBytes);
+  final bytes = result.bytes;
+  if (bytes.length > qfAvatarMaxBytes) {
+    throw const QfApiException(
+      0,
+      'AVATAR_TOO_LARGE',
+      '头像图片过大，已尝试压缩仍超过 200KB，请选择较小的图片',
+    );
   }
   await session.socialUpdateProfile({
-    'avatar': {'mime': _qfAvatarMime(file), 'dataBase64': base64Encode(bytes)},
+    'avatar': {
+      'mime': result.compressed ? 'image/png' : _qfAvatarMime(file),
+      'dataBase64': base64Encode(bytes),
+    },
   });
   final userId = session.userId;
   if (userId != null) qfSetCachedAvatar(userId, bytes);
@@ -299,6 +387,7 @@ class QfAvatarImage extends StatefulWidget {
   final String name;
   final bool? hasAvatar;
   final double radius;
+  final dynamic avatarUpdatedAt;
 
   const QfAvatarImage({
     super.key,
@@ -307,6 +396,7 @@ class QfAvatarImage extends StatefulWidget {
     required this.name,
     this.hasAvatar,
     this.radius = 20,
+    this.avatarUpdatedAt,
   });
 
   @override
@@ -325,7 +415,8 @@ class _QfAvatarImageState extends State<QfAvatarImage> {
   @override
   void didUpdateWidget(QfAvatarImage oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.userId != widget.userId) {
+    if (oldWidget.userId != widget.userId ||
+        oldWidget.avatarUpdatedAt != widget.avatarUpdatedAt) {
       _bytes = null;
       _resolve();
     }
@@ -334,19 +425,29 @@ class _QfAvatarImageState extends State<QfAvatarImage> {
   Future<void> _resolve() async {
     final userId = widget.userId;
     if (userId == null || widget.hasAvatar == false) return;
-    if (_qfAvatarCache.containsKey(userId)) {
+    final stamp = widget.avatarUpdatedAt;
+    if (stamp != null &&
+        _qfAvatarStampedCache.containsKey(qfAvatarCacheKey(userId, stamp))) {
+      _bytes = _qfAvatarStampedCache[qfAvatarCacheKey(userId, stamp)];
+      return;
+    }
+    if (stamp == null && _qfAvatarCache.containsKey(userId)) {
       _bytes = _qfAvatarCache[userId];
       return;
     }
     final bytes = await widget.session.socialAvatarBytes(userId);
-    _qfAvatarCache[userId] = bytes;
+    qfStoreCachedAvatar(userId, stamp, bytes);
     if (mounted && bytes != null) setState(() => _bytes = bytes);
   }
 
   @override
   Widget build(BuildContext context) {
     final userId = widget.userId;
-    final bytes = (userId == null ? null : _qfAvatarCache[userId]) ?? _bytes;
+    final bytes =
+        (userId == null
+            ? null
+            : qfCachedAvatar(userId, widget.avatarUpdatedAt)) ??
+        _bytes;
     if (bytes != null && bytes.isNotEmpty) {
       return CircleAvatar(
         radius: widget.radius,
@@ -836,7 +937,135 @@ class _QfProfilePageState extends State<QfProfilePage> {
                   '云端仅保存加密后的聊天记录，忘记账户密码后将无法恢复。',
                   style: AppTextStyle.caption1.of(context),
                 ),
+                const SizedBox(height: 24),
+                ListTile(
+                  leading: const GlyphIcon(AppGlyphs.add),
+                  title: const Text(QfCopy.attachmentsTitle),
+                  subtitle: const Text('查看与删除您发送过的聊天附件'),
+                  onTap: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) =>
+                            QfAttachmentsPage(session: widget.session),
+                      ),
+                    );
+                  },
+                ),
               ],
+            ),
+    );
+  }
+}
+
+class QfAttachmentsPage extends StatefulWidget {
+  final QfSessionController session;
+
+  const QfAttachmentsPage({super.key, required this.session});
+
+  @override
+  State<QfAttachmentsPage> createState() => _QfAttachmentsPageState();
+}
+
+class _QfAttachmentsPageState extends State<QfAttachmentsPage> {
+  List<dynamic> _blobs = const [];
+  int _total = 0;
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load({bool more = false}) async {
+    try {
+      final data = await widget.session.chatBlobs(
+        offset: more ? _blobs.length : 0,
+      );
+      final blobs = data['blobs'];
+      if (mounted) {
+        setState(() {
+          final list = blobs is List ? blobs : const <dynamic>[];
+          _blobs = more ? [..._blobs, ...list] : list;
+          _total = (data['total'] as num?)?.toInt() ?? _blobs.length;
+          _loading = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _delete(Map<dynamic, dynamic> blob) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('删除附件'),
+          content: const Text(QfCopy.attachmentsDeleteHint),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('删除'),
+            ),
+          ],
+        );
+      },
+    );
+    if (confirmed != true) return;
+    try {
+      await widget.session.chatDeleteBlob((blob['blobId'] ?? '').toString());
+      if (mounted) qfToast(context, '附件已删除，7 天后将彻底清除。');
+      await _load();
+    } on QfApiException catch (e) {
+      if (mounted) qfToast(context, e.message);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text(QfCopy.attachmentsTitle)),
+      body: _loading
+          ? const Center(child: CommonCircleLoading.page())
+          : _blobs.isEmpty
+          ? const Center(child: Text(QfCopy.attachmentsEmpty))
+          : ListView.separated(
+              itemCount: _blobs.length + (_blobs.length < _total ? 1 : 0),
+              separatorBuilder: (_, _) => const Divider(height: 1),
+              itemBuilder: (context, index) {
+                if (index == _blobs.length) {
+                  return TextButton(
+                    onPressed: () => _load(more: true),
+                    child: const Text('加载更多'),
+                  );
+                }
+                final raw = _blobs[index];
+                if (raw is! Map) return const SizedBox.shrink();
+                final size = (raw['sizeBytes'] as num?)?.toInt() ?? 0;
+                final created = qfFormatEpochSeconds(raw['createdAt']);
+                final recipient = raw['recipientUserId'];
+                final deleteAfter = raw['deleteAfter'];
+                return ListTile(
+                  title: Text(_qfFormatBytes(size)),
+                  subtitle: Text(
+                    '${created.isEmpty ? '' : '$created · '}'
+                    '接收人：${recipient ?? '—'} · '
+                    '${raw['downloaded'] == true ? '对方已下载' : '对方未下载'}'
+                    '${deleteAfter != null ? '\n已删除，7 天待删期内将彻底清除' : ''}',
+                  ),
+                  trailing: deleteAfter != null
+                      ? null
+                      : TextButton(
+                          onPressed: () => _delete(raw),
+                          child: const Text('删除'),
+                        ),
+                );
+              },
             ),
     );
   }
@@ -857,6 +1086,8 @@ class _QfFriendsPageState extends State<QfFriendsPage> {
   List<dynamic> _incoming = const [];
   List<dynamic> _outgoing = const [];
   List<dynamic> _results = const [];
+  Map<int, int> _unread = const {};
+  Timer? _pollTimer;
   bool _loading = true;
   bool _supportDeskVisible = false;
   String? _error;
@@ -864,11 +1095,14 @@ class _QfFriendsPageState extends State<QfFriendsPage> {
   @override
   void initState() {
     super.initState();
+    unawaited(QfSignalManager.ensureInstalledQuietly(widget.session));
     _load();
+    _pollTimer = Timer.periodic(const Duration(seconds: 10), (_) => _load());
   }
 
   @override
   void dispose() {
+    _pollTimer?.cancel();
     _search.dispose();
     super.dispose();
   }
@@ -886,6 +1120,10 @@ class _QfFriendsPageState extends State<QfFriendsPage> {
         outgoing = outRaw is List ? outRaw : const [];
       } catch (_) {}
       final deskVisible = await qfSupportDeskVisible(widget.session);
+      var unread = _unread;
+      try {
+        unread = qfUnreadByUser(await widget.session.socialChatConversations());
+      } catch (_) {}
       if (mounted) {
         setState(() {
           final friends = data['friends'];
@@ -896,6 +1134,7 @@ class _QfFriendsPageState extends State<QfFriendsPage> {
           _supportDeskVisible = deskVisible;
           _incoming = incoming;
           _outgoing = outgoing;
+          _unread = unread;
           _loading = false;
           _error = null;
         });
@@ -950,6 +1189,7 @@ class _QfFriendsPageState extends State<QfFriendsPage> {
                 userId: userId,
                 name: nickname,
                 hasAvatar: profile['hasAvatar'] == true,
+                avatarUpdatedAt: profile['avatarUpdatedAt'],
                 radius: 36,
               ),
               const SizedBox(height: 12),
@@ -1017,19 +1257,87 @@ class _QfFriendsPageState extends State<QfFriendsPage> {
     await _act(() => widget.session.socialFriendDelete(userId), '好友已经删除');
   }
 
+  Future<void> _rejectRequest(Map<dynamic, dynamic> raw) async {
+    final requestId = (raw['id'] as num?)?.toInt();
+    if (requestId == null) return;
+    final choice = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('拒绝好友申请'),
+          content: const Text(
+            '拒绝后，对方一段时间内不能再次向您发送申请；选择「拒绝且不再接收」后，对方将无法再向您发送申请。',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('取消'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop('never'),
+              child: const Text('拒绝且不再接收'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop('reject'),
+              child: const Text('拒绝'),
+            ),
+          ],
+        );
+      },
+    );
+    if (choice == null) return;
+    await _act(
+      () => widget.session.socialFriendReject(
+        requestId,
+        neverAgain: choice == 'never',
+      ),
+      choice == 'never' ? '已拒绝，并不再接收对方的申请' : '已拒绝该申请',
+    );
+  }
+
   Widget _userTile(
     Map<dynamic, dynamic> raw, {
     Widget? trailing,
     VoidCallback? onTap,
     String? subtitle,
+    int unread = 0,
   }) {
     final nickname = (raw['nickname'] ?? '').toString();
     return ListTile(
-      leading: QfAvatarImage(
-        session: widget.session,
-        userId: (raw['userId'] as num?)?.toInt(),
-        name: nickname,
-        hasAvatar: raw['hasAvatar'] == true,
+      leading: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          QfAvatarImage(
+            session: widget.session,
+            userId: (raw['userId'] as num?)?.toInt(),
+            name: nickname,
+            hasAvatar: raw['hasAvatar'] == true,
+            avatarUpdatedAt: raw['avatarUpdatedAt'],
+          ),
+          if (unread > 0)
+            Positioned(
+              right: -6,
+              top: -6,
+              child: DecoratedBox(
+                decoration: ShapeDecoration(
+                  color: Theme.of(context).colorScheme.error,
+                  shape: AppShape.full,
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 5,
+                    vertical: 1,
+                  ),
+                  child: Text(
+                    unread > 99 ? '99+' : '$unread',
+                    style: AppTextStyle.caption2
+                        .of(context)
+                        .copyWith(color: Theme.of(context).colorScheme.onError),
+                  ),
+                ),
+              ),
+            ),
+        ],
       ),
       title: Text(nickname),
       subtitle: subtitle == null ? null : Text(subtitle),
@@ -1109,12 +1417,7 @@ class _QfFriendsPageState extends State<QfFriendsPage> {
                               child: const Text('同意'),
                             ),
                             TextButton(
-                              onPressed: () => _act(
-                                () => widget.session.socialFriendReject(
-                                  (raw['id'] as num).toInt(),
-                                ),
-                                '已拒绝该申请',
-                              ),
+                              onPressed: () => _rejectRequest(raw),
                               child: const Text('拒绝'),
                             ),
                           ],
@@ -1151,6 +1454,7 @@ class _QfFriendsPageState extends State<QfFriendsPage> {
                   if (raw is Map && !qfSupportIsBotEntry(raw))
                     _userTile(
                       raw,
+                      unread: _unread[(raw['userId'] as num?)?.toInt()] ?? 0,
                       subtitle: raw['username'] != null
                           ? '账户 ID：${raw['username']} · 点击进入聊天'
                           : '点击进入聊天',
@@ -1325,6 +1629,7 @@ class QfFriendProfilePage extends StatelessWidget {
                   userId: _peerId,
                   name: nickname,
                   hasAvatar: friend['hasAvatar'] == true,
+                  avatarUpdatedAt: friend['avatarUpdatedAt'],
                   radius: 40,
                 ),
                 const SizedBox(height: 12),
@@ -1438,6 +1743,7 @@ class _QfChatPageState extends State<QfChatPage> {
   @override
   void initState() {
     super.initState();
+    unawaited(QfSignalManager.ensureInstalledQuietly(widget.session));
     _load();
     unawaited(_syncHistoryOnOpen());
     _timer = Timer.periodic(const Duration(seconds: 10), (_) => _load());
@@ -1588,6 +1894,7 @@ class _QfChatPageState extends State<QfChatPage> {
         if (raw is! Map) continue;
         final mine = raw['mine'] == true || raw['from'] == myId;
         var text = '无法解密的消息';
+        var decryptFailed = false;
         if (mine) {
           text =
               sentCache['${raw['msgId']}'] ??
@@ -1602,7 +1909,9 @@ class _QfChatPageState extends State<QfChatPage> {
               _peerId,
               (raw['ciphertext'] ?? '').toString(),
             );
-          } catch (_) {}
+          } catch (_) {
+            decryptFailed = true;
+          }
         }
         final ts = _qfTsMillis(raw['createdAt']);
         final msgIdRaw = (raw['msgId'] ?? '').toString();
@@ -1627,6 +1936,8 @@ class _QfChatPageState extends State<QfChatPage> {
             'createdAt': raw['createdAt'],
             'ts': ts,
             'localId': localId,
+            'decryptFailed': decryptFailed,
+            if (mine) 'readAt': raw['readAt'],
           });
         }
         await QfChatHistoryVault.archiveMessage(
@@ -2190,6 +2501,7 @@ class _QfChatPageState extends State<QfChatPage> {
               userId: _peerId,
               name: _peerName,
               hasAvatar: widget.friend['hasAvatar'] == true,
+              avatarUpdatedAt: widget.friend['avatarUpdatedAt'],
               radius: 16,
             ),
             const SizedBox(width: 8),
@@ -2323,23 +2635,79 @@ class _QfChatPageState extends State<QfChatPage> {
                                 ? CrossAxisAlignment.end
                                 : CrossAxisAlignment.start,
                             children: [
-                              Container(
-                                margin: const EdgeInsets.symmetric(vertical: 4),
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 12,
-                                  vertical: 8,
+                              if (message['decryptFailed'] == true)
+                                InkWell(
+                                  customBorder: AppShape.md,
+                                  onTap: () {
+                                    Navigator.of(context).push(
+                                      MaterialPageRoute<void>(
+                                        builder: (_) => QfProfilePage(
+                                          session: widget.session,
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                  child: Container(
+                                    margin: const EdgeInsets.symmetric(
+                                      vertical: 4,
+                                    ),
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 12,
+                                      vertical: 8,
+                                    ),
+                                    decoration: ShapeDecoration(
+                                      color: Theme.of(
+                                        context,
+                                      ).colorScheme.errorContainer,
+                                      shape: AppShape.md,
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        const Text(QfCopy.chatDecryptFailed),
+                                        const SizedBox(width: 8),
+                                        Text(
+                                          QfCopy.chatRecoverKey,
+                                          style: AppTextStyle.body
+                                              .of(context, emphasized: true)
+                                              .copyWith(
+                                                color: Theme.of(
+                                                  context,
+                                                ).colorScheme.primary,
+                                              ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                )
+                              else
+                                Container(
+                                  margin: const EdgeInsets.symmetric(
+                                    vertical: 4,
+                                  ),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 8,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: mine
+                                        ? Theme.of(
+                                            context,
+                                          ).colorScheme.primaryContainer
+                                        : Theme.of(
+                                            context,
+                                          ).colorScheme.surfaceContainerHighest,
+                                  ),
+                                  child: _messageContent(message),
                                 ),
-                                decoration: BoxDecoration(
-                                  color: mine
-                                      ? Theme.of(
-                                          context,
-                                        ).colorScheme.primaryContainer
-                                      : Theme.of(
-                                          context,
-                                        ).colorScheme.surfaceContainerHighest,
+                              if (mine && message.containsKey('readAt'))
+                                Padding(
+                                  padding: const EdgeInsets.only(bottom: 4),
+                                  child: Text(
+                                    message['readAt'] == null ? '未读' : '已读',
+                                    style: AppTextStyle.caption1.of(context),
+                                  ),
                                 ),
-                                child: _messageContent(message),
-                              ),
                               if (summary.isNotEmpty)
                                 Padding(
                                   padding: const EdgeInsets.only(bottom: 4),

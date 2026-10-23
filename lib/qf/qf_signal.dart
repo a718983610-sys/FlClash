@@ -11,6 +11,7 @@ import 'package:pointycastle/key_derivators/argon2.dart';
 import 'package:pointycastle/macs/poly1305.dart';
 import 'package:pointycastle/stream/chacha20poly1305.dart' hide State;
 import 'package:pointycastle/stream/chacha7539.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'qf_api.dart';
@@ -334,6 +335,14 @@ class QfSignalManager {
     };
   }
 
+  static Future<void> ensureInstalledQuietly(
+    QfSessionController session,
+  ) async {
+    try {
+      await ensureInstalled(session);
+    } catch (_) {}
+  }
+
   static Future<void> ensureInstalled(QfSessionController session) async {
     final store = await QfSignalStore.load();
     if (!await store.containsSignedPreKey(0)) {
@@ -518,8 +527,10 @@ class QfSignalManager {
     );
   }
 
-  static Future<Map<String, String>> buildBackup(String password) async {
-    final store = await QfSignalStore.load();
+  static Map<String, String> encryptBackupPlain(
+    Uint8List plain,
+    String password,
+  ) {
     final salt = Uint8List.fromList(
       List<int>.generate(16, (_) => Random.secure().nextInt(256)),
     );
@@ -527,7 +538,6 @@ class QfSignalManager {
       List<int>.generate(12, (_) => Random.secure().nextInt(256)),
     );
     final kek = _argon2id(password, salt);
-    final plain = Uint8List.fromList(utf8.encode(jsonEncode(store.toJson())));
     final cipher = GCMBlockCipher(AESEngine())
       ..init(true, AEADParameters(KeyParameter(kek), 128, nonce, Uint8List(0)));
     final sealed = cipher.process(plain);
@@ -540,26 +550,80 @@ class QfSignalManager {
     };
   }
 
+  static Uint8List decryptBackupPlain(
+    Map<String, dynamic> backup,
+    String password,
+  ) {
+    final salt = base64Decode((backup['salt'] ?? '').toString());
+    final nonce = base64Decode((backup['nonce'] ?? '').toString());
+    final data = base64Decode((backup['data'] ?? '').toString());
+    final kek = _argon2id(password, Uint8List.fromList(salt));
+    final cipher = GCMBlockCipher(AESEngine())
+      ..init(
+        false,
+        AEADParameters(
+          KeyParameter(kek),
+          128,
+          Uint8List.fromList(nonce),
+          Uint8List(0),
+        ),
+      );
+    return cipher.process(Uint8List.fromList(data));
+  }
+
+  static Map<String, String>? rewrapBackupMap(
+    Map<String, dynamic> backup, {
+    required String oldPassword,
+    required String newPassword,
+  }) {
+    try {
+      final plain = decryptBackupPlain(backup, oldPassword);
+      return encryptBackupPlain(plain, newPassword);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<bool> rewrapKeyBackup({
+    required QfSessionController session,
+    required String oldPassword,
+    required String newPassword,
+  }) async {
+    try {
+      final data = await session.socialGetKeyBackup();
+      final backupRaw = data['backup'];
+      if (backupRaw is! String || backupRaw.isEmpty) return true;
+      final decoded = jsonDecode(utf8.decode(base64Decode(backupRaw)));
+      if (decoded is! Map) return false;
+      final rewrapped = rewrapBackupMap(
+        Map<String, dynamic>.from(decoded),
+        oldPassword: oldPassword,
+        newPassword: newPassword,
+      );
+      if (rewrapped == null) return false;
+      await session.socialPutKeyBackup(
+        base64Encode(utf8.encode(jsonEncode(rewrapped))),
+      );
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static Future<Map<String, String>> buildBackup(String password) async {
+    final store = await QfSignalStore.load();
+    return encryptBackupPlain(
+      Uint8List.fromList(utf8.encode(jsonEncode(store.toJson()))),
+      password,
+    );
+  }
+
   static Future<bool> restoreBackup(
     Map<String, dynamic> backup,
     String password,
   ) async {
     try {
-      final salt = base64Decode((backup['salt'] ?? '').toString());
-      final nonce = base64Decode((backup['nonce'] ?? '').toString());
-      final data = base64Decode((backup['data'] ?? '').toString());
-      final kek = _argon2id(password, Uint8List.fromList(salt));
-      final cipher = GCMBlockCipher(AESEngine())
-        ..init(
-          false,
-          AEADParameters(
-            KeyParameter(kek),
-            128,
-            Uint8List.fromList(nonce),
-            Uint8List(0),
-          ),
-        );
-      final plain = cipher.process(Uint8List.fromList(data));
+      final plain = decryptBackupPlain(backup, password);
       final decoded = Map<String, dynamic>.from(
         jsonDecode(utf8.decode(plain)) as Map,
       );

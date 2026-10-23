@@ -69,8 +69,52 @@ String qfForumRewardStateLabel(String state) {
   };
 }
 
+Map<dynamic, dynamic>? qfForumRewardApplicationFor(
+  List<dynamic> applications,
+  int postId,
+) {
+  for (final raw in applications) {
+    if (raw is Map && (raw['postId'] as num?)?.toInt() == postId) return raw;
+  }
+  return null;
+}
+
+String qfForumRewardStatusText({
+  required String state,
+  String rejectReason = '',
+}) {
+  final label = qfForumRewardStateLabel(state);
+  if (label.isEmpty) return '';
+  if (state == 'rejected' && rejectReason.isNotEmpty) {
+    return '奖励申请状态：$label（$rejectReason）';
+  }
+  return '奖励申请状态：$label';
+}
+
+String qfForumPointsNotice(Map<dynamic, dynamic> result) {
+  final points = result['forumPoints'];
+  if (points is! Map) return '';
+  if (points['granted'] == true) return '本次发布已获得论坛积分。';
+  if ((points['reason'] ?? '').toString() == 'already_granted_today') {
+    return '今日论坛积分已获得。';
+  }
+  return '';
+}
+
 String qfForumPostLink(String serverBaseUrl, int postId) {
   return '$serverBaseUrl/forum/posts/$postId';
+}
+
+List<dynamic> qfForumVisibleBoards(
+  List<dynamic> boards, {
+  required bool canAnnounce,
+}) {
+  if (canAnnounce) return boards;
+  return [
+    for (final raw in boards)
+      if (!(raw is Map && (raw['key'] ?? '').toString() == 'announcements'))
+        raw,
+  ];
 }
 
 Map<dynamic, dynamic>? qfCampCreator(Map<dynamic, dynamic> camp) {
@@ -137,6 +181,15 @@ String qfCampCategory(Map<dynamic, dynamic> raw) {
 
 String qfCampCloseReason(Map<dynamic, dynamic> camp) {
   return (camp['closeReasonCategory'] ?? '').toString();
+}
+
+bool qfCampCanDelete(Map<dynamic, dynamic> camp) {
+  final status = qfCampStatus(camp);
+  return status == 'rejected' || status == 'pending';
+}
+
+bool qfCampCanResubmit(Map<dynamic, dynamic> camp) {
+  return qfCampStatus(camp) == 'rejected';
 }
 
 bool qfCampPendingReview(Map<dynamic, dynamic> camp) {
@@ -286,11 +339,13 @@ class QfForumCountsLine extends StatelessWidget {
 class QfForumRewardSection extends StatefulWidget {
   final QfSessionController session;
   final Map<dynamic, dynamic> post;
+  final Map<dynamic, dynamic>? application;
 
   const QfForumRewardSection({
     super.key,
     required this.session,
     required this.post,
+    this.application,
   });
 
   @override
@@ -324,25 +379,49 @@ class _QfForumRewardSectionState extends State<QfForumRewardSection> {
 
   @override
   Widget build(BuildContext context) {
+    final application = widget.application;
+    final appState = (application?['state'] ?? '').toString();
+    final effectiveState = _state != 'none'
+        ? _state
+        : appState.isNotEmpty
+        ? appState
+        : _state;
+    final rejectReason = (application?['rejectReason'] ?? '').toString();
     if (!qfForumRewardVisible(
       post: widget.post,
       currentUserId: widget.session.userId,
     )) {
+      final userId = widget.session.userId;
+      final mine =
+          userId != null &&
+          userId > 0 &&
+          qfForumAuthorId(widget.post) == userId;
+      final statusText = qfForumRewardStatusText(
+        state: effectiveState,
+        rejectReason: rejectReason,
+      );
+      if (mine && statusText.isNotEmpty) {
+        return Align(alignment: Alignment.centerLeft, child: Text(statusText));
+      }
       return const SizedBox.shrink();
     }
-    final label = qfForumRewardStateLabel(_state);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         const Text(QfCopy.forumRewardExplain),
         const SizedBox(height: 8),
-        if (_state == 'none')
+        if (effectiveState == 'none')
           FilledButton(
             onPressed: _busy ? null : _apply,
             child: const Text('申请奖励'),
           )
         else
-          Text('奖励申请状态：$label'),
+          Text(
+            qfForumRewardStatusText(
+              state: effectiveState,
+              rejectReason: rejectReason,
+            ),
+          ),
       ],
     );
   }
@@ -367,6 +446,7 @@ class _QfForumPageState extends State<QfForumPage>
   bool _loadingMore = false;
   Map<String, dynamic>? _profile;
   Map<String, dynamic>? _meHome;
+  List<dynamic> _rewardApplications = const [];
   Map<String, dynamic>? _analytics;
   List<dynamic> _camps = const [];
   bool _meLoading = false;
@@ -397,6 +477,7 @@ class _QfForumPageState extends State<QfForumPage>
   bool get _readOnly => !widget.session.isLoggedIn;
 
   Future<void> _loadBoards() async {
+    if (!_readOnly) await widget.session.refreshCanAnnounce();
     try {
       final data = await widget.session.forumBoards();
       final boards = data['boards'];
@@ -460,6 +541,10 @@ class _QfForumPageState extends State<QfForumPage>
     try {
       final data = await widget.session.forumMeHome();
       if (mounted) setState(() => _meHome = data);
+    } catch (_) {}
+    try {
+      final applications = await widget.session.forumRewardApplications();
+      if (mounted) setState(() => _rewardApplications = applications);
     } catch (_) {
     } finally {
       if (mounted) setState(() => _meLoading = false);
@@ -524,8 +609,8 @@ class _QfForumPageState extends State<QfForumPage>
       await qfForumGuideLogin(context, widget.session);
       return;
     }
-    if (_board == 'announcements') {
-      qfToast(context, '公告板块仅管理员可以发帖');
+    if (_board == 'announcements' && !widget.session.canAnnounce) {
+      qfToast(context, QfCopy.forumAnnouncementForbidden);
       return;
     }
     final message = await Navigator.of(context).push<String>(
@@ -634,7 +719,10 @@ class _QfForumPageState extends State<QfForumPage>
           padding: const EdgeInsets.symmetric(horizontal: 12),
           child: Row(
             children: [
-              for (final raw in _boards)
+              for (final raw in qfForumVisibleBoards(
+                _boards,
+                canAnnounce: widget.session.canAnnounce,
+              ))
                 if (raw is Map)
                   Padding(
                     padding: const EdgeInsets.only(right: 8),
@@ -762,7 +850,14 @@ class _QfForumPageState extends State<QfForumPage>
             _postTile(raw),
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-              child: QfForumRewardSection(session: widget.session, post: raw),
+              child: QfForumRewardSection(
+                session: widget.session,
+                post: raw,
+                application: qfForumRewardApplicationFor(
+                  _rewardApplications,
+                  (raw['id'] as num).toInt(),
+                ),
+              ),
             ),
           ],
         );
@@ -786,7 +881,11 @@ class _QfForumPageState extends State<QfForumPage>
         if (raw is! Map) return const SizedBox.shrink();
         return ListTile(
           title: Text((raw['content'] ?? '').toString()),
-          subtitle: Text((raw['postTitle'] ?? '').toString()),
+          subtitle: Text(
+            '${raw['postTitle'] ?? ''}'
+            '${qfForumStatusLabel(raw).isEmpty ? '' : '\n${qfForumStatusLabel(raw)}'}'
+            '${(raw['modNote'] ?? '').toString().isEmpty ? '' : '\n审核备注：${raw['modNote']}'}',
+          ),
           onTap: () {
             final postId = (raw['postId'] as num?)?.toInt();
             if (postId == null) return;
@@ -1008,7 +1107,8 @@ class _QfComposePostPageState extends State<_QfComposePostPage> {
         qfToast(context, message);
         return;
       }
-      Navigator.of(context).pop(message);
+      final notice = qfForumPointsNotice(result);
+      Navigator.of(context).pop(notice.isEmpty ? message : '$message $notice');
     } on QfApiException catch (e) {
       if (mounted) qfToast(context, e.message);
     } finally {
@@ -1096,6 +1196,7 @@ class _QfForumPostPageState extends State<QfForumPostPage> {
   final _reply = TextEditingController();
   Map<String, dynamic>? _post;
   List<dynamic> _replies = const [];
+  List<dynamic> _rewardApplications = const [];
   bool _loading = true;
 
   @override
@@ -1113,8 +1214,15 @@ class _QfForumPostPageState extends State<QfForumPostPage> {
   Future<void> _load() async {
     try {
       final data = await widget.session.forumPostDetail(widget.postId);
+      var applications = _rewardApplications;
+      if (!widget.session.isGuest && widget.session.isLoggedIn) {
+        try {
+          applications = await widget.session.forumRewardApplications();
+        } catch (_) {}
+      }
       if (mounted) {
         setState(() {
+          _rewardApplications = applications;
           final post = data['post'];
           final replies = data['replies'];
           _post = post is Map ? Map<String, dynamic>.from(post) : null;
@@ -1149,7 +1257,8 @@ class _QfForumPostPageState extends State<QfForumPostPage> {
       }
       _reply.clear();
       if (mounted) {
-        qfToast(context, message);
+        final notice = qfForumPointsNotice(result);
+        qfToast(context, notice.isEmpty ? message : '$message $notice');
       }
       await _load();
     } on QfApiException catch (e) {
@@ -1251,6 +1360,8 @@ class _QfForumPostPageState extends State<QfForumPostPage> {
                       QfForumAuthorHeader(session: widget.session, raw: post),
                       if (qfForumStatusLabel(post).isNotEmpty)
                         Text(qfForumStatusLabel(post)),
+                      if ((post['modNote'] ?? '').toString().isNotEmpty)
+                        Text('审核备注：${post['modNote']}'),
                       const SizedBox(height: 12),
                       Text((post['content'] ?? '').toString()),
                       const SizedBox(height: 12),
@@ -1282,7 +1393,14 @@ class _QfForumPostPageState extends State<QfForumPostPage> {
                         ],
                       ),
                       const SizedBox(height: 12),
-                      QfForumRewardSection(session: widget.session, post: post),
+                      QfForumRewardSection(
+                        session: widget.session,
+                        post: post,
+                        application: qfForumRewardApplicationFor(
+                          _rewardApplications,
+                          widget.postId,
+                        ),
+                      ),
                       const Divider(height: 32),
                       for (final raw in _replies)
                         if (raw is Map)
@@ -1293,7 +1411,8 @@ class _QfForumPostPageState extends State<QfForumPostPage> {
                             ),
                             subtitle: Text(
                               '${raw['content'] ?? ''}'
-                              '${qfForumStatusLabel(raw).isEmpty ? '' : '\n${qfForumStatusLabel(raw)}'}',
+                              '${qfForumStatusLabel(raw).isEmpty ? '' : '\n${qfForumStatusLabel(raw)}'}'
+                              '${(raw['modNote'] ?? '').toString().isEmpty ? '' : '\n审核备注：${raw['modNote']}'}',
                             ),
                           ),
                     ],
@@ -1489,10 +1608,16 @@ class QfCampStatusBadge extends StatelessWidget {
 class QfCampFormPage extends StatefulWidget {
   final QfSessionController session;
   final Map<dynamic, dynamic>? camp;
+  final bool resubmit;
 
-  const QfCampFormPage({super.key, required this.session, this.camp});
+  const QfCampFormPage({
+    super.key,
+    required this.session,
+    this.camp,
+    this.resubmit = false,
+  });
 
-  bool get isEdit => camp != null;
+  bool get isEdit => camp != null && !resubmit;
 
   @override
   State<QfCampFormPage> createState() => _QfCampFormPageState();
@@ -1533,6 +1658,21 @@ class _QfCampFormPageState extends State<QfCampFormPage> {
       _outcome = null;
     });
     try {
+      if (widget.resubmit) {
+        final result = await widget.session.forumEditCamp(
+          (widget.camp!['id'] as num).toInt(),
+          name: name,
+          description: description,
+        );
+        if (!mounted) return;
+        final outcome = qfCampCreateOutcome(result);
+        setState(() => _outcome = outcome);
+        if (outcome.state != 'rejected') {
+          qfToast(context, outcome.text);
+          Navigator.of(context).pop(true);
+        }
+        return;
+      }
       if (widget.isEdit) {
         await widget.session.forumEditCamp(
           (widget.camp!['id'] as num).toInt(),
@@ -1566,7 +1706,13 @@ class _QfCampFormPageState extends State<QfCampFormPage> {
     final outcome = _outcome;
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.isEdit ? QfCopy.campEdit : QfCopy.campCreate),
+        title: Text(
+          widget.resubmit
+              ? QfCopy.campResubmit
+              : widget.isEdit
+              ? QfCopy.campEdit
+              : QfCopy.campCreate,
+        ),
       ),
       body: ListView(
         padding: const EdgeInsets.all(16),
@@ -1605,7 +1751,11 @@ class _QfCampFormPageState extends State<QfCampFormPage> {
           FilledButton(
             onPressed: _busy ? null : _submit,
             child: Text(
-              widget.isEdit ? QfCopy.campEditSubmit : QfCopy.campCreateSubmit,
+              widget.resubmit
+                  ? QfCopy.campResubmitSubmit
+                  : widget.isEdit
+                  ? QfCopy.campEditSubmit
+                  : QfCopy.campCreateSubmit,
             ),
           ),
         ],
@@ -1657,6 +1807,49 @@ class _QfMyCampsPageState extends State<QfMyCampsPage> {
     if (changed == true && mounted) await _load();
   }
 
+  Future<void> _resubmit(Map<dynamic, dynamic> camp) async {
+    final changed = await Navigator.of(context).push<bool>(
+      MaterialPageRoute<bool>(
+        builder: (_) => QfCampFormPage(
+          session: widget.session,
+          camp: Map<dynamic, dynamic>.from(camp),
+          resubmit: true,
+        ),
+      ),
+    );
+    if (changed == true && mounted) await _load();
+  }
+
+  Future<void> _delete(Map<dynamic, dynamic> camp) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text(QfCopy.campDeleteConfirmTitle),
+          content: const Text(QfCopy.campDeleteConfirmBody),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text(QfCopy.campDelete),
+            ),
+          ],
+        );
+      },
+    );
+    if (confirmed != true) return;
+    try {
+      await widget.session.forumDeleteCamp((camp['id'] as num).toInt());
+      if (mounted) qfToast(context, QfCopy.campDeleted);
+      await _load();
+    } on QfApiException catch (e) {
+      if (mounted) qfToast(context, e.message);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -1689,6 +1882,22 @@ class _QfMyCampsPageState extends State<QfMyCampsPage> {
                         Text('$memberCount${QfCopy.campMemberCountSuffix}'),
                       if (status == 'closed' && reason.isNotEmpty)
                         Text('${QfCopy.campCloseReasonPrefix}$reason'),
+                      if (qfCampCanResubmit(raw) || qfCampCanDelete(raw))
+                        Wrap(
+                          spacing: 8,
+                          children: [
+                            if (qfCampCanResubmit(raw))
+                              TextButton(
+                                onPressed: () => _resubmit(raw),
+                                child: const Text(QfCopy.campResubmit),
+                              ),
+                            if (qfCampCanDelete(raw))
+                              TextButton(
+                                onPressed: () => _delete(raw),
+                                child: const Text(QfCopy.campDelete),
+                              ),
+                          ],
+                        ),
                     ],
                   ),
                   trailing: QfCampStatusBadge(camp: raw),

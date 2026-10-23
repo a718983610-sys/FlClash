@@ -9,6 +9,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'qf_api.dart';
+import 'qf_http_client.dart';
 import 'qf_config.dart';
 
 enum QfMode { unknown, entry, user, guest }
@@ -47,6 +48,20 @@ String qfHeartbeatSignature({
   return mac
       .convert(utf8.encode('$seq|$clientTs|$trafficBytes|$envFlags'))
       .toString();
+}
+
+Map<String, dynamic> qfGoogleCompleteBody({
+  required String completionToken,
+  required String username,
+  required String password,
+  required Map<String, dynamic> device,
+}) {
+  return {
+    'completionToken': completionToken,
+    'username': username.trim(),
+    'password': password,
+    ...device,
+  };
 }
 
 class QfLoginOutcome {
@@ -417,6 +432,10 @@ class QfSessionController extends ChangeNotifier {
     await _syncGuestBlockedCore();
     _accountIncomplete = username == null || username!.isEmpty;
     notifyListeners();
+    final onAuthenticated = onAuthenticatedFn;
+    if (onAuthenticated != null) {
+      unawaited(Future<void>.sync(onAuthenticated).catchError((_) {}));
+    }
     await _refreshAccountCompleteness();
   }
 
@@ -435,6 +454,7 @@ class QfSessionController extends ChangeNotifier {
     pointsMe = null;
     accountDeleting = false;
     deletionEffectiveAt = null;
+    canAnnounce = false;
     _completionToken = null;
     _completionEmail = null;
     _stepUpToken = null;
@@ -731,6 +751,7 @@ class QfSessionController extends ChangeNotifier {
       userId = (me['id'] as num?)?.toInt() ?? userId;
       accountDeleting = me['status'] == 'deleting';
       deletionEffectiveAt = (me['deletionEffectiveAt'] as num?)?.toInt();
+      canAnnounce = me['canAnnounce'] == true || me['can_announce'] == true;
       final points = me['points'];
       if (points is Map) {
         pointsMe = {...(pointsMe ?? {}), ...Map<String, dynamic>.from(points)};
@@ -859,12 +880,12 @@ class QfSessionController extends ChangeNotifier {
       final data = await QfHttp.send(
         'POST',
         '$serverBaseUrl/auth/google/complete',
-        body: {
-          'completionToken': token,
-          'username': username.trim(),
-          'password': password,
-          ...device,
-        },
+        body: qfGoogleCompleteBody(
+          completionToken: token,
+          username: username,
+          password: password,
+          device: device,
+        ),
       );
       _completionToken = null;
       _completionEmail = null;
@@ -1475,6 +1496,44 @@ class QfSessionController extends ChangeNotifier {
     return devices is List ? devices : const [];
   }
 
+  Future<void> securityUntrustDevice(int deviceId) async {
+    await authed('POST', '/security/devices/$deviceId/untrust', body: {});
+  }
+
+  Future<void> deleteSettingsVault() async {
+    await authed('DELETE', '/me/settingsvault');
+  }
+
+  Future<void> refreshCanAnnounce() async {
+    if (mode != QfMode.user || _accessToken == null) return;
+    try {
+      final me = await authed(
+        'GET',
+        '/auth/me',
+      ).timeout(const Duration(seconds: 3));
+      if (me['canAnnounce'] is bool) canAnnounce = me['canAnnounce'] == true;
+    } catch (_) {}
+  }
+
+  Future<Map<String, dynamic>> chatBlobs({int limit = 30, int offset = 0}) {
+    return authed('GET', '/chat/blobs?limit=$limit&offset=$offset');
+  }
+
+  Future<void> redeemCancelOrder(int orderId) async {
+    await authed('POST', '/redeem/orders/$orderId/cancel', body: {});
+  }
+
+  Future<void> redeemChangePayoutAddress(
+    int orderId,
+    String payoutAddress,
+  ) async {
+    await authed(
+      'POST',
+      '/redeem/orders/$orderId/payout-address',
+      body: {'payoutAddress': payoutAddress.trim()},
+    );
+  }
+
   Future<void> submitFeedback({
     required String content,
     String? contact,
@@ -1621,6 +1680,16 @@ class QfSessionController extends ChangeNotifier {
       '/forum/camps/$campId/edit',
       body: {'name': ?name, 'description': ?description},
     );
+  }
+
+  Future<void> forumDeleteCamp(int campId) async {
+    await authed('DELETE', '/forum/camps/$campId');
+  }
+
+  Future<List<dynamic>> forumRewardApplications() async {
+    final data = await authed('GET', '/forum/me/reward-applications');
+    final applications = data['applications'];
+    return applications is List ? applications : const [];
   }
 
   Future<Map<String, dynamic>> forumCreateReply(int postId, String content) {

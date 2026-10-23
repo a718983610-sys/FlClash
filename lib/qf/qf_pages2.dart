@@ -4,6 +4,7 @@ import 'package:material_ui/material_ui.dart';
 
 import 'qf_api.dart';
 import 'qf_passkey.dart';
+import 'qf_recovery.dart';
 import 'qf_privacy.dart';
 import 'qf_config.dart';
 import 'qf_pages.dart';
@@ -68,6 +69,14 @@ class QfUpdateFlow {
         );
     }
   }
+}
+
+String qfDeviceTrustText(Map<dynamic, dynamic> device) {
+  if (device['trusted'] != true) return QfCopy.deviceUntrusted;
+  final verifiedAt = qfFormatEpochSeconds(device['verifiedAt']);
+  return verifiedAt.isEmpty
+      ? QfCopy.deviceTrusted
+      : '${QfCopy.deviceTrusted} · 最近验证 $verifiedAt';
 }
 
 class QfSecurityPage extends StatefulWidget {
@@ -378,22 +387,40 @@ class _QfSecurityPageState extends State<QfSecurityPage> {
                 Text('登录设备', style: AppTextStyle.headline.of(context)),
                 for (final raw in _devices)
                   if (raw is Map)
-                    ListTile(
-                      title: Text(
-                        '${raw['name'] ?? '未知设备'}'
-                        '${raw['isCurrent'] == true ? '（本机）' : ''}',
-                      ),
-                      subtitle: Text(
-                        '${_platformLabel(raw['platform'])}'
-                        '${raw['region'] ?? ''} · 最近活跃 '
-                        '${DateTime.fromMillisecondsSinceEpoch(((raw['lastActiveAt'] as num? ?? 0) * 1000).toInt())}',
-                      ),
-                      trailing: raw['isCurrent'] == true
-                          ? null
-                          : TextButton(
-                              onPressed: () => _logoutDevice(raw),
-                              child: const Text('下线'),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        ListTile(
+                          title: Text(
+                            '${raw['name'] ?? '未知设备'}'
+                            '${raw['isCurrent'] == true ? '（本机）' : ''}',
+                          ),
+                          subtitle: Text(
+                            '${_platformLabel(raw['platform'])}'
+                            '${raw['region'] ?? ''} · 最近活跃 '
+                            '${DateTime.fromMillisecondsSinceEpoch(((raw['lastActiveAt'] as num? ?? 0) * 1000).toInt())}'
+                            '\n${qfDeviceTrustText(raw)}',
+                          ),
+                        ),
+                        if (raw['isCurrent'] != true || raw['trusted'] == true)
+                          Padding(
+                            padding: const EdgeInsets.only(left: 8),
+                            child: Wrap(
+                              children: [
+                                if (raw['isCurrent'] != true)
+                                  TextButton(
+                                    onPressed: () => _logoutDevice(raw),
+                                    child: const Text('下线'),
+                                  ),
+                                if (raw['trusted'] == true)
+                                  TextButton(
+                                    onPressed: () => _untrustDevice(raw),
+                                    child: const Text(QfCopy.deviceUntrust),
+                                  ),
+                              ],
                             ),
+                          ),
+                      ],
                     ),
                 const Divider(),
                 Text('通行密钥', style: AppTextStyle.headline.of(context)),
@@ -773,7 +800,12 @@ class _QfChangePasswordDialogState extends State<_QfChangePasswordDialog> {
             oldPassword: _current.text,
             newPassword: _password.text,
           );
-          rewrapped = vaultOk && historyOk;
+          final keyBackupOk = await QfSignalManager.rewrapKeyBackup(
+            session: widget.session,
+            oldPassword: _current.text,
+            newPassword: _password.text,
+          );
+          rewrapped = vaultOk && historyOk && keyBackupOk;
         } catch (_) {
           rewrapped = false;
         }
@@ -865,7 +897,7 @@ class _QfChangePasswordDialogState extends State<_QfChangePasswordDialog> {
             if (_vaultFailed) ...[
               const SizedBox(height: 12),
               const Text(
-                '密码已修改，但云端保险库未能同步迁移，请重新备份订阅与聊天记录。',
+                '密码已修改，但云端保险库未能同步迁移（可能包括聊天密钥备份），请重新备份订阅、聊天记录与聊天密钥。',
                 style: TextStyle(color: Colors.red),
               ),
             ],
@@ -914,15 +946,6 @@ class _QfChangeEmailDialogState extends State<_QfChangeEmailDialog> {
     _oldCode.dispose();
     _newCode.dispose();
     super.dispose();
-  }
-
-  Future<void> _run(Future<void> Function() action) async {
-    try {
-      await action();
-      if (mounted) qfToast(context, '验证码发送成功，请查收邮箱');
-    } on QfApiException catch (e) {
-      if (mounted) qfToast(context, e.message);
-    }
   }
 
   Future<void> _submit() async {
@@ -1412,6 +1435,49 @@ class QfPrivacyPage extends StatelessWidget {
   }
 }
 
+String qfAppealStatusLabel(String status) {
+  return switch (status) {
+    'pending' => QfCopy.appealStatusPending,
+    'approved' => QfCopy.appealStatusApproved,
+    'rejected' => QfCopy.appealStatusRejected,
+    _ => status,
+  };
+}
+
+class QfAppealStatus {
+  final bool hasAppeal;
+  final String status;
+  final String reviewNote;
+  final int? reviewedAt;
+  final int? remaining;
+
+  const QfAppealStatus({
+    required this.hasAppeal,
+    required this.status,
+    required this.reviewNote,
+    required this.reviewedAt,
+    required this.remaining,
+  });
+
+  String get label => qfAppealStatusLabel(status);
+}
+
+QfAppealStatus qfParseAppealStatus(Map<String, dynamic> data) {
+  final appeal = data['appeal'];
+  final appealMap = appeal is Map ? appeal : null;
+  final status = (data['status'] ?? appealMap?['status'] ?? '').toString();
+  return QfAppealStatus(
+    hasAppeal: appealMap != null || status.isNotEmpty,
+    status: status,
+    reviewNote: (data['reviewNote'] ?? appealMap?['reviewNote'] ?? '')
+        .toString(),
+    reviewedAt:
+        (data['reviewedAt'] as num?)?.toInt() ??
+        (appealMap?['reviewedAt'] as num?)?.toInt(),
+    remaining: (data['remaining'] as num?)?.toInt(),
+  );
+}
+
 class QfAppealPage extends StatefulWidget {
   final String serverBaseUrl;
   final String initialAccount;
@@ -1437,6 +1503,10 @@ class _QfAppealPageState extends State<QfAppealPage> {
   String? _quotaError;
   bool _checking = false;
   bool _busy = false;
+  QfAppealStatus? _appealStatus;
+  String? _statusError;
+  bool _statusBusy = false;
+  bool _statusQueried = false;
 
   bool get _exhausted => _remaining != null && _remaining! <= 0;
 
@@ -1645,6 +1715,61 @@ class _QfAppealPageState extends State<QfAppealPage> {
           ),
           const SizedBox(height: 12),
           const Text('也可通过邮箱 a718983610@gmail.com 进行申诉。'),
+          const Divider(height: 32),
+          Text(
+            QfCopy.appealStatusTitle,
+            style: AppTextStyle.headline.of(context),
+          ),
+          const SizedBox(height: 8),
+          const Text('使用被封禁账户的账户 ID 或邮箱，配合登录密码或通行密钥核验后，即可查看最近一次申诉的审核结果。'),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              FilledButton(
+                onPressed: _statusBusy ? null : () => _queryStatus(),
+                child: const Text(QfCopy.appealStatusTitle),
+              ),
+              const SizedBox(width: 8),
+              OutlinedButton(
+                onPressed: _statusBusy
+                    ? null
+                    : () => _queryStatus(byPasskey: true),
+                child: const Text(QfCopy.appealPasskeyVerify),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          if (_statusBusy)
+            const Text('正在查询申诉结果……')
+          else if (_statusError != null)
+            Text(_statusError!, style: const TextStyle(color: Colors.red))
+          else if (_statusQueried && _appealStatus != null)
+            if (!_appealStatus!.hasAppeal)
+              const Text(QfCopy.appealStatusEmpty)
+            else
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('申诉状态：${_appealStatus!.label}'),
+                  if (_appealStatus!.reviewNote.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Text('审核说明：${_appealStatus!.reviewNote}'),
+                    ),
+                  if (_appealStatus!.reviewedAt != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Text(
+                        '审核时间：${qfFormatEpochSeconds(_appealStatus!.reviewedAt)}',
+                      ),
+                    ),
+                  if (_appealStatus!.remaining != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Text('剩余申诉次数：${_appealStatus!.remaining}'),
+                    ),
+                ],
+              ),
         ],
       ),
     );

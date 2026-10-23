@@ -19,6 +19,7 @@ import 'qf_providers.dart';
 import 'qf_recovery.dart';
 import 'qf_session.dart';
 import 'qf_social.dart';
+import 'qf_update.dart';
 
 void qfToast(BuildContext context, String message) {
   ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
@@ -224,7 +225,7 @@ class _QfEntryPageState extends State<QfEntryPage> {
     try {
       await widget.session.enterGuest();
     } on QfApiException catch (e) {
-      if (mounted) qfToast(context, e.message);
+      if (mounted) qfToast(context, qfGuestErrorMessage(e));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -403,22 +404,16 @@ class _QfLoginFormState extends State<QfLoginForm> {
     }
   }
 
-  Future<void> _resendStepUp() async {
-    try {
-      await widget.session.resendStepUp();
-      if (mounted) qfToast(context, '验证码已经重新发送至您的绑定邮箱');
-    } on QfApiException catch (e) {
-      if (mounted) qfToast(context, e.message);
-    }
+  Future<int?> _resendStepUp() async {
+    await widget.session.resendStepUp();
+    if (mounted) qfToast(context, '验证码已经重新发送至您的绑定邮箱');
+    return null;
   }
 
-  Future<void> _sendCode() async {
-    try {
-      await widget.session.loginRequestCode(_email.text);
-      if (mounted) qfToast(context, '验证码已经发到您的邮箱了');
-    } on QfApiException catch (e) {
-      if (mounted) qfToast(context, e.message);
-    }
+  Future<int?> _sendLoginCode() async {
+    await widget.session.loginRequestCode(_email.text);
+    if (mounted) qfToast(context, '验证码已经发到您的邮箱了');
+    return null;
   }
 
   Future<void> _submit() async {
@@ -644,7 +639,6 @@ class _QfLoginFormState extends State<QfLoginForm> {
 
   @override
   Widget build(BuildContext context) {
-    final googleReady = QfGoogleAuth.isConfigured;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -1263,6 +1257,12 @@ class _QfCompleteUsernameDialogState extends State<QfCompleteUsernameDialog> {
   }
 }
 
+String qfDeletionSubtitle(int? deletionEffectiveAt) {
+  final when = qfFormatEpochSeconds(deletionEffectiveAt);
+  if (when.isEmpty) return '冷静期结束前登录即可撤销注销';
+  return '注销将于 $when 生效，生效前登录即可撤销注销';
+}
+
 class QfMinePage extends StatelessWidget {
   final QfSessionController session;
 
@@ -1344,7 +1344,9 @@ class QfMinePage extends StatelessWidget {
                 Card(
                   child: ListTile(
                     title: const Text('账号正在注销冷静期内'),
-                    subtitle: const Text('冷静期结束前登录即可撤销注销'),
+                    subtitle: Text(
+                      qfDeletionSubtitle(session.deletionEffectiveAt),
+                    ),
                     trailing: TextButton(
                       onPressed: () async {
                         try {
@@ -1546,6 +1548,28 @@ class _QfMyQrCardState extends State<QfMyQrCard> {
   }
 }
 
+String qfPointsTypeLabel(String type) {
+  return switch (type) {
+    'earn_settle' => '计时结算',
+    'redeem' => '兑换扣分',
+    'redeem_freeze' => '兑换冻结',
+    'redeem_refund' => '兑换退回',
+    'redeem_confiscate' => '审核没收',
+    'redeem_confirm' => '审核确认',
+    'admin_clear' => '处置清分',
+    'admin_adjust' => '手工调整',
+    'forum_daily' => '论坛每日积分',
+    'forum_daily_reversal' => '论坛积分回冲',
+    'forum_milestone' => '论坛千赞奖励',
+    _ => type,
+  };
+}
+
+int qfPointsDailyRemaining({required int dailyCap, required int mintedToday}) {
+  final remaining = dailyCap - mintedToday;
+  return remaining > 0 ? remaining : 0;
+}
+
 class QfPointsPage extends StatefulWidget {
   final QfSessionController session;
 
@@ -1583,20 +1607,6 @@ class _QfPointsPageState extends State<QfPointsPage> {
     await widget.session.refreshPoints();
   }
 
-  String _typeLabel(String type) {
-    return switch (type) {
-      'earn_settle' => '计时结算',
-      'redeem' => '兑换扣分',
-      'redeem_freeze' => '兑换冻结',
-      'redeem_refund' => '兑换退回',
-      'redeem_confiscate' => '审核没收',
-      'redeem_confirm' => '审核确认',
-      'admin_clear' => '处置清分',
-      'admin_adjust' => '手工调整',
-      _ => type,
-    };
-  }
-
   @override
   Widget build(BuildContext context) {
     final points = widget.session.pointsMe;
@@ -1623,6 +1633,10 @@ class _QfPointsPageState extends State<QfPointsPage> {
                           '累计获得 ${points?['totalEarned'] ?? 0} 分 · '
                           '累计消费 ${points?['totalSpent'] ?? 0} 分 · '
                           '今日已获得 ${points?['mintedToday'] ?? 0} 分',
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          '今日还可累计 ${qfPointsDailyRemaining(dailyCap: (points?['dailyCap'] as num?)?.toInt() ?? (params?['dailyCapPoints'] as num?)?.toInt() ?? 8, mintedToday: (points?['mintedToday'] as num?)?.toInt() ?? 0)} 分',
                         ),
                         const SizedBox(height: 8),
                         LinearProgressIndicator(
@@ -1653,11 +1667,12 @@ class _QfPointsPageState extends State<QfPointsPage> {
                 for (final raw in _entries)
                   if (raw is Map)
                     ListTile(
-                      title: Text(_typeLabel((raw['type'] ?? '').toString())),
+                      title: Text(
+                        qfPointsTypeLabel((raw['type'] ?? '').toString()),
+                      ),
                       subtitle: Text(
-                        DateTime.fromMillisecondsSinceEpoch(
-                          ((raw['created_at'] as num? ?? 0) * 1000).toInt(),
-                        ).toString(),
+                        '${DateTime.fromMillisecondsSinceEpoch(((raw['created_at'] as num? ?? 0) * 1000).toInt())}'
+                        '${(raw['note'] ?? '').toString().isNotEmpty ? '\n${raw['note']}' : ''}',
                       ),
                       trailing: Text(
                         '${(raw['amount'] as num? ?? 0) > 0 ? '+' : ''}${raw['amount']}',
@@ -1677,6 +1692,35 @@ class _QfPointsPageState extends State<QfPointsPage> {
             ),
     );
   }
+}
+
+String qfStockLabel(Map<dynamic, dynamic> product) {
+  final status = (product['stockStatus'] ?? '').toString();
+  final stock = (product['stock'] as num?)?.toInt();
+  return switch (status) {
+    'sold_out' => '已售罄',
+    'low' => stock != null ? '仅剩 $stock 件' : '余量不多',
+    'manual' => '',
+    'in_stock' => '有货',
+    'out_of_stock' => '已售罄',
+    'low_stock' => '仅剩 ${stock ?? 0} 件',
+    _ => '有货',
+  };
+}
+
+bool qfStockSoldOut(Map<dynamic, dynamic> product) {
+  final status = (product['stockStatus'] ?? '').toString();
+  return status == 'sold_out' || status == 'out_of_stock';
+}
+
+bool qfOrderCancellable(Map<dynamic, dynamic> order) {
+  final status = (order['status'] ?? '').toString();
+  return status == 'pending_review' || status == 'pending_payout';
+}
+
+bool qfOrderCanChangePayoutAddress(Map<dynamic, dynamic> order) {
+  return (order['status'] ?? '').toString() == 'pending_review' &&
+      (order['payoutMethod'] ?? '').toString() == 'usdt';
 }
 
 class QfRedeemPage extends StatefulWidget {
@@ -1722,16 +1766,6 @@ class _QfRedeemPageState extends State<QfRedeemPage> {
     } catch (_) {
       if (mounted) setState(() => _loading = false);
     }
-  }
-
-  String _stockLabel(Map<dynamic, dynamic> product) {
-    final status = (product['stockStatus'] ?? '').toString();
-    final stock = (product['stock'] as num?)?.toInt() ?? 0;
-    return switch (status) {
-      'out_of_stock' => '已售罄',
-      'low_stock' => '仅剩 $stock 件',
-      _ => '有货',
-    };
   }
 
   Future<void> _redeem(Map<dynamic, dynamic> product) async {
@@ -1887,14 +1921,15 @@ class _QfRedeemPageState extends State<QfRedeemPage> {
                         title: Text((raw['name'] ?? '').toString()),
                         subtitle: Text(
                           '${raw['description'] ?? ''}\n'
-                          '${raw['pricePoints']} 积分 · ${_stockLabel(raw)}'
+                          '${raw['pricePoints']} 积分'
+                          '${qfStockLabel(raw).isEmpty ? '' : ' · ${qfStockLabel(raw)}'}'
                           '${raw['requiresReview'] == true ? ' · 需人工审核' : ''}',
                         ),
                         isThreeLine: true,
                         trailing: FilledButton(
                           onPressed:
                               _regionBlocked ||
-                                  _stockLabel(raw) == '已售罄' ||
+                                  qfStockSoldOut(raw) ||
                                   _balance <
                                       ((raw['pricePoints'] as num?)?.toInt() ??
                                           0)
@@ -1918,22 +1953,48 @@ class _QfRedeemPageState extends State<QfRedeemPage> {
                   ),
                 for (final raw in _orders)
                   if (raw is Map)
-                    ListTile(
-                      title: Text((raw['productName'] ?? '').toString()),
-                      subtitle: Text(
-                        '${_orderStatusLabel(raw)}'
-                        '${raw['payoutAddress'] != null ? '\n收款地址：${raw['payoutAddress']}' : ''}'
-                        '${raw['payoutEmail'] != null ? '\n通知邮箱：${raw['payoutEmail']}' : ''}'
-                        '${raw['paidAt'] != null ? '\n打款时间：${DateTime.fromMillisecondsSinceEpoch(((raw['paidAt'] as num) * 1000).toInt())}' : ''}'
-                        '${raw['paidTx'] != null && raw['paidTx'].toString().isNotEmpty ? '\n打款交易号：${raw['paidTx']}' : ''}'
-                        '${raw['reviewReason'] != null ? '\n驳回原因：${raw['reviewReason']}' : ''}',
-                      ),
-                      trailing: _canRevealCode(raw)
-                          ? TextButton(
-                              onPressed: () => _showReveal(raw),
-                              child: const Text('查看兑换码'),
-                            )
-                          : null,
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        ListTile(
+                          title: Text((raw['productName'] ?? '').toString()),
+                          subtitle: Text(
+                            '${_orderStatusLabel(raw)}'
+                            '${raw['payoutAddress'] != null ? '\n收款地址：${raw['payoutAddress']}' : ''}'
+                            '${raw['payoutEmail'] != null ? '\n通知邮箱：${raw['payoutEmail']}' : ''}'
+                            '${raw['paidAt'] != null ? '\n打款时间：${DateTime.fromMillisecondsSinceEpoch(((raw['paidAt'] as num) * 1000).toInt())}' : ''}'
+                            '${raw['paidTx'] != null && raw['paidTx'].toString().isNotEmpty ? '\n打款交易号：${raw['paidTx']}' : ''}'
+                            '${raw['reviewReason'] != null ? '\n驳回原因：${raw['reviewReason']}' : ''}',
+                          ),
+                          trailing: _canRevealCode(raw)
+                              ? TextButton(
+                                  onPressed: () => _showReveal(raw),
+                                  child: const Text('查看兑换码'),
+                                )
+                              : null,
+                        ),
+                        if (qfOrderCanChangePayoutAddress(raw) ||
+                            qfOrderCancellable(raw))
+                          Padding(
+                            padding: const EdgeInsets.only(left: 8),
+                            child: Wrap(
+                              children: [
+                                if (qfOrderCanChangePayoutAddress(raw))
+                                  TextButton(
+                                    onPressed: () => _changeOrderAddress(raw),
+                                    child: const Text(
+                                      QfCopy.orderChangeAddress,
+                                    ),
+                                  ),
+                                if (qfOrderCancellable(raw))
+                                  TextButton(
+                                    onPressed: () => _cancelOrder(raw),
+                                    child: const Text(QfCopy.orderCancel),
+                                  ),
+                              ],
+                            ),
+                          ),
+                      ],
                     ),
               ],
             ),
@@ -2118,9 +2179,7 @@ class _QfRevealCodeDialog extends StatefulWidget {
 class _QfRevealCodeDialogState extends State<_QfRevealCodeDialog> {
   final _password = TextEditingController();
   final _code = TextEditingController();
-  Timer? _cooldownTimer;
   Timer? _maskTimer;
-  int _cooldown = 0;
   String? _revealedCode;
   String? _reauthToken;
   bool _busy = false;

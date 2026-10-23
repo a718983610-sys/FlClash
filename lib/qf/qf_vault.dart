@@ -17,6 +17,7 @@ import '../models/models.dart';
 import '../providers/providers.dart';
 import '../ui/ui.dart';
 import 'qf_api.dart';
+import 'qf_config.dart';
 import 'qf_pages.dart';
 import 'qf_session.dart';
 
@@ -545,6 +546,17 @@ class QfVaultService {
     return prefs.getInt(_kLocalSettingsUpdatedAt) ?? 0;
   }
 
+  static Future<int> cloudSettingsUpdatedAt() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getInt(_kCloudSettingsUpdatedAt) ?? 0;
+  }
+
+  static Future<void> deleteSettingsBackup({required QfSession session}) async {
+    await session.deleteSettingsVault();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_kCloudSettingsUpdatedAt);
+  }
+
   static Future<void> noteLocalSettingsChanged() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt(_kLocalSettingsUpdatedAt, _nowSecs());
@@ -970,6 +982,19 @@ class _QfVaultEntryState extends ConsumerState<QfVaultEntry> {
     }
   }
 
+  Future<void> _openVaultPanel() async {
+    if (!widget.session.isLoggedIn) {
+      await _showLoginGuide();
+      return;
+    }
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (_) =>
+          _QfVaultSyncPanel(session: widget.session, onUnlock: _afterUnlock),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Row(
@@ -977,6 +1002,150 @@ class _QfVaultEntryState extends ConsumerState<QfVaultEntry> {
       children: [
         TextButton(onPressed: _openBackup, child: const Text('备份订阅')),
         TextButton(onPressed: _openRestore, child: const Text('恢复订阅')),
+        TextButton(
+          onPressed: _openVaultPanel,
+          child: const Text(QfCopy.vaultUnlockTitle),
+        ),
+      ],
+    );
+  }
+}
+
+class _QfVaultSyncPanel extends StatefulWidget {
+  final QfSessionController session;
+  final Future<void> Function(String password) onUnlock;
+
+  const _QfVaultSyncPanel({required this.session, required this.onUnlock});
+
+  @override
+  State<_QfVaultSyncPanel> createState() => _QfVaultSyncPanelState();
+}
+
+class _QfVaultSyncPanelState extends State<_QfVaultSyncPanel> {
+  final _password = TextEditingController();
+  bool _unlocked = QfVaultService.settingsUnlocked;
+  int _cloudUpdatedAt = 0;
+  bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _refresh();
+  }
+
+  @override
+  void dispose() {
+    _password.dispose();
+    super.dispose();
+  }
+
+  Future<void> _refresh() async {
+    final cloud = await QfVaultService.cloudSettingsUpdatedAt();
+    if (mounted) {
+      setState(() {
+        _unlocked = QfVaultService.settingsUnlocked;
+        _cloudUpdatedAt = cloud;
+      });
+    }
+  }
+
+  Future<void> _unlock() async {
+    if (_password.text.isEmpty) {
+      qfToast(context, '请输入账户密码');
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      await QfVaultService.unlockSettingsVault(
+        session: widget.session,
+        password: _password.text,
+      );
+      await widget.onUnlock(_password.text);
+      if (mounted) qfToast(context, QfCopy.vaultUnlockedState);
+      await _refresh();
+    } on QfVaultException catch (e) {
+      if (mounted) qfToast(context, e.message);
+    } on QfApiException catch (e) {
+      if (mounted) qfToast(context, e.message);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _clearCloud() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text(QfCopy.vaultClearSettings),
+          content: const Text(QfCopy.vaultClearSettingsConfirm),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('清除'),
+            ),
+          ],
+        );
+      },
+    );
+    if (confirmed != true) return;
+    setState(() => _busy = true);
+    try {
+      await QfVaultService.deleteSettingsBackup(session: widget.session);
+      if (mounted) qfToast(context, QfCopy.vaultSettingsCleared);
+      await _refresh();
+    } on QfApiException catch (e) {
+      if (mounted) qfToast(context, e.message);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text(QfCopy.vaultUnlockTitle),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              _unlocked ? QfCopy.vaultUnlockedState : QfCopy.vaultLockedState,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              _cloudUpdatedAt > 0
+                  ? '最近同步时间：${_formatVaultTime(_cloudUpdatedAt)}'
+                  : '最近同步时间：暂无云端备份',
+            ),
+            if (!_unlocked) ...[
+              const SizedBox(height: 12),
+              QfField(controller: _password, label: '账户密码', obscure: true),
+              const SizedBox(height: 12),
+              const QfVaultNotice(),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _busy ? null : _clearCloud,
+          child: const Text(QfCopy.vaultClearSettings),
+        ),
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('关闭'),
+        ),
+        if (!_unlocked)
+          FilledButton(
+            onPressed: _busy ? null : _unlock,
+            child: const Text(QfCopy.vaultUnlockTitle),
+          ),
       ],
     );
   }

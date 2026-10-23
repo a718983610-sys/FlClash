@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:fl_clash/ui/ui.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'qf_api.dart';
 import 'qf_config.dart';
@@ -198,6 +199,24 @@ String qfSupportHandoffNotice(Map<String, dynamic> data) {
   return notice.isNotEmpty ? notice : QfCopy.supportHandoffNotice;
 }
 
+const String qfSupportNotConfiguredNotice = '人工客服暂时无法转接，请稍后再试，或通过意见反馈联系我们。';
+
+String qfSupportHandoffNoticeText(Map<String, dynamic> data) {
+  if (data['supportConfigured'] == false) return qfSupportNotConfiguredNotice;
+  return qfSupportHandoffNotice(data);
+}
+
+QfSupportMessage? qfSupportLatestAgentMessage(List<QfSupportMessage> messages) {
+  for (final message in messages.reversed) {
+    if (!message.isUser && message.body.isNotEmpty) return message;
+  }
+  return null;
+}
+
+int qfSupportUnreadCount(List<QfSupportMessage> messages, int seenTs) {
+  return messages.where((m) => !m.isUser && m.ts > seenTs).length;
+}
+
 class QfSupportTicket {
   final String sessionId;
   final String userLabel;
@@ -263,7 +282,7 @@ Future<bool> qfSupportDeskVisible(QfSessionController session) async {
   }
 }
 
-class QfSupportContactTile extends StatelessWidget {
+class QfSupportContactTile extends StatefulWidget {
   final QfSessionController session;
   final Map<dynamic, dynamic> entry;
 
@@ -274,6 +293,54 @@ class QfSupportContactTile extends StatelessWidget {
   });
 
   @override
+  State<QfSupportContactTile> createState() => _QfSupportContactTileState();
+}
+
+class _QfSupportContactTileState extends State<QfSupportContactTile> {
+  static const String _seenKey = 'qf_support_seen_latest_ts';
+  String? _latestSummary;
+  int _unread = 0;
+  int _latestTs = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final data = await widget.session.supportSession();
+      final messages = qfSupportParseMessages(data);
+      final latest = qfSupportLatestAgentMessage(messages);
+      final prefs = await SharedPreferences.getInstance();
+      final seenTs = prefs.getInt(_seenKey) ?? 0;
+      if (mounted) {
+        setState(() {
+          _latestSummary = latest?.body;
+          _latestTs = latest?.ts ?? 0;
+          _unread = qfSupportUnreadCount(messages, seenTs);
+        });
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _open() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (_latestTs > 0) await prefs.setInt(_seenKey, _latestTs);
+    } catch (_) {}
+    if (!mounted) return;
+    setState(() => _unread = 0);
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => QfSupportPage(session: widget.session),
+      ),
+    );
+    await _load();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return ListTile(
       key: const ValueKey('qf-support-contact'),
@@ -282,7 +349,9 @@ class QfSupportContactTile extends StatelessWidget {
       ),
       title: Row(
         children: [
-          Text((entry['displayName'] ?? QfCopy.supportBotName).toString()),
+          Text(
+            (widget.entry['displayName'] ?? QfCopy.supportBotName).toString(),
+          ),
           const SizedBox(width: 8),
           Text(
             '系统',
@@ -292,15 +361,37 @@ class QfSupportContactTile extends StatelessWidget {
           ),
         ],
       ),
-      subtitle: const Text('智能客服 · 自动回复，点击进入客服会话'),
-      trailing: const GlyphIcon(AppGlyphs.pin, size: 16),
-      onTap: () {
-        Navigator.of(context).push(
-          MaterialPageRoute<void>(
-            builder: (_) => QfSupportPage(session: session),
-          ),
-        );
-      },
+      subtitle: Text(
+        _latestSummary == null || _latestSummary!.isEmpty
+            ? '智能客服 · 自动回复，点击进入客服会话'
+            : _latestSummary!,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (_unread > 0)
+            DecoratedBox(
+              decoration: ShapeDecoration(
+                color: Theme.of(context).colorScheme.error,
+                shape: AppShape.full,
+              ),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                child: Text(
+                  _unread > 99 ? '99+' : '$_unread',
+                  style: AppTextStyle.caption2
+                      .of(context)
+                      .copyWith(color: Theme.of(context).colorScheme.onError),
+                ),
+              ),
+            ),
+          const SizedBox(width: 4),
+          const GlyphIcon(AppGlyphs.pin, size: 16),
+        ],
+      ),
+      onTap: _open,
     );
   }
 }
@@ -489,7 +580,7 @@ class _QfSupportPageState extends State<QfSupportPage> {
   Future<void> _handoff() async {
     try {
       final data = await widget.session.supportHandoff(_sessionId);
-      final notice = qfSupportHandoffNotice(data);
+      final notice = qfSupportHandoffNoticeText(data);
       final sessionId = qfSupportParseSessionId(data);
       if (mounted) {
         setState(() {

@@ -107,6 +107,8 @@ class _FakeForumSession extends QfSessionController {
   Map<String, dynamic>? lastCreate;
   Map<String, dynamic> myCampsData = {'camps': <dynamic>[]};
   Map<String, dynamic>? lastEdit;
+  List<int> deletedCamps = [];
+  List<dynamic> rewardApplicationsData = [];
 
   @override
   Future<Map<String, dynamic>> forumCampDetail(int campId) async {
@@ -137,6 +139,17 @@ class _FakeForumSession extends QfSessionController {
   }) async {
     lastEdit = {'id': campId, 'name': name, 'description': description};
     return {'ok': true, 'pendingReview': true};
+  }
+
+  @override
+  Future<Map<String, dynamic>> forumDeleteCamp(int campId) async {
+    deletedCamps.add(campId);
+    return {'ok': true};
+  }
+
+  @override
+  Future<List<dynamic>> forumRewardApplications() async {
+    return rewardApplicationsData;
   }
 
   @override
@@ -555,5 +568,148 @@ void main() {
     await tester.tap(find.byType(DropdownButtonFormField<int?>));
     await tester.pumpAndSettle();
     expect(find.text('测试营地'), findsWidgets);
+  });
+
+  group('camp delete and resubmit (L-03)', () {
+    test('status helpers gate delete and resubmit by camp status', () {
+      expect(qfCampCanDelete({'status': 'rejected'}), isTrue);
+      expect(qfCampCanDelete({'status': 'pending'}), isTrue);
+      expect(qfCampCanDelete({'status': 'active'}), isFalse);
+      expect(qfCampCanResubmit({'status': 'rejected'}), isTrue);
+      expect(qfCampCanResubmit({'status': 'pending'}), isFalse);
+      expect(qfCampCanResubmit({'status': 'active'}), isFalse);
+    });
+
+    testWidgets('rejected camp offers resubmit and delete with confirm', (
+      tester,
+    ) async {
+      final session = _FakeForumSession(loggedIn: true, currentUserId: 7);
+      session.myCampsData = {
+        'camps': [
+          {
+            'id': 8,
+            'name': '被驳营地',
+            'description': '旧说明',
+            'status': 'rejected',
+            'reviewNote': '名称不合规',
+          },
+        ],
+      };
+      await tester.pumpWidget(_wrap(QfMyCampsPage(session: session)));
+      await tester.pumpAndSettle();
+      expect(find.text(QfCopy.campResubmit), findsOneWidget);
+      expect(find.text(QfCopy.campDelete), findsOneWidget);
+      await tester.tap(find.text(QfCopy.campDelete));
+      await tester.pumpAndSettle();
+      expect(find.text(QfCopy.campDeleteConfirmBody), findsOneWidget);
+      await tester.tap(find.widgetWithText(FilledButton, QfCopy.campDelete));
+      await tester.pumpAndSettle();
+      expect(session.deletedCamps, [8]);
+    });
+
+    testWidgets('pending camp can be deleted but not resubmitted', (
+      tester,
+    ) async {
+      final session = _FakeForumSession(loggedIn: true, currentUserId: 7);
+      session.myCampsData = {
+        'camps': [
+          {'id': 9, 'name': '待审营地', 'description': '说明', 'status': 'pending'},
+        ],
+      };
+      await tester.pumpWidget(_wrap(QfMyCampsPage(session: session)));
+      await tester.pumpAndSettle();
+      expect(find.text(QfCopy.campDelete), findsOneWidget);
+      expect(find.text(QfCopy.campResubmit), findsNothing);
+    });
+
+    testWidgets('resubmit opens edit form and submits through edit', (
+      tester,
+    ) async {
+      final session = _FakeForumSession(loggedIn: true, currentUserId: 7);
+      session.myCampsData = {
+        'camps': [
+          {'id': 8, 'name': '被驳营地', 'description': '旧说明', 'status': 'rejected'},
+        ],
+      };
+      await tester.pumpWidget(_wrap(QfMyCampsPage(session: session)));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(QfCopy.campResubmit));
+      await tester.pumpAndSettle();
+      expect(find.text(QfCopy.campResubmitSubmit), findsOneWidget);
+      expect(find.widgetWithText(TextField, '被驳营地'), findsOneWidget);
+      await tester.tap(find.text(QfCopy.campResubmitSubmit));
+      await tester.pumpAndSettle();
+      expect(session.lastEdit?['id'], 8);
+      expect(session.lastEdit?['name'], '被驳营地');
+      expect(find.byType(QfMyCampsPage), findsOneWidget);
+    });
+  });
+
+  group('announcement board gate (G14) and reward state (G1 forum)', () {
+    test('boards without announce permission hide announcements', () {
+      const boards = [
+        {'key': 'general', 'name': '综合讨论'},
+        {'key': 'announcements', 'name': '公告'},
+      ];
+      expect(qfForumVisibleBoards(boards, canAnnounce: false), hasLength(1));
+      expect(qfForumVisibleBoards(boards, canAnnounce: true), hasLength(2));
+    });
+
+    test('forum points notice covers granted and already granted', () {
+      expect(
+        qfForumPointsNotice({
+          'forumPoints': {'granted': true, 'reason': 'ok'},
+        }),
+        '本次发布已获得论坛积分。',
+      );
+      expect(
+        qfForumPointsNotice({
+          'forumPoints': {'granted': false, 'reason': 'already_granted_today'},
+        }),
+        '今日论坛积分已获得。',
+      );
+      expect(qfForumPointsNotice({}), '');
+      expect(
+        qfForumPointsNotice({
+          'forumPoints': {'granted': false, 'reason': 'other'},
+        }),
+        '',
+      );
+    });
+
+    test('reward application lookup and status text', () {
+      final applications = [
+        {'postId': 3, 'state': 'pending', 'rejectReason': ''},
+        {'postId': 4, 'state': 'rejected', 'rejectReason': '内容质量不足'},
+        {'postId': 5, 'state': 'approved', 'rejectReason': ''},
+      ];
+      expect(
+        qfForumRewardApplicationFor(applications, 4)?['state'],
+        'rejected',
+      );
+      expect(qfForumRewardApplicationFor(applications, 99), isNull);
+      expect(qfForumRewardStatusText(state: 'pending'), '奖励申请状态：审核中');
+      expect(qfForumRewardStatusText(state: 'approved'), '奖励申请状态：已发放');
+      expect(
+        qfForumRewardStatusText(state: 'rejected', rejectReason: '内容质量不足'),
+        '奖励申请状态：已驳回（内容质量不足）',
+      );
+      expect(qfForumRewardStatusText(state: 'unknown'), '');
+    });
+
+    testWidgets('post detail shows reward state for own below-threshold post', (
+      tester,
+    ) async {
+      final session = _FakeForumSession(loggedIn: true, currentUserId: 7);
+      session.detailPost = _post(id: 4, authorId: 7, likeCount: 12);
+      session.rewardApplicationsData = [
+        {'postId': 4, 'state': 'rejected', 'rejectReason': '内容质量不足'},
+      ];
+      await tester.pumpWidget(
+        _wrap(QfForumPostPage(session: session, postId: 4)),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('奖励申请状态：已驳回（内容质量不足）'), findsOneWidget);
+    });
   });
 }
