@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'package:fl_clash/views/profiles/add.dart';
 
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/core/core.dart';
@@ -73,6 +74,12 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
             )
           : null,
       iconActions: [
+        if (!editing)
+          IconButtonData(
+            glyph: AppGlyphs.add,
+            tooltip: '导入订阅',
+            onPressed: () => showAddProfilePage(context),
+          ),
         if (editable && !editing)
           IconButtonData(
             glyph: AppGlyphs.edit,

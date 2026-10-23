@@ -17,6 +17,9 @@ extension PageLabelL10n on PageLabel {
       PageLabel.resources => appLocalizations.resources,
       PageLabel.connections => appLocalizations.liveConnections,
       PageLabel.dns => appLocalizations.dnsQueries,
+      PageLabel.forum => '论坛',
+      PageLabel.friends => '好友',
+      PageLabel.mine => '我的',
     };
   }
 }

@@ -548,6 +548,9 @@ enum PageLabel {
   resources,
   connections,
   dns,
+  forum,
+  friends,
+  mine,
 }
 
 enum RuleAction {

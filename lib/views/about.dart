@@ -2,6 +2,9 @@ import 'dart:async';
 
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/enum/enum.dart';
+import 'package:fl_clash/qf/qf_info.dart';
+import 'package:fl_clash/qf/qf_pages2.dart';
+import 'package:fl_clash/qf/qf_providers.dart';
 import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/state.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
@@ -26,17 +29,7 @@ class AboutView extends ConsumerWidget {
   ];
 
   Future<void> _checkUpdate(BuildContext context, WidgetRef ref) async {
-    if (ref.read(loadingProvider(LoadingTag.checkUpdate))) return;
-    final commonAction = ref.read(commonActionProvider.notifier);
-    final result = await globalState.loadingRun(
-      () async => (release: await request.checkForUpdate()),
-      title: context.appLocalizations.checkUpdate,
-      tag: LoadingTag.checkUpdate,
-    );
-    if (result == null) return;
-    unawaited(
-      commonAction.checkUpdateResultHandle(data: result.release, isUser: true),
-    );
+    await QfUpdateFlow.runManualCheck(context);
   }
 
   Widget _buildLinkItem({
@@ -104,6 +97,36 @@ class AboutView extends ConsumerWidget {
                 title: 'Telegram',
                 url: 'https://t.me/FlClash',
                 label: 't.me/FlClash',
+              ),
+            ],
+          ),
+          generateSection(
+            title: '服务',
+            items: [
+              ListItem(
+                leading: const _LinkBadge(glyph: AppGlyphs.send),
+                title: const Text('意见反馈'),
+                subtitle: const Text('问题与建议将直达维护团队'),
+                onTap: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => QfFeedbackPage(
+                        session: ProviderScope.containerOf(
+                          context,
+                        ).read(qfSessionProvider),
+                      ),
+                    ),
+                  );
+                },
+              ),
+              ListItem(
+                leading: const _LinkBadge(glyph: AppGlyphs.sync),
+                title: const Text('检查更新'),
+                subtitle: const Text('应用内检查并下载新版本'),
+                trailing: const QfInfoButton(topic: 'checkUpdate'),
+                onTap: () {
+                  _checkUpdate(context, ref);
+                },
               ),
             ],
           ),

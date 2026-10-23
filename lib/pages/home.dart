@@ -1,5 +1,8 @@
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/enum/enum.dart';
+import 'package:fl_clash/qf/qf_pages2.dart';
+import 'package:fl_clash/qf/qf_providers.dart';
+import 'package:fl_clash/views/about.dart';
 import 'package:fl_clash/manager/app_manager.dart';
 import 'package:fl_clash/models/common.dart';
 import 'package:fl_clash/providers/providers.dart';
@@ -37,7 +40,9 @@ class HomePage extends ConsumerWidget {
                     key: ValueKey(navigationItem.label),
                     item: navigationItem,
                     isMobile: isMobile,
-                    view: navigationItem.builder(context),
+                    view:
+                        _qfGuestSubstitute(context, ref, navigationItem) ??
+                        navigationItem.builder(context),
                   );
                 },
               );
@@ -441,4 +446,38 @@ class HomeBackScopeContainer extends ConsumerWidget {
       child: child,
     );
   }
+}
+
+
+Widget? _qfGuestSubstitute(
+  BuildContext context,
+  WidgetRef ref,
+  NavigationItem navigationItem,
+) {
+  final session = ref.read(qfSessionProvider);
+  if (!session.isGuest) return null;
+  const allowed = {
+    PageLabel.dashboard,
+    PageLabel.proxies,
+    PageLabel.profiles,
+    PageLabel.connections,
+  };
+  if (allowed.contains(navigationItem.label)) return null;
+  if (navigationItem.label == PageLabel.forum ||
+      navigationItem.label == PageLabel.friends ||
+      navigationItem.label == PageLabel.mine) {
+    return QfLoginGuidePage(
+      title: navigationItem.label.label,
+      onLogin: () => session.exitGuestToEntry(),
+    );
+  }
+  return QfRestrictedPage(
+    onLogin: () => session.exitGuestToEntry(),
+    onAbout: () {
+      Navigator.of(context).push(
+        MaterialPageRoute<void>(builder: (_) => const AboutView()),
+      );
+    },
+    onCheckUpdate: () => QfUpdateFlow.runManualCheck(context),
+  );
 }
