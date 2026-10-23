@@ -55,15 +55,7 @@ jobs:
         shell: pwsh
         run: dart setup.dart windows --env stable
 
-      - name: Upload artifact (TEMP draft-only test build)
-        uses: actions/upload-artifact@v4
-        with:
-          name: qfclash-windows
-          path: ./dist
-          overwrite: true
-
       - name: Publish exe and zip to Release
-        if: false # TEMP: draft-only test build 2026-10-24, publish disabled; reverted after run
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}

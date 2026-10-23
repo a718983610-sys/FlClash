@@ -93,7 +93,6 @@ jobs:
           overwrite: true
 
       - name: Publish APK to Release
-        if: false # TEMP: draft-only test build 2026-10-24, publish disabled; reverted after run
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
