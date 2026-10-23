@@ -1212,11 +1212,69 @@ class QfSessionController extends ChangeNotifier {
     required String board,
     required String title,
     required String content,
+    int? campId,
   }) {
     return authed(
       'POST',
       '/forum/posts',
-      body: {'board': board, 'title': title, 'content': content},
+      body: {
+        'board': board,
+        'title': title,
+        'content': content,
+        if (campId != null) 'campId': campId,
+      },
+    );
+  }
+
+  Future<Map<String, dynamic>> forumLikePost(int postId, bool liked) {
+    return authed('POST', '/forum/posts/$postId/like', body: {'liked': liked});
+  }
+
+  Future<Map<String, dynamic>> forumSharePost(int postId) {
+    return authed('POST', '/forum/posts/$postId/share', body: {});
+  }
+
+  Future<void> forumApplyReward(int postId) async {
+    await authed('POST', '/forum/posts/$postId/reward-applications', body: {});
+  }
+
+  Future<Map<String, dynamic>> forumUserProfile(int userId) {
+    return QfHttp.send(
+      'GET',
+      '$serverBaseUrl/forum/users/$userId/profile',
+      bearer: _accessToken,
+    );
+  }
+
+  Future<Map<String, dynamic>> forumMeHome() {
+    return authed('GET', '/forum/me/forum-home');
+  }
+
+  Future<Map<String, dynamic>> forumAnalytics() {
+    return authed('GET', '/forum/me/analytics');
+  }
+
+  Future<Map<String, dynamic>> forumCamps() {
+    return QfHttp.send(
+      'GET',
+      '$serverBaseUrl/forum/camps',
+      bearer: _accessToken,
+    );
+  }
+
+  Future<Map<String, dynamic>> forumCampDetail(int campId) {
+    return QfHttp.send(
+      'GET',
+      '$serverBaseUrl/forum/camps/$campId',
+      bearer: _accessToken,
+    );
+  }
+
+  Future<Map<String, dynamic>> forumJoinCamp(int campId, bool joined) {
+    return authed(
+      'POST',
+      '/forum/camps/$campId/join',
+      body: {'joined': joined},
     );
   }
 

@@ -1,16 +1,76 @@
+import 'dart:async';
+
 import 'package:fl_clash/ui/ui.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
+import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
 import 'qf_api.dart';
+import 'qf_config.dart';
 import 'qf_pages.dart';
 import 'qf_session.dart';
+import 'qf_social.dart';
 
 /// 帖子/回复的作者名：服务端 postView/replyView 统一回 author:{userId, name}。
 String qfForumAuthorName(Map<dynamic, dynamic> raw) {
   final author = raw['author'];
   if (author is Map) return (author['name'] ?? '').toString();
   return '';
+}
+
+int qfForumAuthorId(Map<dynamic, dynamic> raw) {
+  final author = raw['author'];
+  if (author is Map) return (author['userId'] as num?)?.toInt() ?? 0;
+  return 0;
+}
+
+bool? qfForumAuthorHasAvatar(Map<dynamic, dynamic> raw) {
+  final author = raw['author'];
+  if (author is Map && author['hasAvatar'] is bool) {
+    return author['hasAvatar'] as bool;
+  }
+  return null;
+}
+
+int qfForumCount(Map<dynamic, dynamic> raw, String key) {
+  return (raw[key] as num?)?.toInt() ?? 0;
+}
+
+String qfForumCountsText(Map<dynamic, dynamic> raw) {
+  return '赞 ${qfForumCount(raw, 'likeCount')} · '
+      '分享 ${qfForumCount(raw, 'shareCount')} · '
+      '浏览 ${qfForumCount(raw, 'viewCount')} · '
+      '回复 ${qfForumCount(raw, 'replyCount')}';
+}
+
+bool qfForumRewardVisible({
+  required Map<dynamic, dynamic> post,
+  required int? currentUserId,
+}) {
+  if (currentUserId == null || currentUserId <= 0) return false;
+  if (qfForumAuthorId(post) != currentUserId) return false;
+  if (qfForumCount(post, 'likeCount') < 1000) return false;
+  final reward = post['reward'];
+  return reward is Map && reward['eligible'] == true;
+}
+
+String qfForumRewardState(Map<dynamic, dynamic> post) {
+  final reward = post['reward'];
+  if (reward is Map) return (reward['state'] ?? 'none').toString();
+  return 'none';
+}
+
+String qfForumRewardStateLabel(String state) {
+  return switch (state) {
+    'pending' => QfCopy.forumRewardPending,
+    'approved' => QfCopy.forumRewardApproved,
+    'rejected' => QfCopy.forumRewardRejected,
+    _ => '',
+  };
+}
+
+String qfForumPostLink(String serverBaseUrl, int postId) {
+  return '$serverBaseUrl/forum/posts/$postId';
 }
 
 String _qfFormatSec(int sec) {
@@ -49,6 +109,132 @@ Future<void> qfForumGuideLogin(
   }
 }
 
+void qfOpenForumAuthor(
+  BuildContext context,
+  QfSessionController session,
+  Map<dynamic, dynamic> raw,
+) {
+  final userId = qfForumAuthorId(raw);
+  if (userId <= 0) return;
+  Navigator.of(context).push(
+    MaterialPageRoute<void>(
+      builder: (_) => QfForumUserPage(session: session, userId: userId),
+    ),
+  );
+}
+
+class QfForumAuthorHeader extends StatelessWidget {
+  final QfSessionController session;
+  final Map<dynamic, dynamic> raw;
+  final bool tappable;
+
+  const QfForumAuthorHeader({
+    super.key,
+    required this.session,
+    required this.raw,
+    this.tappable = true,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final name = qfForumAuthorName(raw);
+    return InkWell(
+      customBorder: AppShape.md,
+      onTap: tappable ? () => qfOpenForumAuthor(context, session, raw) : null,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          QfAvatarImage(
+            session: session,
+            userId: qfForumAuthorId(raw),
+            name: name,
+            hasAvatar: qfForumAuthorHasAvatar(raw),
+            radius: 14,
+          ),
+          const SizedBox(width: 8),
+          Flexible(child: Text(name)),
+        ],
+      ),
+    );
+  }
+}
+
+class QfForumCountsLine extends StatelessWidget {
+  final Map<dynamic, dynamic> raw;
+
+  const QfForumCountsLine({super.key, required this.raw});
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(qfForumCountsText(raw));
+  }
+}
+
+class QfForumRewardSection extends StatefulWidget {
+  final QfSessionController session;
+  final Map<dynamic, dynamic> post;
+
+  const QfForumRewardSection({
+    super.key,
+    required this.session,
+    required this.post,
+  });
+
+  @override
+  State<QfForumRewardSection> createState() => _QfForumRewardSectionState();
+}
+
+class _QfForumRewardSectionState extends State<QfForumRewardSection> {
+  late String _state;
+  bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _state = qfForumRewardState(widget.post);
+  }
+
+  Future<void> _apply() async {
+    setState(() => _busy = true);
+    try {
+      await widget.session.forumApplyReward((widget.post['id'] as num).toInt());
+      if (mounted) {
+        setState(() => _state = 'pending');
+        qfToast(context, '奖励申请已经提交，请等待审核');
+      }
+    } on QfApiException catch (e) {
+      if (mounted) qfToast(context, e.message);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!qfForumRewardVisible(
+      post: widget.post,
+      currentUserId: widget.session.userId,
+    )) {
+      return const SizedBox.shrink();
+    }
+    final label = qfForumRewardStateLabel(_state);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Text(QfCopy.forumRewardExplain),
+        const SizedBox(height: 8),
+        if (_state == 'none')
+          FilledButton(
+            onPressed: _busy ? null : _apply,
+            child: const Text('申请奖励'),
+          )
+        else
+          Text('奖励申请状态：$label'),
+      ],
+    );
+  }
+}
+
 class QfForumPage extends StatefulWidget {
   final QfSessionController session;
 
@@ -58,18 +244,41 @@ class QfForumPage extends StatefulWidget {
   State<QfForumPage> createState() => _QfForumPageState();
 }
 
-class _QfForumPageState extends State<QfForumPage> {
+class _QfForumPageState extends State<QfForumPage>
+    with SingleTickerProviderStateMixin {
+  late final TabController _tabs;
   List<dynamic> _boards = const [];
   String _board = 'general';
   List<dynamic> _posts = const [];
   bool _loading = true;
   bool _loadingMore = false;
   Map<String, dynamic>? _profile;
+  Map<String, dynamic>? _meHome;
+  Map<String, dynamic>? _analytics;
+  List<dynamic> _camps = const [];
+  bool _meLoading = false;
+  bool _analyticsLoading = false;
 
   @override
   void initState() {
     super.initState();
+    _tabs = TabController(length: 4, vsync: this);
+    _tabs.addListener(_onTabChanged);
     _loadBoards();
+  }
+
+  @override
+  void dispose() {
+    _tabs.removeListener(_onTabChanged);
+    _tabs.dispose();
+    super.dispose();
+  }
+
+  void _onTabChanged() {
+    if (_tabs.indexIsChanging || !mounted) return;
+    setState(() {});
+    if (_tabs.index == 1 || _tabs.index == 2) unawaited(_loadMeHome());
+    if (_tabs.index == 3) unawaited(_loadAnalytics());
   }
 
   bool get _readOnly => !widget.session.isLoggedIn;
@@ -80,6 +289,13 @@ class _QfForumPageState extends State<QfForumPage> {
       final boards = data['boards'];
       if (mounted) {
         setState(() => _boards = boards is List ? boards : const []);
+      }
+    } catch (_) {}
+    try {
+      final data = await widget.session.forumCamps();
+      final camps = data['camps'];
+      if (mounted) {
+        setState(() => _camps = camps is List ? camps : const []);
       }
     } catch (_) {}
     if (!_readOnly) {
@@ -122,6 +338,30 @@ class _QfForumPageState extends State<QfForumPage> {
           _loadingMore = false;
         });
       }
+    }
+  }
+
+  Future<void> _loadMeHome() async {
+    if (_readOnly || _meLoading) return;
+    setState(() => _meLoading = true);
+    try {
+      final data = await widget.session.forumMeHome();
+      if (mounted) setState(() => _meHome = data);
+    } catch (_) {
+    } finally {
+      if (mounted) setState(() => _meLoading = false);
+    }
+  }
+
+  Future<void> _loadAnalytics() async {
+    if (_readOnly || _analyticsLoading) return;
+    setState(() => _analyticsLoading = true);
+    try {
+      final data = await widget.session.forumAnalytics();
+      if (mounted) setState(() => _analytics = data);
+    } catch (_) {
+    } finally {
+      if (mounted) setState(() => _analyticsLoading = false);
     }
   }
 
@@ -207,6 +447,328 @@ class _QfForumPageState extends State<QfForumPage> {
     );
   }
 
+  Widget _identityHeader() {
+    if (_readOnly) {
+      return const Padding(
+        key: ValueKey('qf-forum-identity'),
+        padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
+        child: Column(
+          children: [
+            CircleAvatar(radius: 28, child: Text('?')),
+            SizedBox(height: 8),
+            Text('未登录'),
+          ],
+        ),
+      );
+    }
+    final nickname = (_profile?['nickname'] ?? widget.session.username ?? '')
+        .toString();
+    final displayName = nickname.isEmpty ? '已登录用户' : nickname;
+    final accountId = (widget.session.username ?? '').toString();
+    return Padding(
+      key: const ValueKey('qf-forum-identity'),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+      child: Column(
+        children: [
+          QfAvatarImage(
+            session: widget.session,
+            userId: widget.session.userId,
+            name: displayName,
+            radius: 28,
+          ),
+          const SizedBox(height: 8),
+          Text(displayName),
+          if (accountId.isNotEmpty)
+            Text(accountId, style: AppTextStyle.caption1.of(context)),
+        ],
+      ),
+    );
+  }
+
+  Widget _postTile(Map<dynamic, dynamic> raw) {
+    return ListTile(
+      title: Text((raw['title'] ?? '').toString()),
+      subtitle: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          QfForumAuthorHeader(session: widget.session, raw: raw),
+          QfForumCountsLine(raw: raw),
+        ],
+      ),
+      onTap: () async {
+        await Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => QfForumPostPage(
+              session: widget.session,
+              postId: (raw['id'] as num).toInt(),
+            ),
+          ),
+        );
+        if (mounted) await _loadPosts(reset: true);
+      },
+    );
+  }
+
+  Widget _homeTab() {
+    final recommended = _camps
+        .where((c) => c is Map && c['recommended'] == true)
+        .toList();
+    final shownCamps = recommended.isNotEmpty ? recommended : _camps;
+    return Column(
+      children: [
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: Row(
+            children: [
+              for (final raw in _boards)
+                if (raw is Map)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: ChoiceChip(
+                      label: Text((raw['name'] ?? '').toString()),
+                      selected: _board == raw['key'],
+                      onSelected: (_) {
+                        setState(
+                          () => _board = (raw['key'] ?? 'general').toString(),
+                        );
+                        _loadPosts(reset: true);
+                      },
+                    ),
+                  ),
+            ],
+          ),
+        ),
+        if (shownCamps.isNotEmpty) ...[
+          const Padding(
+            padding: EdgeInsets.fromLTRB(16, 12, 16, 4),
+            child: Align(alignment: Alignment.centerLeft, child: Text('推荐营地')),
+          ),
+          SizedBox(
+            height: 44,
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              children: [
+                for (final raw in shownCamps)
+                  if (raw is Map)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: ActionChip(
+                        label: Text((raw['name'] ?? '').toString()),
+                        onPressed: () => _openCamp(raw),
+                      ),
+                    ),
+              ],
+            ),
+          ),
+          const Padding(
+            padding: EdgeInsets.fromLTRB(16, 8, 16, 4),
+            child: Align(alignment: Alignment.centerLeft, child: Text('营地热帖')),
+          ),
+          for (final raw in shownCamps)
+            if (raw is Map)
+              for (final hot in _campHotPosts(raw))
+                if (hot is Map) _postTile(hot),
+        ],
+        Expanded(
+          child: _loading
+              ? const Center(child: CommonCircleLoading.page())
+              : _posts.isEmpty
+              ? const Center(child: Text('暂无帖子'))
+              : ListView.separated(
+                  itemCount: _posts.length + 1,
+                  separatorBuilder: (_, _) => const Divider(height: 1),
+                  itemBuilder: (context, index) {
+                    if (index == _posts.length) {
+                      return TextButton(
+                        onPressed: _loadingMore
+                            ? null
+                            : () => _loadPosts(reset: false),
+                        child: const Text('加载更多'),
+                      );
+                    }
+                    final raw = _posts[index];
+                    if (raw is! Map) return const SizedBox.shrink();
+                    return _postTile(raw);
+                  },
+                ),
+        ),
+      ],
+    );
+  }
+
+  List<dynamic> _campHotPosts(Map<dynamic, dynamic> camp) {
+    final hot = camp['hotPosts'];
+    return hot is List ? hot : const [];
+  }
+
+  void _openCamp(Map<dynamic, dynamic> camp) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => QfForumCampPage(
+          session: widget.session,
+          campId: (camp['id'] as num).toInt(),
+        ),
+      ),
+    );
+  }
+
+  Widget _loginNeeded(String text) {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(text),
+          const SizedBox(height: 12),
+          FilledButton(
+            onPressed: () => qfForumGuideLogin(context, widget.session),
+            child: const Text('去登录'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _myPostsTab() {
+    if (_readOnly) return _loginNeeded('登录后即可查看我的帖子');
+    if (_meLoading && _meHome == null) {
+      return const Center(child: CommonCircleLoading.page());
+    }
+    final posts = _meHome?['posts'];
+    final list = posts is List ? posts : const <dynamic>[];
+    if (list.isEmpty) return const Center(child: Text('暂无帖子'));
+    return ListView.separated(
+      itemCount: list.length,
+      separatorBuilder: (_, _) => const Divider(height: 1),
+      itemBuilder: (context, index) {
+        final raw = list[index];
+        if (raw is! Map) return const SizedBox.shrink();
+        return Column(
+          children: [
+            _postTile(raw),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: QfForumRewardSection(session: widget.session, post: raw),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _myCommentsTab() {
+    if (_readOnly) return _loginNeeded('登录后即可查看我的评价');
+    if (_meLoading && _meHome == null) {
+      return const Center(child: CommonCircleLoading.page());
+    }
+    final comments = _meHome?['comments'] ?? _meHome?['replies'];
+    final list = comments is List ? comments : const <dynamic>[];
+    if (list.isEmpty) return const Center(child: Text('暂无评价'));
+    return ListView.separated(
+      itemCount: list.length,
+      separatorBuilder: (_, _) => const Divider(height: 1),
+      itemBuilder: (context, index) {
+        final raw = list[index];
+        if (raw is! Map) return const SizedBox.shrink();
+        return ListTile(
+          title: Text((raw['content'] ?? '').toString()),
+          subtitle: Text((raw['postTitle'] ?? '').toString()),
+          onTap: () {
+            final postId = (raw['postId'] as num?)?.toInt();
+            if (postId == null) return;
+            Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) =>
+                    QfForumPostPage(session: widget.session, postId: postId),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _analyticsTab() {
+    if (_readOnly) return _loginNeeded('登录后即可查看数据分析');
+    if (_analyticsLoading && _analytics == null) {
+      return const Center(child: CommonCircleLoading.page());
+    }
+    final data = _analytics ?? const <String, dynamic>{};
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        Text('主题偏好', style: AppTextStyle.headline.of(context)),
+        _analyticsNames(data['topTopics']),
+        const SizedBox(height: 16),
+        Text('常看帖子', style: AppTextStyle.headline.of(context)),
+        _analyticsPosts(data['frequentPosts']),
+        const SizedBox(height: 16),
+        Text('我的统计', style: AppTextStyle.headline.of(context)),
+        _analyticsStats(data['myStats']),
+        const SizedBox(height: 16),
+        Text('推荐帖子', style: AppTextStyle.headline.of(context)),
+        _analyticsPosts(data['recommendedPosts']),
+        const SizedBox(height: 16),
+        Text('推荐营地', style: AppTextStyle.headline.of(context)),
+        _analyticsCamps(data['recommendedCamps']),
+      ],
+    );
+  }
+
+  Widget _analyticsNames(dynamic raw) {
+    final list = raw is List ? raw : const <dynamic>[];
+    if (list.isEmpty) return const Text('暂无数据');
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (final item in list)
+          Text(
+            item is Map
+                ? (item['name'] ?? item['topic'] ?? '').toString()
+                : item.toString(),
+          ),
+      ],
+    );
+  }
+
+  Widget _analyticsPosts(dynamic raw) {
+    final list = raw is List ? raw : const <dynamic>[];
+    if (list.isEmpty) return const Text('暂无数据');
+    return Column(
+      children: [
+        for (final item in list)
+          if (item is Map) _postTile(item),
+      ],
+    );
+  }
+
+  Widget _analyticsStats(dynamic raw) {
+    if (raw is! Map) return const Text('暂无数据');
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (final entry in raw.entries) Text('${entry.key}：${entry.value}'),
+      ],
+    );
+  }
+
+  Widget _analyticsCamps(dynamic raw) {
+    final list = raw is List ? raw : const <dynamic>[];
+    if (list.isEmpty) return const Text('暂无数据');
+    return Column(
+      children: [
+        for (final item in list)
+          if (item is Map)
+            ListTile(
+              title: Text((item['name'] ?? '').toString()),
+              subtitle: Text((item['description'] ?? '').toString()),
+              onTap: () => _openCamp(item),
+            ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final muteBanner = _muteBanner();
@@ -214,6 +776,16 @@ class _QfForumPageState extends State<QfForumPage> {
       appBar: AppBar(
         title: const Text('论坛'),
         actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => QfForumCampListPage(session: widget.session),
+                ),
+              );
+            },
+            child: const Text('营地'),
+          ),
           if (!_readOnly)
             TextButton(
               onPressed: _editNickname,
@@ -229,66 +801,27 @@ class _QfForumPageState extends State<QfForumPage> {
       body: Column(
         children: [
           ?muteBanner,
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: Row(
-              children: [
-                for (final raw in _boards)
-                  if (raw is Map)
-                    Padding(
-                      padding: const EdgeInsets.only(right: 8),
-                      child: ChoiceChip(
-                        label: Text((raw['name'] ?? '').toString()),
-                        selected: _board == raw['key'],
-                        onSelected: (_) {
-                          setState(
-                            () => _board = (raw['key'] ?? 'general').toString(),
-                          );
-                          _loadPosts(reset: true);
-                        },
-                      ),
-                    ),
-              ],
-            ),
+          _identityHeader(),
+          TabBar(
+            controller: _tabs,
+            isScrollable: true,
+            tabs: const [
+              Tab(text: '首页'),
+              Tab(text: '我的帖子'),
+              Tab(text: '我的评价'),
+              Tab(text: '数据分析'),
+            ],
           ),
           Expanded(
-            child: _loading
-                ? const Center(child: CommonCircleLoading.page())
-                : _posts.isEmpty
-                ? const Center(child: Text('暂无帖子'))
-                : ListView.separated(
-                    itemCount: _posts.length + 1,
-                    separatorBuilder: (_, _) => const Divider(height: 1),
-                    itemBuilder: (context, index) {
-                      if (index == _posts.length) {
-                        return TextButton(
-                          onPressed: _loadingMore
-                              ? null
-                              : () => _loadPosts(reset: false),
-                          child: const Text('加载更多'),
-                        );
-                      }
-                      final raw = _posts[index];
-                      if (raw is! Map) return const SizedBox.shrink();
-                      return ListTile(
-                        title: Text((raw['title'] ?? '').toString()),
-                        subtitle: Text(
-                          '${qfForumAuthorName(raw)} · 回复 ${raw['replyCount'] ?? 0}',
-                        ),
-                        onTap: () {
-                          Navigator.of(context).push(
-                            MaterialPageRoute<void>(
-                              builder: (_) => QfForumPostPage(
-                                session: widget.session,
-                                postId: (raw['id'] as num).toInt(),
-                              ),
-                            ),
-                          );
-                        },
-                      );
-                    },
-                  ),
+            child: TabBarView(
+              controller: _tabs,
+              children: [
+                _homeTab(),
+                _myPostsTab(),
+                _myCommentsTab(),
+                _analyticsTab(),
+              ],
+            ),
           ),
         ],
       ),
@@ -311,6 +844,24 @@ class _QfComposePostPageState extends State<_QfComposePostPage> {
   final _content = TextEditingController();
   bool _busy = false;
   String? _notice;
+  List<dynamic> _camps = const [];
+  int? _campId;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCamps();
+  }
+
+  Future<void> _loadCamps() async {
+    try {
+      final data = await widget.session.forumCamps();
+      final camps = data['camps'];
+      if (mounted) {
+        setState(() => _camps = camps is List ? camps : const []);
+      }
+    } catch (_) {}
+  }
 
   @override
   void dispose() {
@@ -333,6 +884,7 @@ class _QfComposePostPageState extends State<_QfComposePostPage> {
         board: widget.board,
         title: _title.text,
         content: _content.text,
+        campId: _campId,
       );
       if (!mounted) return;
       final status = (result['status'] ?? 'published').toString();
@@ -365,6 +917,21 @@ class _QfComposePostPageState extends State<_QfComposePostPage> {
             ),
             const SizedBox(height: 12),
           ],
+          DropdownButtonFormField<int?>(
+            initialValue: _campId,
+            decoration: const InputDecoration(labelText: '归属营地（选填）'),
+            items: [
+              const DropdownMenuItem<int?>(value: null, child: Text('不选择营地')),
+              for (final raw in _camps)
+                if (raw is Map)
+                  DropdownMenuItem<int?>(
+                    value: (raw['id'] as num).toInt(),
+                    child: Text((raw['name'] ?? '').toString()),
+                  ),
+            ],
+            onChanged: (value) => setState(() => _campId = value),
+          ),
+          const SizedBox(height: 12),
           TextField(
             controller: _title,
             decoration: const InputDecoration(labelText: '标题'),
@@ -477,6 +1044,53 @@ class _QfForumPostPageState extends State<QfForumPostPage> {
     }
   }
 
+  Future<void> _toggleLike() async {
+    if (_readOnly) {
+      await qfForumGuideLogin(context, widget.session);
+      return;
+    }
+    final post = _post;
+    if (post == null) return;
+    final liked = post['likedByMe'] != true;
+    try {
+      final data = await widget.session.forumLikePost(widget.postId, liked);
+      if (mounted) {
+        setState(() {
+          post['likedByMe'] = data['liked'] ?? liked;
+          post['likeCount'] =
+              (data['likeCount'] as num?)?.toInt() ??
+              qfForumCount(post, 'likeCount');
+        });
+      }
+    } on QfApiException catch (e) {
+      if (mounted) qfToast(context, e.message);
+    }
+  }
+
+  Future<void> _share() async {
+    final post = _post;
+    if (post == null) return;
+    await Clipboard.setData(
+      ClipboardData(
+        text: qfForumPostLink(widget.session.serverBaseUrl, widget.postId),
+      ),
+    );
+    if (!mounted) return;
+    qfToast(context, '帖子链接已经复制');
+    try {
+      final data = await widget.session.forumSharePost(widget.postId);
+      if (mounted) {
+        setState(() {
+          post['shareCount'] =
+              (data['shareCount'] as num?)?.toInt() ??
+              qfForumCount(post, 'shareCount');
+        });
+      }
+    } on QfApiException catch (e) {
+      if (mounted) qfToast(context, e.message);
+    }
+  }
+
   Future<void> _report() async {
     if (_readOnly) {
       await qfForumGuideLogin(context, widget.session);
@@ -521,17 +1135,49 @@ class _QfForumPostPageState extends State<QfForumPostPage> {
                         style: AppTextStyle.title3.of(context),
                       ),
                       const SizedBox(height: 8),
-                      Text(
-                        '${qfForumAuthorName(post)}'
-                        '${qfForumStatusLabel(post).isEmpty ? '' : ' · ${qfForumStatusLabel(post)}'}',
-                      ),
+                      QfForumAuthorHeader(session: widget.session, raw: post),
+                      if (qfForumStatusLabel(post).isNotEmpty)
+                        Text(qfForumStatusLabel(post)),
                       const SizedBox(height: 12),
                       Text((post['content'] ?? '').toString()),
+                      const SizedBox(height: 12),
+                      QfForumCountsLine(raw: post),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        children: [
+                          if (post['likedByMe'] == true)
+                            FilledButton(
+                              onPressed: _toggleLike,
+                              child: Text(
+                                '已赞 ${qfForumCount(post, 'likeCount')}',
+                              ),
+                            )
+                          else
+                            OutlinedButton(
+                              onPressed: _toggleLike,
+                              child: Text(
+                                '点赞 ${qfForumCount(post, 'likeCount')}',
+                              ),
+                            ),
+                          OutlinedButton(
+                            onPressed: _share,
+                            child: Text(
+                              '分享 ${qfForumCount(post, 'shareCount')}',
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      QfForumRewardSection(session: widget.session, post: post),
                       const Divider(height: 32),
                       for (final raw in _replies)
                         if (raw is Map)
                           ListTile(
-                            title: Text(qfForumAuthorName(raw)),
+                            title: QfForumAuthorHeader(
+                              session: widget.session,
+                              raw: raw,
+                            ),
                             subtitle: Text(
                               '${raw['content'] ?? ''}'
                               '${qfForumStatusLabel(raw).isEmpty ? '' : '\n${qfForumStatusLabel(raw)}'}',
@@ -568,6 +1214,340 @@ class _QfForumPostPageState extends State<QfForumPostPage> {
                           ),
                   ),
                 ),
+              ],
+            ),
+    );
+  }
+}
+
+class QfForumUserPage extends StatefulWidget {
+  final QfSessionController session;
+  final int userId;
+
+  const QfForumUserPage({
+    super.key,
+    required this.session,
+    required this.userId,
+  });
+
+  @override
+  State<QfForumUserPage> createState() => _QfForumUserPageState();
+}
+
+class _QfForumUserPageState extends State<QfForumUserPage> {
+  Map<String, dynamic>? _data;
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final data = await widget.session.forumUserProfile(widget.userId);
+      if (mounted) {
+        setState(() {
+          _data = data;
+          _loading = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final data = _data;
+    final user = data?['user'];
+    final name = user is Map
+        ? (user['name'] ?? user['nickname'] ?? '').toString()
+        : '';
+    final posts = data?['posts'];
+    final comments = data?['comments'] ?? data?['replies'];
+    final postList = posts is List ? posts : const <dynamic>[];
+    final commentList = comments is List ? comments : const <dynamic>[];
+    return Scaffold(
+      appBar: AppBar(title: const Text('个人主页')),
+      body: _loading
+          ? const Center(child: CommonCircleLoading.page())
+          : data == null
+          ? const Center(child: Text('该用户暂不可见'))
+          : ListView(
+              padding: const EdgeInsets.all(16),
+              children: [
+                Center(
+                  child: Column(
+                    children: [
+                      QfAvatarImage(
+                        session: widget.session,
+                        userId: widget.userId,
+                        name: name,
+                        radius: 28,
+                      ),
+                      const SizedBox(height: 8),
+                      Text(name),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Text('帖子', style: AppTextStyle.headline.of(context)),
+                if (postList.isEmpty) const Text('暂无帖子'),
+                for (final raw in postList)
+                  if (raw is Map) ...[
+                    ListTile(
+                      title: Text((raw['title'] ?? '').toString()),
+                      subtitle: QfForumCountsLine(raw: raw),
+                      onTap: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (_) => QfForumPostPage(
+                              session: widget.session,
+                              postId: (raw['id'] as num).toInt(),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                    QfForumRewardSection(session: widget.session, post: raw),
+                  ],
+                const SizedBox(height: 16),
+                Text('评价', style: AppTextStyle.headline.of(context)),
+                if (commentList.isEmpty) const Text('暂无评价'),
+                for (final raw in commentList)
+                  if (raw is Map)
+                    ListTile(
+                      title: Text((raw['content'] ?? '').toString()),
+                      subtitle: Text((raw['postTitle'] ?? '').toString()),
+                    ),
+              ],
+            ),
+    );
+  }
+}
+
+class QfForumCampListPage extends StatefulWidget {
+  final QfSessionController session;
+
+  const QfForumCampListPage({super.key, required this.session});
+
+  @override
+  State<QfForumCampListPage> createState() => _QfForumCampListPageState();
+}
+
+class _QfForumCampListPageState extends State<QfForumCampListPage> {
+  List<dynamic> _camps = const [];
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final data = await widget.session.forumCamps();
+      final camps = data['camps'];
+      if (mounted) {
+        setState(() {
+          _camps = camps is List ? camps : const [];
+          _loading = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _toggleJoin(Map<dynamic, dynamic> camp) async {
+    if (!widget.session.isLoggedIn) {
+      await qfForumGuideLogin(context, widget.session);
+      return;
+    }
+    final joined = camp['joined'] != true;
+    try {
+      final data = await widget.session.forumJoinCamp(
+        (camp['id'] as num).toInt(),
+        joined,
+      );
+      if (mounted) {
+        setState(() => camp['joined'] = data['joined'] ?? joined);
+        qfToast(context, joined ? '已经加入营地' : '已经退出营地');
+      }
+    } on QfApiException catch (e) {
+      if (mounted) qfToast(context, e.message);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('营地')),
+      body: _loading
+          ? const Center(child: CommonCircleLoading.page())
+          : _camps.isEmpty
+          ? const Center(child: Text('暂无营地'))
+          : ListView.separated(
+              itemCount: _camps.length,
+              separatorBuilder: (_, _) => const Divider(height: 1),
+              itemBuilder: (context, index) {
+                final raw = _camps[index];
+                if (raw is! Map) return const SizedBox.shrink();
+                final joined = raw['joined'] == true;
+                return ListTile(
+                  title: Text((raw['name'] ?? '').toString()),
+                  subtitle: Text((raw['description'] ?? '').toString()),
+                  trailing: joined
+                      ? OutlinedButton(
+                          onPressed: () => _toggleJoin(raw),
+                          child: const Text('已加入'),
+                        )
+                      : FilledButton(
+                          onPressed: () => _toggleJoin(raw),
+                          child: const Text('加入营地'),
+                        ),
+                  onTap: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => QfForumCampPage(
+                          session: widget.session,
+                          campId: (raw['id'] as num).toInt(),
+                        ),
+                      ),
+                    );
+                  },
+                );
+              },
+            ),
+    );
+  }
+}
+
+class QfForumCampPage extends StatefulWidget {
+  final QfSessionController session;
+  final int campId;
+
+  const QfForumCampPage({
+    super.key,
+    required this.session,
+    required this.campId,
+  });
+
+  @override
+  State<QfForumCampPage> createState() => _QfForumCampPageState();
+}
+
+class _QfForumCampPageState extends State<QfForumCampPage> {
+  Map<String, dynamic>? _data;
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final data = await widget.session.forumCampDetail(widget.campId);
+      if (mounted) {
+        setState(() {
+          _data = data;
+          _loading = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _toggleJoin() async {
+    if (!widget.session.isLoggedIn) {
+      await qfForumGuideLogin(context, widget.session);
+      return;
+    }
+    final camp = _camp;
+    if (camp == null) return;
+    final joined = camp['joined'] != true;
+    try {
+      final data = await widget.session.forumJoinCamp(widget.campId, joined);
+      if (mounted) {
+        setState(() => camp['joined'] = data['joined'] ?? joined);
+        qfToast(context, joined ? '已经加入营地' : '已经退出营地');
+      }
+    } on QfApiException catch (e) {
+      if (mounted) qfToast(context, e.message);
+    }
+  }
+
+  Map<dynamic, dynamic>? get _camp {
+    final camp = _data?['camp'];
+    return camp is Map ? camp : _data;
+  }
+
+  Widget _section(String title, dynamic raw) {
+    final list = raw is List ? raw : const <dynamic>[];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(title, style: AppTextStyle.headline.of(context)),
+        if (list.isEmpty) const Text('暂无帖子'),
+        for (final item in list)
+          if (item is Map)
+            ListTile(
+              title: Text((item['title'] ?? '').toString()),
+              subtitle: QfForumCountsLine(raw: item),
+              onTap: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => QfForumPostPage(
+                      session: widget.session,
+                      postId: (item['id'] as num).toInt(),
+                    ),
+                  ),
+                );
+              },
+            ),
+      ],
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final camp = _camp;
+    return Scaffold(
+      appBar: AppBar(title: const Text('营地详情')),
+      body: _loading
+          ? const Center(child: CommonCircleLoading.page())
+          : camp == null
+          ? const Center(child: Text('营地暂不可见'))
+          : ListView(
+              padding: const EdgeInsets.all(16),
+              children: [
+                Text(
+                  (camp['name'] ?? '').toString(),
+                  style: AppTextStyle.title3.of(context),
+                ),
+                const SizedBox(height: 8),
+                Text((camp['description'] ?? '').toString()),
+                const SizedBox(height: 12),
+                if (camp['joined'] == true)
+                  OutlinedButton(
+                    onPressed: _toggleJoin,
+                    child: const Text('已加入'),
+                  )
+                else
+                  FilledButton(
+                    onPressed: _toggleJoin,
+                    child: const Text('加入营地'),
+                  ),
+                const SizedBox(height: 16),
+                _section('营地热帖', _data?['hotPosts']),
+                const SizedBox(height: 16),
+                _section('最新帖子', _data?['latestPosts'] ?? _data?['posts']),
               ],
             ),
     );

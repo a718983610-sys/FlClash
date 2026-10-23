@@ -47,4 +47,9 @@ class QfCopy {
   static const String feedbackTitle = '意见反馈';
   static const String feedbackHint = '您的意见将直接发送至维护团队，感谢您的反馈。';
   static const String feedbackSuccess = '提交成功，感谢您的反馈。';
+  static const String forumRewardExplain =
+      '单篇帖子获赞达到 1000 次后可申请奖励 5 积分。奖励经人工审核后发放至您的积分账户，每篇帖子限申请一次。';
+  static const String forumRewardPending = '审核中';
+  static const String forumRewardApproved = '已发放';
+  static const String forumRewardRejected = '已驳回';
 }
