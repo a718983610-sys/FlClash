@@ -378,15 +378,37 @@ void main() {
     container
         .read(viewSizeProvider.notifier)
         .update((_) => const Size(1200, 800));
+    container.read(currentPageLabelProvider.notifier).toPage(PageLabel.tools);
+    final desktop = container.read(navigationStateProvider);
+    expect(desktop.viewMode, ViewMode.desktop);
+    expect(desktop.navigationItems.map((item) => item.label), [
+      PageLabel.dashboard,
+      PageLabel.profiles,
+      PageLabel.forum,
+      PageLabel.tools,
+      PageLabel.friends,
+      PageLabel.mine,
+    ]);
+    expect(desktop.currentIndex, 3);
+    expect(
+      desktop.navigationItems[desktop.currentIndex].label,
+      PageLabel.tools,
+    );
+
+    // Connections lives only in the tools page's more section, so on the
+    // desktop navigation it falls back to the first item by design.
     container
         .read(currentPageLabelProvider.notifier)
         .toPage(PageLabel.connections);
-    final desktop = container.read(navigationStateProvider);
-    expect(desktop.viewMode, ViewMode.desktop);
-    expect(desktop.currentIndex, greaterThan(0));
+    final fallback = container.read(navigationStateProvider);
+    expect(fallback.currentIndex, 0);
+    expect(fallback.pageLabel, PageLabel.dashboard);
     expect(
-      desktop.navigationItems[desktop.currentIndex].label,
-      PageLabel.connections,
+      container
+          .read(moreToolsSelectorStateProvider)
+          .navigationItems
+          .map((item) => item.label),
+      contains(PageLabel.connections),
     );
 
     container

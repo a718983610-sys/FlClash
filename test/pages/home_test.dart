@@ -474,32 +474,63 @@ void main() {
       );
       await tester.pump();
 
+      // Logs is not a desktop navigation item: it joins only the tools
+      // page's more section once the log switch is on.
+      List<PageLabel> desktopLabels() => container
+          .read(currentNavigationItemsStateProvider)
+          .value
+          .map((item) => item.label)
+          .toList();
+      List<PageLabel> moreLabels() => container
+          .read(moreToolsSelectorStateProvider)
+          .navigationItems
+          .map((item) => item.label)
+          .toList();
+      expect(desktopLabels(), isNot(contains(PageLabel.logs)));
+      expect(moreLabels(), isNot(contains(PageLabel.logs)));
+
+      Future<void> tapInList(Finder item, Finder scrollable) async {
+        for (
+          var step = 0;
+          step < 30 && item.hitTestable().evaluate().isEmpty;
+          step++
+        ) {
+          await tester.drag(scrollable, const Offset(0, -400));
+          await tester.pump(const Duration(milliseconds: 50));
+        }
+        await tester.tap(item.hitTestable());
+      }
+
       final generalItem = find.text('General');
-      await tester.scrollUntilVisible(
+      await tapInList(
         generalItem,
-        500,
-        scrollable: find.byType(Scrollable).first,
+        find
+            .descendant(
+              of: find.byType(ToolsView),
+              matching: find.byType(Scrollable),
+            )
+            .first,
       );
-      await tester.tap(generalItem);
       await tester.pumpAndSettle();
       expect(find.byType(GeneralView), findsOneWidget);
 
       final logItem = find.text('Logcat');
-      await tester.scrollUntilVisible(
+      await tapInList(
         logItem,
-        500,
-        scrollable: find
+        find
             .descendant(
               of: find.byType(GeneralView),
               matching: find.byType(Scrollable),
             )
             .first,
       );
-      await tester.tap(logItem);
       await tester.pumpAndSettle();
 
       expect(container.read(appSettingProvider).openLogs, isTrue);
       expect(find.byType(GeneralView), findsOneWidget);
+      expect(container.read(currentPageLabelProvider), PageLabel.tools);
+      expect(desktopLabels(), isNot(contains(PageLabel.logs)));
+      expect(moreLabels(), contains(PageLabel.logs));
       expect(tester.takeException(), isNull);
     },
   );

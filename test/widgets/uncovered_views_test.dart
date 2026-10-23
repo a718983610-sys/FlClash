@@ -1,10 +1,6 @@
 import 'dart:async';
-import 'dart:convert';
-import 'dart:typed_data';
 
-import 'package:dio/dio.dart';
 import 'package:fl_clash/common/l10n_labels.dart';
-import 'package:fl_clash/common/request.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/features/form/form.dart';
 import 'package:fl_clash/l10n/l10n.dart';
@@ -31,24 +27,6 @@ import '../helpers/glyph_finders.dart';
 import '../helpers/test_app.dart';
 import '../helpers/test_profiles.dart';
 import '../plugins/code_forge/support.dart';
-
-class _PendingAdapter implements HttpClientAdapter {
-  final response = Completer<ResponseBody>();
-  int requests = 0;
-
-  @override
-  Future<ResponseBody> fetch(
-    RequestOptions options,
-    Stream<Uint8List>? requestStream,
-    Future<void>? cancelFuture,
-  ) {
-    requests++;
-    return response.future;
-  }
-
-  @override
-  void close({bool force = false}) {}
-}
 
 class _TestScripts extends Scripts {
   _TestScripts(this.initial);
@@ -225,10 +203,6 @@ void main() {
     tester,
   ) async {
     final container = _containerFor(tester);
-    final originalAdapter = request.dio.httpClientAdapter;
-    addTearDown(() => request.dio.httpClientAdapter = originalAdapter);
-    final adapter = _PendingAdapter();
-    request.dio.httpClientAdapter = adapter;
 
     await tester.pumpWidget(
       UncontrolledProviderScope(
@@ -239,29 +213,28 @@ void main() {
     await tester.pump();
     expect(find.byType(LinearProgressIndicator), findsNothing);
 
+    Finder checkButton() =>
+        find.widgetWithText(TonalButton, 'Check for updates');
+    Finder checkItem() => find.byWidgetPredicate(
+      (widget) =>
+          widget is ListItem &&
+          widget.title is Text &&
+          (widget.title as Text).data == '检查更新',
+    );
+    expect(tester.widget<TonalButton>(checkButton()).onPressed, isNotNull);
+    expect((tester.widget(checkItem()) as ListItem).onTap, isNotNull);
+
     await tester.tap(find.text('Check for updates'));
     await tester.pump();
     expect(find.byType(LinearProgressIndicator), findsOneWidget);
+    expect(tester.widget<TonalButton>(checkButton()).onPressed, isNull);
+    expect((tester.widget(checkItem()) as ListItem).onTap, isNull);
 
-    await tester.tap(find.text('Check for updates'));
-    await tester.pump(const Duration(milliseconds: 100));
-    expect(adapter.requests, 1);
-
-    adapter.response.complete(
-      ResponseBody.fromString(
-        jsonEncode({'tag_name': 'v0.0.0'}),
-        200,
-        headers: {
-          Headers.contentTypeHeader: [Headers.jsonContentType],
-        },
-      ),
-    );
-    await tester.pump();
     await tester.pump(const Duration(seconds: 1));
-    await tester.pumpAndSettle();
-
+    await tester.pump();
     expect(find.byType(LinearProgressIndicator), findsNothing);
-    expect(find.text('The app is already up to date'), findsOneWidget);
+    expect(find.text('当前已经是最新版本'), findsOneWidget);
+    expect(tester.widget<TonalButton>(checkButton()).onPressed, isNotNull);
     expect(tester.takeException(), null);
   });
 
