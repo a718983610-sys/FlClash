@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
@@ -70,6 +72,21 @@ class QfSessionController extends ChangeNotifier {
   static const String _kGuestKey = 'qf_guest_heartbeat_key';
   static const String _kPointsSeq = 'qf_points_seq';
   static const String _kGuestSeq = 'qf_guest_seq';
+  static const String _kRemember = 'qf_remember_device';
+  static const String _kGuestExhaustedLocal = 'qf_guest_exhausted_local';
+  static const String _kGuestBlockedCore = 'qf_guest_blocked_core';
+
+  static bool startupHeldForQuota = false;
+
+  static Future<bool> localGuestQuotaHold() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getString(_kMode) == 'guest' &&
+          (prefs.getBool(_kGuestExhaustedLocal) ?? false);
+    } catch (_) {
+      return false;
+    }
+  }
 
   String serverBaseUrl = QfConfig.fallbackServerBaseUrl;
   QfMode mode = QfMode.unknown;
@@ -86,6 +103,22 @@ class QfSessionController extends ChangeNotifier {
   bool Function()? isRunningFn;
   int Function()? trafficTotalFn;
   Future<void> Function()? onGuestExhaustedFn;
+  Future<void> Function()? onForceDisconnectFn;
+
+  String? _completionToken;
+  String? _completionEmail;
+  String? _stepUpToken;
+  String? _stepUpMaskedEmail;
+  bool _pendingRemember = true;
+  bool _accountIncomplete = false;
+  Future<bool>? _rootedFuture;
+  Future<bool>? _multiOpenFuture;
+
+  bool get googleCompletionPending => _completionToken != null;
+  String? get googleCompletionEmail => _completionEmail;
+  bool get stepUpPending => _stepUpToken != null;
+  String? get stepUpMaskedEmail => _stepUpMaskedEmail;
+  bool get accountIncomplete => _accountIncomplete;
 
   String? _accessToken;
   String? _refreshToken;
@@ -113,13 +146,49 @@ class QfSessionController extends ChangeNotifier {
     banAccount = '';
   }
 
+  String? frozenNotice;
+  String frozenAccount = '';
+  int? frozenAt;
+
+  void consumeFrozenNotice() {
+    frozenNotice = null;
+    frozenAccount = '';
+    frozenAt = null;
+  }
+
+  String? registrationFrozenNotice;
+  int? registrationFrozenUntil;
+
+  void consumeRegistrationFrozenNotice() {
+    registrationFrozenNotice = null;
+    registrationFrozenUntil = null;
+  }
+
+  void captureRegistrationFrozen(QfApiException e) {
+    registrationFrozenNotice = e.message;
+    registrationFrozenUntil = (e.data['registrationFrozenUntil'] as num?)
+        ?.toInt();
+  }
+
   static String formatBanNotice(Map<String, dynamic> data) {
     if (data['permanent'] == true) {
       return '该用户已被永久封禁';
     }
-    final until = (data['bannedUntil'] as num?)?.toInt();
-    if (until != null && until > 0) {
-      final time = DateTime.fromMillisecondsSinceEpoch(until * 1000);
+    DateTime? time;
+    final raw = data['bannedUntil'];
+    if (raw is num && raw > 0) {
+      time = DateTime.fromMillisecondsSinceEpoch(raw.toInt() * 1000).toLocal();
+    } else if (raw is String && raw.isNotEmpty) {
+      final seconds = num.tryParse(raw);
+      if (seconds != null && seconds > 0) {
+        time = DateTime.fromMillisecondsSinceEpoch(
+          seconds.toInt() * 1000,
+        ).toLocal();
+      } else {
+        time = DateTime.tryParse(raw)?.toLocal();
+      }
+    }
+    if (time != null) {
       String two(int v) => v.toString().padLeft(2, '0');
       return '该账户已被封禁，解除时间：${time.year}-${two(time.month)}-${two(time.day)} '
           '${two(time.hour)}:${two(time.minute)}';
@@ -131,11 +200,25 @@ class QfSessionController extends ChangeNotifier {
     banNotice = formatBanNotice(e.data);
     banReason = (e.data['reason'] ?? '').toString();
     banAccount = email ?? '';
-    stopHeartbeat();
+    await _disconnectProxy();
     await _clearUserSession();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_kMode, 'entry');
     mode = QfMode.entry;
+    await _syncGuestBlockedCore();
+    notifyListeners();
+  }
+
+  Future<void> handleFrozen(QfApiException e, {String? account}) async {
+    frozenNotice = e.message;
+    frozenAccount = account ?? email ?? '';
+    frozenAt = (e.data['passwordFrozenAt'] as num?)?.toInt();
+    await _disconnectProxy();
+    await _clearUserSession();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_kMode, 'entry');
+    mode = QfMode.entry;
+    await _syncGuestBlockedCore();
     notifyListeners();
   }
 
@@ -148,12 +231,19 @@ class QfSessionController extends ChangeNotifier {
   Future<void> init({required bool envEmulator}) async {
     _envEmulator = envEmulator;
     final prefs = await SharedPreferences.getInstance();
+    rememberDevice = prefs.getBool(_kRemember) ?? true;
     _accessToken = await _secure.read(key: _kAccess);
     _refreshToken = await _secure.read(key: _kRefresh);
     _accessExpiresAt =
         int.tryParse(await _secure.read(key: _kAccessExp) ?? '') ?? 0;
     _heartbeatKey = await _secure.read(key: _kHeartbeatKey);
-    if (_refreshToken == null && prefs.getString(_kRefresh) != null) {
+    if (!rememberDevice) {
+      await _wipeStoredCredentials();
+      _accessToken = null;
+      _refreshToken = null;
+      _accessExpiresAt = 0;
+      _heartbeatKey = null;
+    } else if (_refreshToken == null && prefs.getString(_kRefresh) != null) {
       _accessToken = prefs.getString(_kAccess);
       _refreshToken = prefs.getString(_kRefresh);
       _accessExpiresAt = prefs.getInt(_kAccessExp) ?? 0;
@@ -168,6 +258,9 @@ class QfSessionController extends ChangeNotifier {
     _pointsSeq = prefs.getInt(_kPointsSeq) ?? 0;
     _guestSeq = prefs.getInt(_kGuestSeq) ?? 0;
     final storedMode = prefs.getString(_kMode);
+    if (storedMode == 'guest') {
+      guestExhausted = prefs.getBool(_kGuestExhaustedLocal) ?? false;
+    }
     if (storedMode == 'user' && _refreshToken != null) {
       mode = QfMode.user;
       await _refreshIfNeeded(force: true);
@@ -183,6 +276,7 @@ class QfSessionController extends ChangeNotifier {
     } else {
       mode = QfMode.entry;
     }
+    await _syncGuestBlockedCore();
     notifyListeners();
   }
 
@@ -234,15 +328,20 @@ class QfSessionController extends ChangeNotifier {
     await prefs.setString(_kUsername, username ?? '');
     if (userId != null) await prefs.setInt(_kUserId, userId!);
     await prefs.setString(_kMode, 'user');
+    await prefs.setBool(_kRemember, rememberDevice);
     mode = QfMode.user;
     guestExhausted = false;
+    await prefs.setBool(_kGuestExhaustedLocal, false);
+    await _syncGuestBlockedCore();
+    _accountIncomplete = username == null || username!.isEmpty;
     notifyListeners();
+    await _refreshAccountCompleteness();
   }
 
   Future<void> _clearUserSession() async {
     await _wipeStoredCredentials();
     final prefs = await SharedPreferences.getInstance();
-    for (final key in [_kEmail, _kUsername, _kUserId]) {
+    for (final key in [_kEmail, _kUsername, _kUserId, _kRemember]) {
       await prefs.remove(key);
     }
     _accessToken = null;
@@ -254,6 +353,73 @@ class QfSessionController extends ChangeNotifier {
     pointsMe = null;
     accountDeleting = false;
     deletionEffectiveAt = null;
+    _completionToken = null;
+    _completionEmail = null;
+    _stepUpToken = null;
+    _stepUpMaskedEmail = null;
+    _accountIncomplete = false;
+  }
+
+  Future<void> _syncGuestBlockedCore() async {
+    final blocked = switch (mode) {
+      QfMode.user => false,
+      QfMode.guest => guestExhausted,
+      _ => true,
+    };
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_kGuestBlockedCore, blocked);
+    } catch (_) {}
+  }
+
+  Future<void> _runDisconnectCallback() async {
+    final disconnect = onForceDisconnectFn ?? onGuestExhaustedFn;
+    try {
+      await disconnect?.call();
+    } catch (_) {}
+  }
+
+  Future<void> _disconnectProxy() async {
+    stopHeartbeat();
+    await _runDisconnectCallback();
+  }
+
+  bool _captureStepUp(Map<String, dynamic> data, {required bool remember}) {
+    if (data['needsStepUp'] != true && data['stepUpRequired'] != true) {
+      return false;
+    }
+    final token = (data['stepUpToken'] ?? '').toString();
+    if (token.isEmpty) return false;
+    _stepUpToken = token;
+    _stepUpMaskedEmail = (data['maskedEmail'] ?? '').toString();
+    _pendingRemember = remember;
+    notifyListeners();
+    return true;
+  }
+
+  void _clearStepUp() {
+    _stepUpToken = null;
+    _stepUpMaskedEmail = null;
+  }
+
+  Future<void> _refreshAccountCompleteness() async {
+    if (mode != QfMode.user) return;
+    try {
+      final data = await authed('GET', '/profile');
+      final profile = data['profile'];
+      final source = profile is Map ? Map<String, dynamic>.from(profile) : data;
+      final profileUsername = source['username'];
+      if (profileUsername is String && profileUsername.isNotEmpty) {
+        username = profileUsername;
+      } else if (profileUsername == null || profileUsername == '') {
+        if (source.containsKey('username')) username = '';
+      }
+      final incomplete = username == null || username!.isEmpty;
+      if (incomplete != _accountIncomplete) {
+        _accountIncomplete = incomplete;
+      }
+      notifyListeners();
+    } catch (_) {}
   }
 
   Future<Map<String, dynamic>> _deviceBody() async {
@@ -285,6 +451,10 @@ class QfSessionController extends ChangeNotifier {
         await handleBanned(e);
         rethrow;
       }
+      if (e.code == 'ACCOUNT_FROZEN') {
+        await handleFrozen(e);
+        rethrow;
+      }
       if (e.status == 401 && _refreshToken != null) {
         final refreshed = await _refreshIfNeeded(force: true);
         if (refreshed) {
@@ -304,6 +474,50 @@ class QfSessionController extends ChangeNotifier {
     }
   }
 
+  Future<Uint8List?> qfGetBinary(String path) async {
+    await _refreshIfNeeded();
+    for (var attempt = 0; attempt < 2; attempt++) {
+      final client = HttpClient();
+      client.findProxy = (_) => 'DIRECT';
+      client.connectionTimeout = const Duration(seconds: 15);
+      try {
+        final request = await client.getUrl(Uri.parse('$serverBaseUrl$path'));
+        final token = _accessToken;
+        if (token != null && token.isNotEmpty) {
+          request.headers.set('Authorization', 'Bearer $token');
+        }
+        final response = await request.close().timeout(
+          const Duration(seconds: 20),
+        );
+        if (response.statusCode == 401 && attempt == 0) {
+          if (_refreshToken == null) return null;
+          final refreshed = await _refreshIfNeeded(force: true);
+          if (!refreshed) {
+            await _clearUserSession();
+            mode = QfMode.entry;
+            await _syncGuestBlockedCore();
+            notifyListeners();
+            return null;
+          }
+          continue;
+        }
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          return null;
+        }
+        final builder = BytesBuilder(copy: false);
+        await for (final chunk in response) {
+          builder.add(chunk);
+        }
+        return builder.takeBytes();
+      } catch (_) {
+        return null;
+      } finally {
+        client.close(force: true);
+      }
+    }
+    return null;
+  }
+
   Future<bool> _refreshIfNeeded({bool force = false}) async {
     if (_refreshToken == null) return false;
     final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
@@ -316,16 +530,27 @@ class QfSessionController extends ChangeNotifier {
         '$serverBaseUrl/auth/refresh',
         body: {'refreshToken': _refreshToken},
       );
-      final prefs = await SharedPreferences.getInstance();
       _accessToken = (data['accessToken'] ?? '').toString();
       _refreshToken = (data['refreshToken'] ?? '').toString();
       _accessExpiresAt = (data['accessExpiresAt'] as num?)?.toInt() ?? 0;
       _heartbeatKey = (data['heartbeatKey'] ?? _heartbeatKey ?? '').toString();
-      await prefs.setString(_kAccess, _accessToken ?? '');
-      await prefs.setString(_kRefresh, _refreshToken ?? '');
-      await prefs.setInt(_kAccessExp, _accessExpiresAt);
-      await prefs.setString(_kHeartbeatKey, _heartbeatKey ?? '');
+      if (rememberDevice) {
+        await _storeCredentials();
+        final prefs = await SharedPreferences.getInstance();
+        for (final key in [_kAccess, _kRefresh, _kAccessExp, _kHeartbeatKey]) {
+          await prefs.remove(key);
+        }
+      } else {
+        await _wipeStoredCredentials();
+      }
       return true;
+    } on QfApiException catch (e) {
+      if (e.code == 'ACCOUNT_FROZEN') {
+        await handleFrozen(e);
+      } else if (e.code == 'ACCOUNT_BANNED') {
+        await handleBanned(e);
+      }
+      return false;
     } catch (_) {
       return false;
     }
@@ -374,9 +599,55 @@ class QfSessionController extends ChangeNotifier {
         message: (data['message'] ?? '').toString(),
       );
     }
+    if (_captureStepUp(data, remember: remember)) {
+      return const QfLoginOutcome();
+    }
     await _persistUserSession(data, remember: remember);
     await refreshPoints();
     return const QfLoginOutcome();
+  }
+
+  Future<void> verifyStepUp(String code) async {
+    final token = _stepUpToken;
+    if (token == null) {
+      throw const QfApiException(401, 'STEPUP_INVALID', '本次验证已失效，请重新登录。');
+    }
+    final device = await _deviceBody();
+    try {
+      final data = await QfHttp.send(
+        'POST',
+        '$serverBaseUrl/auth/stepup/verify',
+        body: {'stepUpToken': token, 'code': code.trim(), ...device},
+      );
+      _clearStepUp();
+      if (_captureStepUp(data, remember: _pendingRemember)) return;
+      await _persistUserSession(data, remember: _pendingRemember);
+      await refreshPoints();
+    } on QfApiException catch (e) {
+      if (e.code == 'STEPUP_INVALID') _clearStepUp();
+      notifyListeners();
+      rethrow;
+    }
+  }
+
+  Future<void> resendStepUp() async {
+    final token = _stepUpToken;
+    if (token == null) {
+      throw const QfApiException(401, 'STEPUP_INVALID', '本次验证已失效，请重新登录。');
+    }
+    try {
+      await QfHttp.send(
+        'POST',
+        '$serverBaseUrl/auth/stepup/resend',
+        body: {'stepUpToken': token},
+      );
+    } on QfApiException catch (e) {
+      if (e.code == 'STEPUP_INVALID') {
+        _clearStepUp();
+        notifyListeners();
+      }
+      rethrow;
+    }
   }
 
   Future<void> loginRequestCode(String emailInput) async {
@@ -394,8 +665,75 @@ class QfSessionController extends ChangeNotifier {
       '$serverBaseUrl/auth/google',
       body: {'idToken': idToken, ...device},
     );
+    if (data['needsCompletion'] == true) {
+      _completionToken = (data['completionToken'] ?? '').toString();
+      _completionEmail = (data['email'] ?? '').toString();
+      _pendingRemember = remember;
+      if (_completionToken!.isEmpty) _completionToken = null;
+      notifyListeners();
+      return;
+    }
+    if (_captureStepUp(data, remember: remember)) return;
     await _persistUserSession(data, remember: remember);
     await refreshPoints();
+  }
+
+  Future<void> completeGoogleSetup({
+    required String username,
+    required String password,
+  }) async {
+    final token = _completionToken;
+    if (token == null || token.isEmpty) {
+      throw const QfApiException(
+        401,
+        'GOOGLE_COMPLETION_INVALID',
+        '这次设置已经失效了，请重新用谷歌登录一次',
+      );
+    }
+    final device = await _deviceBody();
+    try {
+      final data = await QfHttp.send(
+        'POST',
+        '$serverBaseUrl/auth/google/complete',
+        body: {
+          'completionToken': token,
+          'username': username.trim(),
+          'password': password,
+          ...device,
+        },
+      );
+      _completionToken = null;
+      _completionEmail = null;
+      if (_captureStepUp(data, remember: _pendingRemember)) return;
+      await _persistUserSession(data, remember: _pendingRemember);
+      await refreshPoints();
+    } on QfApiException catch (e) {
+      if (e.code == 'GOOGLE_COMPLETION_INVALID' ||
+          e.code == 'GOOGLE_ALREADY_COMPLETED') {
+        _completionToken = null;
+        _completionEmail = null;
+        notifyListeners();
+      }
+      rethrow;
+    }
+  }
+
+  Future<void> completeUsername(String username) async {
+    final data = await authed(
+      'PUT',
+      '/profile',
+      body: {'username': username.trim()},
+    );
+    final profile = data['profile'];
+    final source = profile is Map ? Map<String, dynamic>.from(profile) : data;
+    final saved = source['username'];
+    this.username = (saved is String && saved.isNotEmpty)
+        ? saved
+        : username.trim();
+    _accountIncomplete = false;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_kUsername, this.username ?? '');
+    notifyListeners();
   }
 
   Future<void> registerRequestCode(String emailInput) async {
@@ -469,11 +807,29 @@ class QfSessionController extends ChangeNotifier {
         );
       }
     } catch (_) {}
+    await _disconnectProxy();
     await _clearUserSession();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_kMode, 'entry');
     mode = QfMode.entry;
+    await _syncGuestBlockedCore();
     notifyListeners();
+  }
+
+  Future<void> _applyGuestUsage(
+    Map<String, dynamic> data, {
+    required bool notifyExhaustedTransition,
+  }) async {
+    guestUsage = QfGuestUsage.fromJson(data);
+    final was = guestExhausted;
+    guestExhausted = guestUsage?.exhausted ?? false;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_kGuestExhaustedLocal, guestExhausted);
+    await _syncGuestBlockedCore();
+    notifyListeners();
+    if (notifyExhaustedTransition && guestExhausted && !was) {
+      await _runDisconnectCallback();
+    }
   }
 
   Future<void> enterGuest() async {
@@ -489,10 +845,8 @@ class QfSessionController extends ChangeNotifier {
     await prefs.setString(_kGuestToken, _guestToken ?? '');
     await prefs.setString(_kGuestKey, _guestHeartbeatKey ?? '');
     await prefs.setString(_kMode, 'guest');
-    guestUsage = QfGuestUsage.fromJson(data);
-    guestExhausted = guestUsage?.exhausted ?? false;
     mode = QfMode.guest;
-    notifyListeners();
+    await _applyGuestUsage(data, notifyExhaustedTransition: false);
   }
 
   Future<void> refreshGuestUsage() async {
@@ -503,13 +857,7 @@ class QfSessionController extends ChangeNotifier {
         '$serverBaseUrl/guest/usage',
         bearer: _guestToken,
       );
-      guestUsage = QfGuestUsage.fromJson(data);
-      final was = guestExhausted;
-      guestExhausted = guestUsage?.exhausted ?? false;
-      notifyListeners();
-      if (guestExhausted && !was) {
-        await onGuestExhaustedFn?.call();
-      }
+      await _applyGuestUsage(data, notifyExhaustedTransition: true);
     } on QfApiException catch (e) {
       if (e.code == 'GUEST_TOKEN_INVALID') {
         try {
@@ -520,9 +868,11 @@ class QfSessionController extends ChangeNotifier {
   }
 
   Future<void> exitGuestToEntry() async {
+    await _disconnectProxy();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_kMode, 'entry');
     mode = QfMode.entry;
+    await _syncGuestBlockedCore();
     notifyListeners();
   }
 
@@ -540,6 +890,40 @@ class QfSessionController extends ChangeNotifier {
     _heartbeatTimer = null;
   }
 
+  Future<bool> _detectRooted() {
+    return _rootedFuture ??= () async {
+      if (!Platform.isAndroid) return false;
+      try {
+        const suPaths = [
+          '/system/bin/su',
+          '/system/xbin/su',
+          '/sbin/su',
+          '/system/app/Superuser.apk',
+          '/system/app/Magisk.apk',
+        ];
+        for (final path in suPaths) {
+          if (await File(path).exists()) return true;
+        }
+      } catch (_) {}
+      return false;
+    }();
+  }
+
+  // Windows has no rooted/multi-open signal reachable from Dart, so it stays false there.
+  Future<bool> _detectMultiOpen() {
+    return _multiOpenFuture ??= () async {
+      if (!Platform.isAndroid) return false;
+      try {
+        final probe = '${Platform.resolvedExecutable} ${Directory.current.path}'
+            .toLowerCase();
+        const markers = ['virtual', 'parallel', 'multiopen', 'vmos', 'sandbox'];
+        return markers.any(probe.contains);
+      } catch (_) {
+        return false;
+      }
+    }();
+  }
+
   Future<void> beat() async {
     if (_beating) return;
     final running = isRunningFn?.call() ?? false;
@@ -552,6 +936,8 @@ class QfSessionController extends ChangeNotifier {
       _lastTrafficTotal = total;
       final clientTs = DateTime.now().millisecondsSinceEpoch ~/ 1000;
       final envFlags = _envEmulator ? 1 : 0;
+      final rooted = await _detectRooted();
+      final multiOpen = await _detectMultiOpen();
       if (mode == QfMode.user && _heartbeatKey != null) {
         final prefs = await SharedPreferences.getInstance();
         _pointsSeq += 1;
@@ -574,8 +960,8 @@ class QfSessionController extends ChangeNotifier {
             'trafficBytes': delta,
             'env': {
               'emulator': _envEmulator,
-              'rooted': false,
-              'multiOpen': false,
+              'rooted': rooted,
+              'multiOpen': multiOpen,
             },
             'sig': sig,
           },
@@ -615,8 +1001,8 @@ class QfSessionController extends ChangeNotifier {
             'trafficBytes': delta,
             'env': {
               'emulator': _envEmulator,
-              'rooted': false,
-              'multiOpen': false,
+              'rooted': rooted,
+              'multiOpen': multiOpen,
             },
             'sig': sig,
           },
@@ -625,13 +1011,7 @@ class QfSessionController extends ChangeNotifier {
           _guestSeq = (data['serverSeq'] as num?)?.toInt() ?? _guestSeq;
           await prefs.setInt(_kGuestSeq, _guestSeq);
         }
-        guestUsage = QfGuestUsage.fromJson(data);
-        final was = guestExhausted;
-        guestExhausted = guestUsage?.exhausted ?? false;
-        notifyListeners();
-        if (guestExhausted && !was) {
-          await onGuestExhaustedFn?.call();
-        }
+        await _applyGuestUsage(data, notifyExhaustedTransition: true);
       }
     } catch (_) {
     } finally {

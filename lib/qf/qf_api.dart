@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:developer';
 import 'dart:io';
 
 import 'package:crypto/crypto.dart';
@@ -110,6 +111,7 @@ class QfProofHeaders {
         headers['X-Sim-Country'] = simCountry.toLowerCase();
       }
     } catch (_) {}
+    if (headers.isEmpty) return headers;
     return _cached = headers;
   }
 }
@@ -121,10 +123,18 @@ class QfManifestService {
     try {
       final data = await QfHttp.send('GET', QfConfig.manifestUrl);
       final manifest = QfReleaseManifest.fromJson(data);
+      if (QfVersion.tryParse(manifest.latestVersion) == null) {
+        log(
+          'release manifest parse failed; keeping last good cached manifest',
+          name: 'QFClash',
+        );
+        return null;
+      }
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(_cacheKey, jsonEncode(manifest.toJson()));
       return manifest;
-    } catch (_) {
+    } catch (e) {
+      log('release manifest fetch failed: $e', name: 'QFClash');
       return null;
     }
   }
