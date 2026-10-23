@@ -404,4 +404,161 @@ void main() {
       );
     });
   });
+
+  group('shared code countdown button', () {
+    testWidgets('success enters countdown, disables, then recovers', (
+      tester,
+    ) async {
+      var calls = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: QfCodeSendButton(
+              onSend: () async {
+                calls++;
+                return null;
+              },
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('发送验证码'));
+      await tester.pump();
+      expect(calls, 1);
+      expect(find.text('已发送（60 秒）'), findsOneWidget);
+      final button = tester.widget<TextButton>(
+        find.ancestor(
+          of: find.text('已发送（60 秒）'),
+          matching: find.byType(TextButton),
+        ),
+      );
+      expect(button.onPressed, isNull);
+      await tester.pump(const Duration(seconds: 61));
+      expect(find.text('重新发送'), findsOneWidget);
+      await tester.tap(find.text('重新发送'));
+      await tester.pump();
+      expect(calls, 2);
+      await tester.pumpWidget(const MaterialApp(home: SizedBox()));
+    });
+
+    testWidgets('server-provided cooldown wins over the default', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(body: QfCodeSendButton(onSend: () async => 5)),
+        ),
+      );
+      await tester.tap(find.text('发送验证码'));
+      await tester.pump();
+      expect(find.text('已发送（5 秒）'), findsOneWidget);
+      await tester.pump(const Duration(seconds: 6));
+      expect(find.text('重新发送'), findsOneWidget);
+    });
+
+    testWidgets('failure reports the error and never starts countdown', (
+      tester,
+    ) async {
+      Object? captured;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: QfCodeSendButton(
+              onSend: () async {
+                throw const QfApiException(429, 'TOO_MANY', '发送过于频繁，请稍后再试');
+              },
+              onError: (error) => captured = error,
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('发送验证码'));
+      await tester.pump();
+      expect(captured, isA<QfApiException>());
+      expect(find.textContaining('已发送'), findsNothing);
+      expect(find.text('发送验证码'), findsOneWidget);
+      final button = tester.widget<TextButton>(
+        find.ancestor(
+          of: find.text('发送验证码'),
+          matching: find.byType(TextButton),
+        ),
+      );
+      expect(button.onPressed, isNotNull);
+    });
+
+    testWidgets('register form wiring counts down only on success', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(1080, 2600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      SharedPreferences.setMockInitialValues({});
+      final session = _FakeAccountSession();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(body: QfRegisterForm(session: session)),
+        ),
+      );
+      await tester.pump();
+      await tester.enterText(find.widgetWithText(TextField, '邮箱'), 'a@b.c');
+      await tester.tap(find.text('发送验证码'));
+      await tester.pump();
+      expect(session.registerCodeCalls, 1);
+      expect(find.text('已发送（60 秒）'), findsOneWidget);
+      await tester.pumpWidget(const MaterialApp(home: SizedBox()));
+    });
+
+    testWidgets('register form wiring shows failure without countdown', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(1080, 2600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      SharedPreferences.setMockInitialValues({});
+      final session = _FakeAccountSession();
+      session.codeError = const QfApiException(400, 'BAD_EMAIL', '邮箱格式不正确');
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(body: QfRegisterForm(session: session)),
+        ),
+      );
+      await tester.pump();
+      await tester.enterText(find.widgetWithText(TextField, '邮箱'), 'a@b.c');
+      await tester.tap(find.text('发送验证码'));
+      await tester.pump();
+      expect(find.textContaining('已发送'), findsNothing);
+      expect(find.text('邮箱格式不正确'), findsWidgets);
+    });
+
+    testWidgets('reset dialog wiring counts down on success', (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      final session = _FakeAccountSession();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (context) {
+                return TextButton(
+                  onPressed: () {
+                    showDialog<void>(
+                      context: context,
+                      builder: (_) => QfResetPasswordDialog(session: session),
+                    );
+                  },
+                  child: const Text('打开'),
+                );
+              },
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('打开'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('发送验证码'));
+      await tester.pump();
+      expect(session.resetCodeCalls, 1);
+      expect(find.text('已发送（60 秒）'), findsOneWidget);
+      await tester.pumpWidget(const MaterialApp(home: SizedBox()));
+    });
+  });
 }

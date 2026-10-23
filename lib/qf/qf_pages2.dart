@@ -826,20 +826,16 @@ class _QfChangePasswordDialogState extends State<_QfChangePasswordDialog> {
                 controller: _code,
                 label: '邮箱验证码',
                 keyboardType: TextInputType.number,
-                suffix: TextButton(
-                  onPressed: () async {
-                    try {
-                      await widget.session.authed(
-                        'POST',
-                        '/security/password/code',
-                        body: {},
-                      );
-                      if (mounted) qfToast(context, '验证码已经发到您的邮箱了');
-                    } on QfApiException catch (e) {
-                      if (mounted) qfToast(context, e.message);
-                    }
+                suffix: QfCodeSendButton(
+                  onSend: () async {
+                    await widget.session.authed(
+                      'POST',
+                      '/security/password/code',
+                      body: {},
+                    );
+                    if (mounted) qfToast(context, '验证码已经发到您的邮箱了');
+                    return null;
                   },
-                  child: const Text('发送验证码'),
                 ),
               )
             else if (_method == 1)
@@ -961,15 +957,16 @@ class _QfChangeEmailDialogState extends State<_QfChangeEmailDialog> {
               controller: _oldCode,
               label: '原邮箱验证码',
               keyboardType: TextInputType.number,
-              suffix: TextButton(
-                onPressed: () => _run(
-                  () => widget.session.authed(
+              suffix: QfCodeSendButton(
+                onSend: () async {
+                  await widget.session.authed(
                     'POST',
                     '/security/email/request-old-code',
                     body: {},
-                  ),
-                ),
-                child: const Text('发送验证码'),
+                  );
+                  if (mounted) qfToast(context, '验证码发送成功，请查收邮箱');
+                  return null;
+                },
               ),
             ),
             const SizedBox(height: 12),
@@ -983,15 +980,16 @@ class _QfChangeEmailDialogState extends State<_QfChangeEmailDialog> {
               controller: _newCode,
               label: '新邮箱验证码',
               keyboardType: TextInputType.number,
-              suffix: TextButton(
-                onPressed: () => _run(
-                  () => widget.session.authed(
+              suffix: QfCodeSendButton(
+                onSend: () async {
+                  await widget.session.authed(
                     'POST',
                     '/security/email/request-new-code',
                     body: {'newEmail': _newEmail.text},
-                  ),
-                ),
-                child: const Text('发送验证码'),
+                  );
+                  if (mounted) qfToast(context, '验证码发送成功，请查收邮箱');
+                  return null;
+                },
               ),
             ),
           ],

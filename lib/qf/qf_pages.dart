@@ -83,6 +83,98 @@ class QfField extends StatelessWidget {
   }
 }
 
+class _QfSendAborted implements Exception {
+  const _QfSendAborted();
+}
+
+class QfCodeSendButton extends StatefulWidget {
+  final Future<int?> Function() onSend;
+  final void Function(Object error)? onError;
+  final String label;
+  final String resendLabel;
+  final bool enabled;
+
+  const QfCodeSendButton({
+    super.key,
+    required this.onSend,
+    this.onError,
+    this.label = '发送验证码',
+    this.resendLabel = '重新发送',
+    this.enabled = true,
+  });
+
+  @override
+  State<QfCodeSendButton> createState() => _QfCodeSendButtonState();
+}
+
+class _QfCodeSendButtonState extends State<QfCodeSendButton> {
+  Timer? _timer;
+  int _secondsLeft = 0;
+  bool _sending = false;
+  bool _sent = false;
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _tap() async {
+    if (_sending || _secondsLeft > 0 || !widget.enabled) return;
+    setState(() => _sending = true);
+    try {
+      final serverSeconds = await widget.onSend();
+      if (!mounted) return;
+      final seconds = (serverSeconds ?? 60) > 0 ? (serverSeconds ?? 60) : 60;
+      setState(() {
+        _sending = false;
+        _sent = true;
+        _secondsLeft = seconds;
+      });
+      _timer?.cancel();
+      _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
+        if (!mounted) {
+          timer.cancel();
+          return;
+        }
+        setState(() {
+          _secondsLeft -= 1;
+          if (_secondsLeft <= 0) {
+            _secondsLeft = 0;
+            timer.cancel();
+          }
+        });
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _sending = false);
+      final onError = widget.onError;
+      if (onError != null) {
+        onError(e);
+      } else {
+        qfToast(context, qfAccountErrorMessage(e));
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final counting = _secondsLeft > 0;
+    return TextButton(
+      onPressed: _sending || counting || !widget.enabled ? null : _tap,
+      child: Text(
+        counting
+            ? '已发送（$_secondsLeft 秒）'
+            : _sending
+            ? '发送中……'
+            : _sent
+            ? widget.resendLabel
+            : widget.label,
+      ),
+    );
+  }
+}
+
 class QfEntryPage extends StatefulWidget {
   final QfSessionController session;
   final VoidCallback onAbout;
@@ -576,10 +668,7 @@ class _QfLoginFormState extends State<QfLoginForm> {
             label: '邮箱验证码',
             error: _codeError,
             keyboardType: TextInputType.number,
-            suffix: TextButton(
-              onPressed: _sendCode,
-              child: const Text('发送验证码'),
-            ),
+            suffix: QfCodeSendButton(onSend: _sendLoginCode),
           ),
           const SizedBox(height: 8),
           const Text(
@@ -599,9 +688,11 @@ class _QfLoginFormState extends State<QfLoginForm> {
           const SizedBox(height: 8),
           Row(
             children: [
-              TextButton(
-                onPressed: _busy ? null : _resendStepUp,
-                child: const Text('重新发送验证码'),
+              QfCodeSendButton(
+                onSend: _resendStepUp,
+                label: '重新发送验证码',
+                resendLabel: '重新发送验证码',
+                enabled: !_busy,
               ),
               const Spacer(),
               FilledButton(
@@ -734,16 +825,12 @@ class _QfResetPasswordDialogState extends State<QfResetPasswordDialog> {
               controller: _code,
               label: '邮箱验证码',
               keyboardType: TextInputType.number,
-              suffix: TextButton(
-                onPressed: () async {
-                  try {
-                    await widget.session.resetRequestCode(_email.text);
-                    if (mounted) qfToast(context, '验证码已经发到您的邮箱了');
-                  } on QfApiException catch (e) {
-                    if (mounted) qfToast(context, e.message);
-                  }
+              suffix: QfCodeSendButton(
+                onSend: () async {
+                  await widget.session.resetRequestCode(_email.text);
+                  if (mounted) qfToast(context, '验证码已经发到您的邮箱了');
+                  return null;
                 },
-                child: const Text('发送验证码'),
               ),
             ),
             const SizedBox(height: 12),
@@ -806,17 +893,14 @@ class _QfRegisterFormState extends State<QfRegisterForm> {
     super.dispose();
   }
 
-  Future<void> _sendCode() async {
+  Future<int?> _sendRegisterCode() async {
     setState(() {
       _emailError = _email.text.trim().contains('@') ? null : '邮箱格式不正确';
     });
-    if (_emailError != null) return;
-    try {
-      await widget.session.registerRequestCode(_email.text);
-      if (mounted) qfToast(context, '验证码已经发到您的邮箱了');
-    } on QfApiException catch (e) {
-      if (mounted) setState(() => _emailError = e.message);
-    }
+    if (_emailError != null) throw const _QfSendAborted();
+    await widget.session.registerRequestCode(_email.text);
+    if (mounted) qfToast(context, '验证码已经发到您的邮箱了');
+    return null;
   }
 
   Future<void> _submit() async {
@@ -924,9 +1008,15 @@ class _QfRegisterFormState extends State<QfRegisterForm> {
           label: '邮箱验证码',
           error: _codeError,
           keyboardType: TextInputType.number,
-          suffix: TextButton(
-            onPressed: _busy ? null : _sendCode,
-            child: const Text('发送验证码'),
+          suffix: QfCodeSendButton(
+            onSend: _sendRegisterCode,
+            enabled: !_busy,
+            onError: (error) {
+              if (error is _QfSendAborted) return;
+              if (mounted) {
+                setState(() => _emailError = qfAccountErrorMessage(error));
+              }
+            },
           ),
         ),
         const SizedBox(height: 16),
@@ -2162,9 +2252,12 @@ class _QfRevealCodeDialogState extends State<_QfRevealCodeDialog> {
                       decoration: const InputDecoration(labelText: '邮箱验证码'),
                     ),
                   ),
-                  TextButton(
-                    onPressed: _cooldown > 0 ? null : _requestCode,
-                    child: Text(_cooldown > 0 ? '重新发送（$_cooldown 秒）' : '获取验证码'),
+                  QfCodeSendButton(
+                    onSend: _requestCode,
+
+                    label: '获取验证码',
+
+                    resendLabel: '重新发送',
                   ),
                 ],
               ),
