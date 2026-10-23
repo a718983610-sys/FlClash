@@ -259,12 +259,10 @@ class QfSessionController extends ChangeNotifier {
     _envEmulator = envEmulator;
     final prefs = await SharedPreferences.getInstance();
     rememberDevice = prefs.getBool(_kRemember) ?? true;
-    var secureOk = true;
     Future<String?> readSecure(String key) async {
       try {
         return await _secure.read(key: key);
       } catch (_) {
-        secureOk = false;
         return null;
       }
     }
