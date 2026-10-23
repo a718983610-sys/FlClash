@@ -162,6 +162,19 @@ class AboutView extends ConsumerWidget {
                 ),
             ],
           ),
+          generateSection(
+            title: '开源许可',
+            items: [
+              const ListItem(
+                leading: _LinkBadge(glyph: AppGlyphs.star),
+                title: const Text('Twemoji'),
+                subtitle: const Text(
+                  '聊天表情包图形来自 Twemoji（Twitter, Inc and other contributors），'
+                  '依据 CC-BY 4.0 许可使用。',
+                ),
+              ),
+            ],
+          ),
         ],
       ),
     );

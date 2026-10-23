@@ -518,6 +518,90 @@ class QfSessionController extends ChangeNotifier {
     return null;
   }
 
+  Future<Map<String, dynamic>> qfPostBinary(
+    String path,
+    Uint8List bytes, {
+    Map<String, String>? headers,
+  }) async {
+    await _refreshIfNeeded();
+    for (var attempt = 0; attempt < 2; attempt++) {
+      final client = HttpClient();
+      client.findProxy = (_) => 'DIRECT';
+      client.connectionTimeout = const Duration(seconds: 15);
+      try {
+        final request = await client.postUrl(Uri.parse('$serverBaseUrl$path'));
+        if (headers != null) {
+          headers.forEach((key, value) {
+            request.headers.set(key, value);
+          });
+        }
+        final token = _accessToken;
+        if (token != null && token.isNotEmpty) {
+          request.headers.set('Authorization', 'Bearer $token');
+        }
+        request.add(bytes);
+        final response = await request.close().timeout(
+          const Duration(seconds: 60),
+        );
+        final text = await response.transform(utf8.decoder).join();
+        Map<String, dynamic> data = {};
+        if (text.isNotEmpty) {
+          try {
+            final decoded = jsonDecode(text);
+            if (decoded is Map) data = Map<String, dynamic>.from(decoded);
+          } catch (_) {}
+        }
+        if (response.statusCode == 401 && attempt == 0) {
+          if (_refreshToken == null) {
+            throw QfApiException(
+              401,
+              (data['code'] ?? '').toString(),
+              (data['message'] ?? '登录状态已失效，请重新登录。').toString(),
+              data,
+            );
+          }
+          final refreshed = await _refreshIfNeeded(force: true);
+          if (!refreshed) {
+            await _clearUserSession();
+            mode = QfMode.entry;
+            notifyListeners();
+            throw QfApiException(
+              401,
+              (data['code'] ?? '').toString(),
+              '登录状态已失效，请重新登录。',
+              data,
+            );
+          }
+          continue;
+        }
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          throw QfApiException(
+            response.statusCode,
+            (data['code'] ?? '').toString(),
+            (data['message'] ?? '请求失败，请稍后重试').toString(),
+            data,
+          );
+        }
+        if (data['ok'] == false) {
+          throw QfApiException(
+            response.statusCode,
+            (data['code'] ?? '').toString(),
+            (data['message'] ?? '请求失败，请稍后重试').toString(),
+            data,
+          );
+        }
+        return data;
+      } on QfApiException {
+        rethrow;
+      } catch (_) {
+        throw const QfApiException(0, 'NETWORK', '网络连接失败，请检查网络后重试');
+      } finally {
+        client.close(force: true);
+      }
+    }
+    throw const QfApiException(0, 'NETWORK', '网络连接失败，请检查网络后重试');
+  }
+
   Future<bool> _refreshIfNeeded({bool force = false}) async {
     if (_refreshToken == null) return false;
     final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;

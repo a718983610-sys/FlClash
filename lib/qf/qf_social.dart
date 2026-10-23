@@ -1,17 +1,21 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:fl_clash/ui/ui.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'qf_api.dart';
+import 'qf_chat_media.dart';
 import 'qf_recovery.dart';
 import 'qf_signal.dart';
 import 'qf_pages.dart';
@@ -100,16 +104,18 @@ extension QfSocialApi on QfSessionController {
     required String msgId,
     required String ciphertext,
     required String nonce,
+    String? blobId,
   }) async {
     return authed(
       'POST',
       '/chat/send',
-      body: {
-        'to': toUserId,
-        'msgId': msgId,
-        'ciphertext': ciphertext,
-        'nonce': nonce,
-      },
+      body: qfChatSendBody(
+        toUserId,
+        msgId: msgId,
+        ciphertext: ciphertext,
+        nonce: nonce,
+        blobId: blobId,
+      ),
     );
   }
 
@@ -171,6 +177,22 @@ extension QfSocialApi on QfSessionController {
   }
 }
 
+Map<String, dynamic> qfChatSendBody(
+  int toUserId, {
+  required String msgId,
+  required String ciphertext,
+  required String nonce,
+  String? blobId,
+}) {
+  return {
+    'to': toUserId,
+    'msgId': msgId,
+    'ciphertext': ciphertext,
+    'nonce': nonce,
+    'blobId': ?blobId,
+  };
+}
+
 int _qfTsMillis(dynamic raw) {
   if (raw is num) {
     final value = raw.toInt();
@@ -187,6 +209,82 @@ int _qfTsMillis(dynamic raw) {
 }
 
 final Map<int, Uint8List?> _qfAvatarCache = {};
+
+void qfSetCachedAvatar(int userId, Uint8List bytes) {
+  _qfAvatarCache[userId] = bytes;
+}
+
+Future<Uint8List?> qfPickAndUploadAvatar(QfSessionController session) async {
+  final picker = ImagePicker();
+  final file = await picker.pickImage(source: ImageSource.gallery);
+  if (file == null) return null;
+  final bytes = await file.readAsBytes();
+  if (bytes.length > 200 * 1024) {
+    throw const QfApiException(0, 'AVATAR_TOO_LARGE', '头像图片过大，请选择小于 200KB 的图片');
+  }
+  await session.socialUpdateProfile({
+    'avatar': {'mime': _qfAvatarMime(file), 'dataBase64': base64Encode(bytes)},
+  });
+  final userId = session.userId;
+  if (userId != null) qfSetCachedAvatar(userId, bytes);
+  return bytes;
+}
+
+class QfMyAvatarButton extends StatefulWidget {
+  final QfSessionController session;
+  final String name;
+  final double radius;
+
+  const QfMyAvatarButton({
+    super.key,
+    required this.session,
+    required this.name,
+    this.radius = 28,
+  });
+
+  @override
+  State<QfMyAvatarButton> createState() => _QfMyAvatarButtonState();
+}
+
+class _QfMyAvatarButtonState extends State<QfMyAvatarButton> {
+  bool _busy = false;
+
+  Future<void> _pick() async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    try {
+      final bytes = await qfPickAndUploadAvatar(widget.session);
+      if (bytes != null && mounted) {
+        setState(() {});
+        qfToast(context, '头像已经更新');
+      }
+    } on QfApiException catch (e) {
+      if (mounted) qfToast(context, e.message);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final userId = widget.session.userId;
+    final cached = userId == null ? null : _qfAvatarCache[userId];
+    return GestureDetector(
+      onTap: _pick,
+      child: cached != null && cached.isNotEmpty
+          ? CircleAvatar(
+              radius: widget.radius,
+              backgroundImage: MemoryImage(cached),
+            )
+          : QfAvatarImage(
+              session: widget.session,
+              userId: userId,
+              name: widget.name,
+              radius: widget.radius,
+            ),
+    );
+  }
+}
 
 Widget _qfLetterAvatar(String name, double radius) {
   final label = name.isEmpty ? '?' : name.characters.first;
@@ -247,7 +345,8 @@ class _QfAvatarImageState extends State<QfAvatarImage> {
 
   @override
   Widget build(BuildContext context) {
-    final bytes = _bytes;
+    final userId = widget.userId;
+    final bytes = (userId == null ? null : _qfAvatarCache[userId]) ?? _bytes;
     if (bytes != null && bytes.isNotEmpty) {
       return CircleAvatar(
         radius: widget.radius,
@@ -423,23 +522,9 @@ class _QfProfilePageState extends State<QfProfilePage> {
   }
 
   Future<void> _pickAvatar() async {
-    final picker = ImagePicker();
-    final file = await picker.pickImage(source: ImageSource.gallery);
-    if (file == null) return;
-    final bytes = await file.readAsBytes();
-    if (bytes.length > 200 * 1024) {
-      if (mounted) qfToast(context, '头像图片过大，请选择小于 200KB 的图片');
-      return;
-    }
     try {
-      await widget.session.socialUpdateProfile({
-        'avatar': {
-          'mime': _qfAvatarMime(file),
-          'dataBase64': base64Encode(bytes),
-        },
-      });
-      final userId = widget.session.userId;
-      if (userId != null) _qfAvatarCache[userId] = bytes;
+      final bytes = await qfPickAndUploadAvatar(widget.session);
+      if (bytes == null) return;
       if (mounted) {
         setState(() {
           _avatarBytes = bytes;
@@ -650,13 +735,15 @@ class _QfProfilePageState extends State<QfProfilePage> {
                 Center(
                   child: Column(
                     children: [
-                      if (_avatarBytes != null)
-                        CircleAvatar(
-                          radius: 40,
-                          backgroundImage: MemoryImage(_avatarBytes!),
-                        )
-                      else
-                        _qfLetterAvatar(_nickname.text, 40),
+                      GestureDetector(
+                        onTap: _pickAvatar,
+                        child: _avatarBytes != null
+                            ? CircleAvatar(
+                                radius: 40,
+                                backgroundImage: MemoryImage(_avatarBytes!),
+                              )
+                            : _qfLetterAvatar(_nickname.text, 40),
+                      ),
                       TextButton(
                         onPressed: _pickAvatar,
                         child: const Text('更换头像'),
@@ -1305,12 +1392,37 @@ class QfChatPage extends StatefulWidget {
   State<QfChatPage> createState() => _QfChatPageState();
 }
 
+String _qfMimeForFileName(String name) {
+  final lower = name.toLowerCase();
+  if (lower.endsWith('.png')) return 'image/png';
+  if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';
+  if (lower.endsWith('.gif')) return 'image/gif';
+  if (lower.endsWith('.webp')) return 'image/webp';
+  if (lower.endsWith('.pdf')) return 'application/pdf';
+  if (lower.endsWith('.txt')) return 'text/plain';
+  if (lower.endsWith('.zip')) return 'application/zip';
+  if (lower.endsWith('.mp4')) return 'video/mp4';
+  if (lower.endsWith('.mp3')) return 'audio/mpeg';
+  return 'application/octet-stream';
+}
+
+String _qfFormatBytes(int bytes) {
+  if (bytes >= 1024 * 1024) {
+    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+  }
+  if (bytes >= 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+  return '$bytes B';
+}
+
 class _QfChatPageState extends State<QfChatPage> {
   final _input = TextEditingController();
   final List<Map<String, dynamic>> _messages = [];
+  final QfReactionMap _reactions = {};
+  final Map<String, Uint8List> _attachmentBytes = {};
   Timer? _timer;
   bool _loading = true;
   bool _historySyncing = false;
+  bool _sendingAttachment = false;
   String? _vaultNotice;
   List<dynamic> _recoveryRequests = const [];
   bool _recoveryBusy = false;
@@ -1318,6 +1430,10 @@ class _QfChatPageState extends State<QfChatPage> {
   int get _peerId => (widget.friend['userId'] as num).toInt();
 
   String get _peerName => (widget.friend['nickname'] ?? '').toString();
+
+  String get _myKey => '${widget.session.userId ?? 0}';
+
+  String _reactorKey(bool mine) => mine ? _myKey : '$_peerId';
 
   @override
   void initState() {
@@ -1466,6 +1582,7 @@ class _QfChatPageState extends State<QfChatPage> {
       final myId = widget.session.userId;
       final sentCache = await _sentCache();
       final decoded = <Map<String, dynamic>>[];
+      final reactions = <String, Map<String, String>>{};
       int? lastIncomingId;
       for (final raw in history) {
         if (raw is! Map) continue;
@@ -1494,13 +1611,24 @@ class _QfChatPageState extends State<QfChatPage> {
             : raw['id'] != null
             ? 'r-${raw['id']}'
             : 'c-$_peerId-$ts-${text.hashCode}';
-        decoded.add({
-          'mine': mine,
-          'text': text,
-          'createdAt': raw['createdAt'],
-          'ts': ts,
-          'localId': localId,
-        });
+        final payload = QfChatPayload.parse(text);
+        if (payload.kind == QfChatPayloadKind.reaction) {
+          QfReactions.apply(
+            reactions,
+            targetLocalId: payload.reactionTargetLocalId ?? '',
+            reactorKey: _reactorKey(mine),
+            emoji: payload.reactionEmoji,
+          );
+        } else {
+          decoded.add({
+            'mine': mine,
+            'text': payload.displayText,
+            'payload': payload,
+            'createdAt': raw['createdAt'],
+            'ts': ts,
+            'localId': localId,
+          });
+        }
         await QfChatHistoryVault.archiveMessage(
           QfHistoryRecord(
             localId: localId,
@@ -1520,9 +1648,20 @@ class _QfChatPageState extends State<QfChatPage> {
       final known = decoded.map((item) => item['localId']).toSet();
       for (final record in restored) {
         if (known.contains(record.localId)) continue;
+        final payload = QfChatPayload.parse(record.text);
+        if (payload.kind == QfChatPayloadKind.reaction) {
+          QfReactions.apply(
+            reactions,
+            targetLocalId: payload.reactionTargetLocalId ?? '',
+            reactorKey: _reactorKey(record.mine),
+            emoji: payload.reactionEmoji,
+          );
+          continue;
+        }
         decoded.add({
           'mine': record.mine,
-          'text': record.text,
+          'text': payload.displayText,
+          'payload': payload,
           'createdAt': record.ts,
           'ts': record.ts,
           'localId': record.localId,
@@ -1536,6 +1675,9 @@ class _QfChatPageState extends State<QfChatPage> {
           _messages
             ..clear()
             ..addAll(decoded);
+          _reactions
+            ..clear()
+            ..addAll(reactions);
           _loading = false;
         });
       }
@@ -1545,16 +1687,26 @@ class _QfChatPageState extends State<QfChatPage> {
         final restored = await QfChatHistoryVault.localRecordsFor(_peerId);
         if (mounted && restored.isNotEmpty && _messages.isEmpty) {
           setState(() {
-            _messages.addAll([
-              for (final record in restored)
-                {
-                  'mine': record.mine,
-                  'text': record.text,
-                  'createdAt': record.ts,
-                  'ts': record.ts,
-                  'localId': record.localId,
-                },
-            ]);
+            for (final record in restored) {
+              final payload = QfChatPayload.parse(record.text);
+              if (payload.kind == QfChatPayloadKind.reaction) {
+                QfReactions.apply(
+                  _reactions,
+                  targetLocalId: payload.reactionTargetLocalId ?? '',
+                  reactorKey: _reactorKey(record.mine),
+                  emoji: payload.reactionEmoji,
+                );
+                continue;
+              }
+              _messages.add({
+                'mine': record.mine,
+                'text': payload.displayText,
+                'payload': payload,
+                'createdAt': record.ts,
+                'ts': record.ts,
+                'localId': record.localId,
+              });
+            }
           });
         }
       } catch (_) {}
@@ -1562,15 +1714,13 @@ class _QfChatPageState extends State<QfChatPage> {
     }
   }
 
-  Future<void> _send() async {
-    final text = _input.text.trim();
-    if (text.isEmpty) return;
+  Future<bool> _deliver(String wireText, {String? blobId}) async {
     try {
       await QfSignalManager.ensureInstalled(widget.session);
       final sealed = await QfSignalManager.encryptFor(
         widget.session,
         _peerId,
-        text,
+        wireText,
       );
       final msgId =
           'qf-${DateTime.now().millisecondsSinceEpoch}-${Random().nextInt(4294967296)}';
@@ -1579,22 +1729,23 @@ class _QfChatPageState extends State<QfChatPage> {
         msgId: msgId,
         ciphertext: sealed.ciphertext,
         nonce: sealed.nonce,
+        blobId: blobId,
       );
-      await _cacheSent((result['msgId'] ?? msgId).toString(), text);
+      await _cacheSent((result['msgId'] ?? msgId).toString(), wireText);
       final serverId = result['id'];
-      if (serverId != null) await _cacheSent('$serverId', text);
+      if (serverId != null) await _cacheSent('$serverId', wireText);
       await QfChatHistoryVault.archiveMessage(
         QfHistoryRecord(
           localId: 'm-${(result['msgId'] ?? msgId).toString()}',
           peerId: _peerId,
           mine: true,
-          text: text,
+          text: wireText,
           ts: DateTime.now().millisecondsSinceEpoch,
         ),
       );
       unawaited(_pushHistoryQuietly());
-      _input.clear();
       await _load();
+      return true;
     } on StateError {
       if (mounted) qfToast(context, '对方尚未启用聊天加密，暂时无法发送消息。');
     } on QfApiException catch (e) {
@@ -1607,6 +1758,424 @@ class _QfChatPageState extends State<QfChatPage> {
       }
     } catch (_) {
       if (mounted) qfToast(context, '发送失败：网络或接口错误，请检查网络后重试。');
+    }
+    return false;
+  }
+
+  Future<void> _send() async {
+    final text = _input.text.trim();
+    if (text.isEmpty) return;
+    if (await _deliver(text)) _input.clear();
+  }
+
+  Future<void> _sendSticker(String id) async {
+    await _deliver(QfChatPayload.sticker(id).encode());
+  }
+
+  Future<void> _sendReaction(String targetLocalId, String tapped) async {
+    final previous = _reactions[targetLocalId]?[_myKey];
+    final next = QfReactions.nextEmoji(current: previous, tapped: tapped);
+    setState(() {
+      QfReactions.apply(
+        _reactions,
+        targetLocalId: targetLocalId,
+        reactorKey: _myKey,
+        emoji: next,
+      );
+    });
+    final ok = await _deliver(
+      QfChatPayload.reaction(targetLocalId, next).encode(),
+    );
+    if (!ok && mounted) {
+      setState(() {
+        QfReactions.apply(
+          _reactions,
+          targetLocalId: targetLocalId,
+          reactorKey: _myKey,
+          emoji: previous ?? '',
+        );
+      });
+      qfToast(context, '回应发送失败，请稍后重试。');
+    }
+  }
+
+  Future<void> _pickAndSendAttachment() async {
+    if (_sendingAttachment) return;
+    final reachable = await QfSignalManager.peerReachable(
+      widget.session,
+      _peerId,
+    );
+    if (!reachable) {
+      if (mounted) qfToast(context, '对方尚未启用聊天加密，暂时无法发送附件。');
+      return;
+    }
+    final picked = await FilePicker.pickFile();
+    if (picked == null) return;
+    final Uint8List bytes;
+    try {
+      bytes = await picked.readAsBytes();
+    } catch (_) {
+      if (mounted) qfToast(context, '附件读取失败，请重新选择。');
+      return;
+    }
+    if (bytes.length > qfAttachmentMaxBytes) {
+      if (mounted) qfToast(context, qfAttachmentTooLargeMessage);
+      return;
+    }
+    setState(() => _sendingAttachment = true);
+    try {
+      final sealedBlob = QfBlobCrypto.seal(bytes);
+      final blobId = await widget.session.chatUploadBlob(
+        recipientId: _peerId,
+        cipher: sealedBlob.cipher,
+        cipherSha256: sealedBlob.cipherSha256,
+      );
+      final ref = QfAttachmentRef(
+        blobId: blobId,
+        fileKey: sealedBlob.fileKey,
+        nonce: sealedBlob.nonce,
+        cipherSha256: sealedBlob.cipherSha256,
+        name: picked.name,
+        mime: _qfMimeForFileName(picked.name),
+        size: bytes.length,
+      );
+      await _deliver(QfChatPayload.attachment(ref).encode(), blobId: blobId);
+    } on QfApiException catch (e) {
+      if (mounted) qfToast(context, qfAttachmentErrorMessage(e));
+    } catch (_) {
+      if (mounted) qfToast(context, '附件发送失败，请稍后重试。');
+    } finally {
+      if (mounted) setState(() => _sendingAttachment = false);
+    }
+  }
+
+  Future<void> _openAttachment(QfAttachmentRef ref) async {
+    try {
+      var plain = _attachmentBytes[ref.blobId];
+      if (plain == null) {
+        final cipher = await widget.session.chatDownloadBlob(ref.blobId);
+        if (cipher == null) {
+          if (mounted) qfToast(context, '附件下载失败，请稍后重试。');
+          return;
+        }
+        plain = QfBlobCrypto.open(ref, cipher);
+        _attachmentBytes[ref.blobId] = plain;
+      }
+      if (!mounted) return;
+      if (ref.isImage) {
+        await showDialog<void>(
+          context: context,
+          builder: (dialogContext) {
+            return AlertDialog(
+              title: Text(ref.name),
+              content: Image.memory(plain!),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: const Text('关闭'),
+                ),
+              ],
+            );
+          },
+        );
+        return;
+      }
+      final dir = await getApplicationDocumentsDirectory();
+      final folder = Directory('${dir.path}/qf_attachments');
+      await folder.create(recursive: true);
+      final safeName = ref.name.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
+      await File('${folder.path}/$safeName').writeAsBytes(plain);
+      if (mounted) qfToast(context, '已保存：${ref.name}');
+    } on QfChatMediaException catch (e) {
+      if (mounted) qfToast(context, e.message);
+    } catch (_) {
+      if (mounted) qfToast(context, '附件下载失败，请稍后重试。');
+    }
+  }
+
+  Future<void> _deleteForEveryone(Map<String, dynamic> message) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('删除消息'),
+          content: const Text('删除后将同时删除您在本机的记录；如消息包含附件，附件将一并删除。'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('删除'),
+            ),
+          ],
+        );
+      },
+    );
+    if (confirmed != true) return;
+    final payload = message['payload'] as QfChatPayload?;
+    final ref = payload?.attachment;
+    if (ref != null) {
+      try {
+        await widget.session.chatDeleteBlob(ref.blobId);
+      } catch (_) {}
+      _attachmentBytes.remove(ref.blobId);
+    }
+    final localId = (message['localId'] ?? '').toString();
+    await QfChatHistoryVault.removeLocalRecord(localId);
+    if (mounted) {
+      setState(() {
+        _messages.removeWhere((item) => item['localId'] == localId);
+      });
+      qfToast(context, '消息已经删除。');
+    }
+  }
+
+  void _insertEmoji(String emoji) {
+    final value = _input.value;
+    final start = value.selection.start < 0
+        ? value.text.length
+        : value.selection.start;
+    final end = value.selection.end < 0
+        ? value.text.length
+        : value.selection.end;
+    final next = value.text.replaceRange(start, end, emoji);
+    _input.value = TextEditingValue(
+      text: next,
+      selection: TextSelection.collapsed(offset: start + emoji.length),
+    );
+  }
+
+  Future<void> _showEmojiPanel({String? reactionTarget}) async {
+    var group = qfUnicodeEmojiGroups.keys.first;
+    await showModalBottomSheet<void>(
+      context: context,
+      builder: (sheetContext) {
+        return StatefulBuilder(
+          builder: (stateContext, setSheetState) {
+            return DefaultTabController(
+              length: reactionTarget == null ? 2 : 1,
+              child: SizedBox(
+                height: 380,
+                child: Column(
+                  children: [
+                    TabBar(
+                      tabs: [
+                        const Tab(text: '表情'),
+                        if (reactionTarget == null) const Tab(text: '表情包'),
+                      ],
+                    ),
+                    Expanded(
+                      child: TabBarView(
+                        children: [
+                          Column(
+                            children: [
+                              SingleChildScrollView(
+                                scrollDirection: Axis.horizontal,
+                                child: Row(
+                                  children: [
+                                    for (final name
+                                        in qfUnicodeEmojiGroups.keys)
+                                      Padding(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 4,
+                                        ),
+                                        child: ChoiceChip(
+                                          label: Text(name),
+                                          selected: group == name,
+                                          onSelected: (_) {
+                                            setSheetState(() => group = name);
+                                          },
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              ),
+                              Expanded(
+                                child: GridView.builder(
+                                  padding: const EdgeInsets.all(8),
+                                  gridDelegate:
+                                      const SliverGridDelegateWithFixedCrossAxisCount(
+                                        crossAxisCount: 8,
+                                      ),
+                                  itemCount:
+                                      qfUnicodeEmojiGroups[group]!.length,
+                                  itemBuilder: (itemContext, index) {
+                                    final emoji =
+                                        qfUnicodeEmojiGroups[group]![index];
+                                    return InkWell(
+                                      customBorder: AppShape.md,
+                                      onTap: () {
+                                        Navigator.of(sheetContext).pop();
+                                        if (reactionTarget != null) {
+                                          unawaited(
+                                            _sendReaction(
+                                              reactionTarget,
+                                              emoji,
+                                            ),
+                                          );
+                                        } else {
+                                          _insertEmoji(emoji);
+                                        }
+                                      },
+                                      child: Center(
+                                        child: Text(
+                                          emoji,
+                                          style: AppTextStyle.custom(
+                                            itemContext,
+                                            size: 24,
+                                            leading: 30,
+                                          ),
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                ),
+                              ),
+                            ],
+                          ),
+                          if (reactionTarget == null)
+                            GridView.builder(
+                              padding: const EdgeInsets.all(8),
+                              gridDelegate:
+                                  const SliverGridDelegateWithFixedCrossAxisCount(
+                                    crossAxisCount: 6,
+                                  ),
+                              itemCount: qfTwemojiStickerIds.length,
+                              itemBuilder: (itemContext, index) {
+                                final id = qfTwemojiStickerIds[index];
+                                return InkWell(
+                                  customBorder: AppShape.md,
+                                  onTap: () {
+                                    Navigator.of(sheetContext).pop();
+                                    unawaited(_sendSticker(id));
+                                  },
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(6),
+                                    child: Image.asset(qfStickerAsset(id)),
+                                  ),
+                                );
+                              },
+                            ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<void> _showMessageMenu(Map<String, dynamic> message) async {
+    final localId = (message['localId'] ?? '').toString();
+    final mine = message['mine'] == true;
+    await showModalBottomSheet<void>(
+      context: context,
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 8,
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [
+                    for (final emoji in qfQuickReactions)
+                      InkWell(
+                        customBorder: AppShape.full,
+                        onTap: () {
+                          Navigator.of(sheetContext).pop();
+                          unawaited(_sendReaction(localId, emoji));
+                        },
+                        child: Padding(
+                          padding: const EdgeInsets.all(6),
+                          child: Text(
+                            emoji,
+                            style: AppTextStyle.custom(
+                              sheetContext,
+                              size: 26,
+                              leading: 32,
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              ListTile(
+                leading: const GlyphIcon(AppGlyphs.addCircle),
+                title: const Text('更多表情回应'),
+                onTap: () {
+                  Navigator.of(sheetContext).pop();
+                  unawaited(_showEmojiPanel(reactionTarget: localId));
+                },
+              ),
+              if (mine)
+                ListTile(
+                  leading: const GlyphIcon(AppGlyphs.delete),
+                  title: const Text('删除（对所有人）'),
+                  onTap: () {
+                    Navigator.of(sheetContext).pop();
+                    unawaited(_deleteForEveryone(message));
+                  },
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _messageContent(Map<String, dynamic> message) {
+    final payload =
+        message['payload'] as QfChatPayload? ??
+        QfChatPayload.text((message['text'] ?? '').toString());
+    switch (payload.kind) {
+      case QfChatPayloadKind.sticker:
+        return Image.asset(
+          qfStickerAsset(payload.stickerId ?? ''),
+          width: 96,
+          height: 96,
+          errorBuilder: (errorContext, error, stack) => const Text('表情'),
+        );
+      case QfChatPayloadKind.attachment:
+        final ref = payload.attachment!;
+        return GestureDetector(
+          onTap: () => unawaited(_openAttachment(ref)),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              GlyphIcon(ref.isImage ? AppGlyphs.photos : AppGlyphs.add),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(ref.name),
+                    Text(
+                      ref.isImage
+                          ? '图片附件（${_qfFormatBytes(ref.size)}），点击查看'
+                          : '文件附件（${_qfFormatBytes(ref.size)}），点击保存',
+                      style: AppTextStyle.caption1.of(context),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      case QfChatPayloadKind.text:
+      case QfChatPayloadKind.reaction:
+        return Text(payload.displayText);
     }
   }
 
@@ -1736,34 +2305,110 @@ class _QfChatPageState extends State<QfChatPage> {
                     itemBuilder: (context, index) {
                       final message = _messages[index];
                       final mine = message['mine'] == true;
+                      final localId = (message['localId'] ?? '').toString();
+                      final summary = QfReactions.summary(
+                        _reactions,
+                        localId,
+                        _myKey,
+                      );
                       return Align(
                         alignment: mine
                             ? Alignment.centerRight
                             : Alignment.centerLeft,
-                        child: Container(
-                          margin: const EdgeInsets.symmetric(vertical: 4),
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 8,
+                        child: GestureDetector(
+                          onLongPress: () =>
+                              unawaited(_showMessageMenu(message)),
+                          child: Column(
+                            crossAxisAlignment: mine
+                                ? CrossAxisAlignment.end
+                                : CrossAxisAlignment.start,
+                            children: [
+                              Container(
+                                margin: const EdgeInsets.symmetric(vertical: 4),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 8,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: mine
+                                      ? Theme.of(
+                                          context,
+                                        ).colorScheme.primaryContainer
+                                      : Theme.of(
+                                          context,
+                                        ).colorScheme.surfaceContainerHighest,
+                                ),
+                                child: _messageContent(message),
+                              ),
+                              if (summary.isNotEmpty)
+                                Padding(
+                                  padding: const EdgeInsets.only(bottom: 4),
+                                  child: Wrap(
+                                    spacing: 4,
+                                    children: [
+                                      for (final item in summary)
+                                        DecoratedBox(
+                                          decoration: ShapeDecoration(
+                                            color: item.mine
+                                                ? Theme.of(
+                                                    context,
+                                                  ).colorScheme.primaryContainer
+                                                : Theme.of(context)
+                                                      .colorScheme
+                                                      .surfaceContainerHighest,
+                                            shape: AppShape.full,
+                                          ),
+                                          child: Padding(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 8,
+                                              vertical: 2,
+                                            ),
+                                            child: Text(
+                                              item.count > 1
+                                                  ? '${item.emoji} ${item.count}'
+                                                  : item.emoji,
+                                            ),
+                                          ),
+                                        ),
+                                    ],
+                                  ),
+                                ),
+                            ],
                           ),
-                          decoration: BoxDecoration(
-                            color: mine
-                                ? Theme.of(context).colorScheme.primaryContainer
-                                : Theme.of(
-                                    context,
-                                  ).colorScheme.surfaceContainerHighest,
-                          ),
-                          child: Text((message['text'] ?? '').toString()),
                         ),
                       );
                     },
                   ),
           ),
+          if (_sendingAttachment)
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 12),
+              child: Text('附件发送中，请稍候。'),
+            ),
           SafeArea(
             child: Padding(
               padding: const EdgeInsets.all(8),
               child: Row(
                 children: [
+                  IconButton(
+                    tooltip: '表情',
+                    onPressed: () => unawaited(_showEmojiPanel()),
+                    icon: Text(
+                      '😊',
+                      style: AppTextStyle.custom(
+                        context,
+                        size: 22,
+                        leading: 28,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: '添加附件',
+                    onPressed: _sendingAttachment
+                        ? null
+                        : () => unawaited(_pickAndSendAttachment()),
+                    icon: const GlyphIcon(AppGlyphs.add),
+                  ),
                   Expanded(
                     child: TextField(
                       controller: _input,

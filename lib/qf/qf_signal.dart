@@ -386,6 +386,19 @@ class QfSignalManager {
     } catch (_) {}
   }
 
+  static Future<bool> peerReachable(
+    QfSessionController session,
+    int userId,
+  ) async {
+    try {
+      final store = await QfSignalStore.load();
+      if (await store.containsSession(_address(userId))) return true;
+      return await _fetchBundle(session, userId) != null;
+    } catch (_) {
+      return false;
+    }
+  }
+
   static Future<PreKeyBundle?> _fetchBundle(
     QfSessionController session,
     int userId,
@@ -978,6 +991,30 @@ class QfChatHistoryVault {
     return true;
   }
 
+  static const String _kTombstones = 'qf_chathistory_tombstones_v1';
+
+  static Future<Set<String>> _loadTombstones() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_kTombstones);
+    if (raw == null || raw.isEmpty) return {};
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is List) return decoded.map((e) => e.toString()).toSet();
+    } catch (_) {}
+    return {};
+  }
+
+  static Future<void> removeLocalRecord(String localId) async {
+    final records = await localRecords();
+    await _saveLocal(
+      records.where((record) => record.localId != localId).toList(),
+    );
+    final prefs = await SharedPreferences.getInstance();
+    final tombstones = await _loadTombstones()
+      ..add(localId);
+    await prefs.setString(_kTombstones, jsonEncode(tombstones.toList()));
+  }
+
   static Future<void> unlock({
     required QfSessionController session,
     required String password,
@@ -1011,6 +1048,7 @@ class QfChatHistoryVault {
     final uploaded = await _loadUploaded();
     final seqMap = await _loadSeqMap();
     final pendingDeletes = await _loadPendingDeletes();
+    final tombstones = await _loadTombstones();
     var restored = 0;
     var maxSeq = totals.maxSeq;
     var totalEntries = totals.totalEntries;
@@ -1031,6 +1069,7 @@ class QfChatHistoryVault {
           );
           if (record == null || seq == null) continue;
           if (pendingDeletes.contains(record.peerId)) continue;
+          if (tombstones.contains(record.localId)) continue;
           seqMap['$seq'] = record.localId;
           uploaded.add(record.localId);
           if (knownIds.add(record.localId)) {

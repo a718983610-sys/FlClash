@@ -1158,10 +1158,23 @@ class QfMinePage extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        session.email ?? '',
-                        style: AppTextStyle.headline.of(context),
+                      Row(
+                        children: [
+                          QfMyAvatarButton(
+                            session: session,
+                            name: session.email ?? '',
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              session.email ?? '',
+                              style: AppTextStyle.headline.of(context),
+                            ),
+                          ),
+                        ],
                       ),
+                      const SizedBox(height: 4),
+                      const Text('点击头像可更换头像'),
                       const SizedBox(height: 4),
                       const Text(QfCopy.loginBenefit),
                       const SizedBox(height: 12),

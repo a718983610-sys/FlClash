@@ -1,0 +1,23 @@
+Twemoji Graphics — Attribution Notice
+=====================================
+
+The PNG images in this directory are a curated subset (133 images, 72x72)
+of the Twemoji graphics set, taken verbatim from the official Twemoji
+repository:
+
+  Source: https://github.com/twitter/twemoji (tag v14.0.2)
+  Files:  assets/72x72/<codepoint>.png, retrieved via the jsDelivr CDN
+          mirror https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/
+
+Copyright 2020 Twitter, Inc and other contributors.
+
+The Twemoji graphics are licensed under the Creative Commons
+Attribution 4.0 International License (CC-BY 4.0):
+https://creativecommons.org/licenses/by/4.0/
+
+Attribution: "Graphics: Twemoji by Twitter, Inc and other contributors,
+licensed under CC-BY 4.0."
+
+The Twemoji code (not included here) is licensed under the MIT License.
+No image in this directory has been modified other than selection of a
+subset of the upstream set.
