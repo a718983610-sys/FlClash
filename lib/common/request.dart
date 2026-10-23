@@ -85,45 +85,47 @@ class Request {
     }
   }
 
-  /// Null when this build is current; throws when GitHub cannot be asked.
+  /// QFClash: releases are split per platform (tags `android-v<version>` and
+  /// `windows-v<version>`); the update check only ever matches the release
+  /// channel of the platform this build is running on.
+  String get _platformTagPrefix => Platform.isAndroid
+      ? 'android-v'
+      : Platform.isWindows
+      ? 'windows-v'
+      : '';
+
+  /// Null when this build is current (or has no release channel);
+  /// throws when GitHub cannot be asked.
   Future<Map<String, dynamic>?> checkForUpdate() async {
-    final release = await latestRelease();
-    final remoteVersion = release['tag_name'] as String;
+    final prefix = _platformTagPrefix;
+    if (prefix.isEmpty) return null;
+    final release = await latestPlatformRelease(prefix);
+    if (release == null) return null;
+    final remoteVersion = (release['tag_name'] as String).substring(
+      prefix.length,
+    );
     final version = globalState.packageInfo.version;
-    final hasUpdate =
-        compareVersions(remoteVersion.replaceAll('v', ''), version) > 0;
+    final hasUpdate = compareVersions(remoteVersion, version) > 0;
     return hasUpdate ? release : null;
   }
 
-  /// The release page redirect still answers once the hourly API quota is spent.
+  /// The newest published (non-draft, non-prerelease) release whose tag
+  /// carries [prefix], or null when there is none. The old releases/latest
+  /// redirect fallback is intentionally gone: it cannot filter by platform,
+  /// and a wrong-platform prompt is worse than no prompt.
   @visibleForTesting
-  Future<Map<String, dynamic>> latestRelease() async {
-    try {
-      final response = await dio.get<Map<String, dynamic>>(
-        'https://api.github.com/repos/$repository/releases/latest',
-        options: Options(responseType: ResponseType.json),
-      );
-      return response.data!;
-    } on DioException catch (error) {
-      commonPrint.log(
-        'latest release API failed: ${compactError(error)}',
-        logLevel: LogLevel.warning,
-      );
-    }
-    final response = await dio.get<void>(
-      'https://github.com/$repository/releases/latest',
-      options: Options(
-        followRedirects: false,
-        validateStatus: (status) => status != null && status < 400,
-      ),
+  Future<Map<String, dynamic>?> latestPlatformRelease(String prefix) async {
+    final response = await dio.get<List<dynamic>>(
+      'https://api.github.com/repos/$repository/releases?per_page=20',
+      options: Options(responseType: ResponseType.json),
     );
-    final location = response.headers.value(HttpHeaders.locationHeader);
-    final segments = Uri.tryParse(location ?? '')?.pathSegments ?? const [];
-    final tagIndex = segments.indexOf('tag') + 1;
-    if (tagIndex == 0 || tagIndex >= segments.length) {
-      throw FormatException('No release tag in the redirect', location);
+    for (final item in response.data ?? const []) {
+      final release = Map<String, dynamic>.from(item as Map);
+      if (release['draft'] == true || release['prerelease'] == true) continue;
+      final tag = release['tag_name'] as String? ?? '';
+      if (tag.startsWith(prefix)) return release;
     }
-    return {'tag_name': segments[tagIndex]};
+    return null;
   }
 }
 

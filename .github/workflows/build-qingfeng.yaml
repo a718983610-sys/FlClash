@@ -1,0 +1,114 @@
+# QFClash 专属构建 workflow（放到 fork 仓库的 .github/workflows/build-qingfeng.yaml）
+# 与上游 build.yaml 的区别：
+#   - 上游 build 任务带仓库名门禁（只在 chen08209/FlClash 仓库、推 v* 标签时跑），fork 里不会触发，故单独建此文件；
+#   - 只构建 Android arm64 一个平台；签名沿用上游同名 Secrets：KEYSTORE(base64)、KEY_ALIAS、STORE_PASSWORD、KEY_PASSWORD；
+#   - 产物除 Actions 附件外，另发布到 GitHub Release，便于外部直接取包。
+# 触发：手动 Run workflow，或推送 v* 标签。
+
+name: build-qingfeng-android
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+env:
+  FLUTTER_VERSION: '3.47.6'
+  GO_VERSION: '1.27.1'
+  NDK_VERSION: r28c
+  BRANCH_CACHE: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  android:
+    name: QFClash Android arm64
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Android Signing
+        run: |
+          echo "${{ secrets.KEYSTORE }}" | base64 --decode > android/app/keystore.jks
+          {
+            echo "keyAlias=${{ secrets.KEY_ALIAS }}"
+            echo "storePassword=${{ secrets.STORE_PASSWORD }}"
+            echo "keyPassword=${{ secrets.KEY_PASSWORD }}"
+          } >> android/local.properties
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: ${{ env.BRANCH_CACHE }}
+          cache-dependency-path: core/go.sum
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: ${{ env.BRANCH_CACHE }}
+
+      - name: Setup NDK
+        uses: nttld/setup-ndk@v1
+        id: build-ndk
+        with:
+          ndk-version: ${{ env.NDK_VERSION }}
+          add-to-path: true
+          link-to-sdk: true
+
+      - name: Get Flutter Dependency
+        run: |
+          flutter --version
+          flutter pub get
+
+      - name: Fetch CA certificates
+        env:
+          CA_BUNDLE: cacert-2026-09-25.pem
+          CA_BUNDLE_SHA256: a41b5d356aea97a529fe27e0f7316d2f9d946d75927476cf9cf1b90637d00505
+        run: |
+          bundle=core/Clash.Meta/component/ca/ca-certificates.crt
+          curl -fsSL --retry 3 -o "$bundle" "https://curl.se/ca/$CA_BUNDLE"
+          echo "$CA_BUNDLE_SHA256  $bundle" | sha256sum -c -
+
+      - name: Build
+        env:
+          ANDROID_NDK_HOME: ${{ steps.build-ndk.outputs.ndk-path }}
+        run: dart setup.dart android --env stable -v
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: qfclash-android
+          path: ./dist
+          overwrite: true
+
+      - name: Publish APK to Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # 发布规矩（用户定）：安卓与 Windows 分开发布、文件名自带平台标识。
+          # 安卓标签固定 android-v<版本号>；App 内检查更新按平台前缀只认本平台
+          # （补丁 qfclash-update-platform.patch），绝不串到 Windows 的发布。
+          # 同版本重出时降为 -pre.N 预发布（检查更新会跳过预发布，不误报）。
+          VERSION=$(grep -E '^version:' pubspec.yaml | sed -E 's/^version: *([0-9]+\.[0-9]+\.[0-9]+).*/\1/')
+          TAG="android-v$VERSION"
+          PRERELEASE=""
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            TAG="android-v$VERSION-pre.${{ github.run_number }}"
+            PRERELEASE="--prerelease"
+          fi
+          SRC=$(ls ./dist/*android-arm64-v8a*.apk | head -1)
+          APK="./dist/QFClash-Android-v$VERSION.apk"
+          mv "$SRC" "$APK"
+          echo "Publishing $APK to release $TAG $PRERELEASE"
+          gh release create "$TAG" $PRERELEASE --title "QFClash 安卓版 v$VERSION" --notes "QFClash 安卓版安装包（arm64）。同签名覆盖安装，数据不丢。Windows 版请到标签 windows-v 开头的发布里下载，不要下错。" "$APK"

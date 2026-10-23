@@ -1,0 +1,62 @@
+# QFClash Windows 自维护构建（与安卓版同一仓库、同一版本标签）
+# 用法：fork 后把本文件放 .github/workflows/build-qingfeng-windows.yaml，
+# 在 Actions 页手动 Run。官方构建方式：dart setup.dart windows
+# 产物（setup.dart 内置目标 'exe,zip'）：Inno 安装包 .exe ＋ 便携版 .zip。
+# Windows 版无需签名密钥；exe 未做代码签名，首次运行有 SmartScreen 提示属正常。
+name: build-qingfeng-windows
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Enable git long paths
+        run: git config --global core.longpaths true
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.1'
+          cache: false
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.6'
+          channel: stable
+
+      - name: Build and package Windows (official setup.dart)
+        shell: pwsh
+        run: dart setup.dart windows --env stable
+
+      - name: Publish exe and zip to Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # 发布规矩（用户定）：Windows 与安卓分开发布、文件名自带平台标识。
+          # Windows 标签固定 windows-v<版本号>，与安卓的 android-v 发布完全分开；
+          # App 内检查更新按平台前缀只认本平台（补丁 qfclash-update-platform.patch）。
+          # 同版本重出时降为 -pre.N 预发布（检查更新会跳过预发布，不误报）。
+          $version = (Select-String -Path pubspec.yaml -Pattern '^version:\s*([0-9]+\.[0-9]+\.[0-9]+)').Matches[0].Groups[1].Value
+          $tag = "windows-v$version"
+          $pre = ""
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            $tag = "windows-v$version-pre.${{ github.run_number }}"
+            $pre = "--prerelease"
+          }
+          $exe = Get-ChildItem ./dist/*.exe | Select-Object -First 1
+          $zip = Get-ChildItem ./dist/*.zip | Select-Object -First 1
+          if (-not $exe -or -not $zip) { throw "exe/zip missing in dist/" }
+          $exeNew = "./dist/QFClash-Windows-v$version.exe"
+          $zipNew = "./dist/QFClash-Windows-v$version.zip"
+          Move-Item $exe.FullName $exeNew -Force
+          Move-Item $zip.FullName $zipNew -Force
+          gh release create $tag $pre --title "QFClash Windows版 v$version" --notes "QFClash Windows 版：QFClash-Windows-v$version.exe 是安装包（推荐，含后台服务）；QFClash-Windows-v$version.zip 是便携版（解压即用）。安卓版请到标签 android-v 开头的发布里下载，不要下错。" $exeNew $zipNew
