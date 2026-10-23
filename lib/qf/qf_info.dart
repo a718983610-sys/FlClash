@@ -1,4 +1,5 @@
-import 'package:flutter/material.dart';
+import 'package:fl_clash/ui/icons/icons.dart';
+import 'package:material_ui/material_ui.dart';
 
 class QfInfoTopic {
   final String title;
@@ -158,7 +159,7 @@ class QfInfoButton extends StatelessWidget {
     final info = qfInfoTopics[topic];
     if (info == null) return const SizedBox.shrink();
     return IconButton(
-      icon: const Icon(Icons.info_outline, size: 18),
+      icon: const GlyphIcon(AppGlyphs.info, size: 18),
       tooltip: '说明',
       visualDensity: VisualDensity.compact,
       onPressed: () {

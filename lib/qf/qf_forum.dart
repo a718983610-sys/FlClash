@@ -1,4 +1,6 @@
-import 'package:flutter/material.dart';
+import 'package:fl_clash/ui/ui.dart';
+import 'package:fl_clash/ui/icons/icons.dart';
+import 'package:material_ui/material_ui.dart';
 
 import 'qf_api.dart';
 import 'qf_pages.dart';
@@ -150,7 +152,7 @@ class _QfForumPageState extends State<QfForumPage> {
       ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: _compose,
-        icon: const Icon(Icons.edit_outlined),
+        icon: const GlyphIcon(AppGlyphs.edit, fill: 1),
         label: const Text('发帖'),
       ),
       body: Column(
@@ -186,7 +188,7 @@ class _QfForumPageState extends State<QfForumPage> {
           ),
           Expanded(
             child: _loading
-                ? const Center(child: CircularProgressIndicator())
+                ? const Center(child: CommonCircleLoading.page())
                 : _posts.isEmpty
                 ? const Center(child: Text('暂无帖子'))
                 : ListView.separated(
@@ -400,13 +402,13 @@ class _QfForumPostPageState extends State<QfForumPostPage> {
         actions: [
           IconButton(
             onPressed: _report,
-            icon: const Icon(Icons.flag_outlined),
+            icon: const GlyphIcon(AppGlyphs.gavel),
             tooltip: '举报',
           ),
         ],
       ),
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? const Center(child: CommonCircleLoading.page())
           : post == null
           ? const Center(child: Text('帖子不存在或不可见'))
           : Column(
@@ -417,7 +419,7 @@ class _QfForumPostPageState extends State<QfForumPostPage> {
                     children: [
                       Text(
                         (post['title'] ?? '').toString(),
-                        style: Theme.of(context).textTheme.titleLarge,
+                        style: AppTextStyle.title3.of(context),
                       ),
                       const SizedBox(height: 8),
                       Text(

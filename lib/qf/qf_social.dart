@@ -3,7 +3,9 @@ import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
 
-import 'package:flutter/material.dart';
+import 'package:fl_clash/ui/ui.dart';
+import 'package:fl_clash/ui/icons/icons.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:qr_flutter/qr_flutter.dart';
@@ -288,7 +290,7 @@ class _QfProfilePageState extends State<QfProfilePage> {
     return Scaffold(
       appBar: AppBar(title: const Text('个人资料')),
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? const Center(child: CommonCircleLoading.page())
           : ListView(
               padding: const EdgeInsets.all(16),
               children: [
@@ -313,7 +315,7 @@ class _QfProfilePageState extends State<QfProfilePage> {
                 const SizedBox(height: 24),
                 Text(
                   '聊天密钥（端到端加密）',
-                  style: Theme.of(context).textTheme.titleMedium,
+                  style: AppTextStyle.headline.of(context),
                 ),
                 const SizedBox(height: 8),
                 Text(
@@ -336,11 +338,11 @@ class _QfProfilePageState extends State<QfProfilePage> {
                   ],
                 ),
                 const SizedBox(height: 8),
-                const Text(
+                Text(
                   '聊天采用 Signal 协议端到端加密（X3DH 密钥协商＋双棘轮逐消息密钥，具备前向保密）：'
                   '服务器只转发密文，无法查看消息内容。私钥只保存在本机；'
                   '加密备份由账号密码经 Argon2id 派生的密钥保护，服务器同样无法解密。',
-                  style: TextStyle(fontSize: 12),
+                  style: AppTextStyle.caption1.of(context),
                 ),
               ],
             ),
@@ -442,7 +444,7 @@ class _QfFriendsPageState extends State<QfFriendsPage> {
               const SizedBox(height: 12),
               Text(
                 (profile['nickname'] ?? '').toString(),
-                style: Theme.of(context).textTheme.titleMedium,
+                style: AppTextStyle.headline.of(context),
               ),
             ],
           ),
@@ -489,13 +491,13 @@ class _QfFriendsPageState extends State<QfFriendsPage> {
         actions: [
           TextButton.icon(
             onPressed: _scan,
-            icon: const Icon(Icons.qr_code_scanner_outlined),
+            icon: const GlyphIcon(AppGlyphs.qrCode),
             label: const Text('扫一扫'),
           ),
         ],
       ),
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? const Center(child: CommonCircleLoading.page())
           : ListView(
               padding: const EdgeInsets.all(16),
               children: [
@@ -540,7 +542,7 @@ class _QfFriendsPageState extends State<QfFriendsPage> {
                   const SizedBox(height: 16),
                   Text(
                     '待处理申请',
-                    style: Theme.of(context).textTheme.titleMedium,
+                    style: AppTextStyle.headline.of(context),
                   ),
                   for (final raw in _requests)
                     if (raw is Map)
@@ -578,7 +580,7 @@ class _QfFriendsPageState extends State<QfFriendsPage> {
                 const SizedBox(height: 16),
                 Text(
                   '我的好友',
-                  style: Theme.of(context).textTheme.titleMedium,
+                  style: AppTextStyle.headline.of(context),
                 ),
                 if (_friends.isEmpty)
                   const Padding(
@@ -602,7 +604,7 @@ class _QfFriendsPageState extends State<QfFriendsPage> {
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           IconButton(
-                            icon: const Icon(Icons.badge_outlined),
+                            icon: const GlyphIcon(AppGlyphs.verified),
                             tooltip: '好友资料与安全码',
                             onPressed: () {
                               Navigator.of(context).push(
@@ -616,8 +618,9 @@ class _QfFriendsPageState extends State<QfFriendsPage> {
                             },
                           ),
                           IconButton(
-                        icon: const Icon(Icons.person_remove_outlined),
-                        onPressed: () => _act(
+                            icon: const GlyphIcon(AppGlyphs.remove),
+                            tooltip: '删除好友',
+                            onPressed: () => _act(
                           () => widget.session.socialFriendDelete(
                             (raw['userId'] as num).toInt(),
                           ),
@@ -709,7 +712,7 @@ class _QfScanPageState extends State<QfScanPage> {
             padding: const EdgeInsets.all(16),
             child: OutlinedButton.icon(
               onPressed: _importImage,
-              icon: const Icon(Icons.image_outlined),
+              icon: const GlyphIcon(AppGlyphs.photos),
               label: const Text('导入二维码图片'),
             ),
           ),
@@ -773,7 +776,7 @@ class QfFriendProfilePage extends StatelessWidget {
                 const SizedBox(height: 12),
                 Text(
                   nickname,
-                  style: Theme.of(context).textTheme.titleMedium,
+                  style: AppTextStyle.headline.of(context),
                 ),
                 if (friend['username'] != null)
                   Text('账户 ID：${friend['username']}'),
@@ -781,7 +784,7 @@ class QfFriendProfilePage extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 24),
-          Text('安全码', style: Theme.of(context).textTheme.titleMedium),
+          Text('安全码', style: AppTextStyle.headline.of(context)),
           const SizedBox(height: 8),
           const Text(
             '安全码由双方的身份密钥生成，用于核对对方身份是否真实。'
@@ -801,7 +804,7 @@ class QfFriendProfilePage extends StatelessWidget {
                 children: [
                   SelectableText(
                     fingerprint.displayableFingerprint.getDisplayText(),
-                    style: const TextStyle(fontSize: 16, letterSpacing: 1.2),
+                    style: AppTextStyle.custom(context, size: 16, leading: 21),
                   ),
                   const SizedBox(height: 16),
                   Center(
@@ -815,7 +818,7 @@ class QfFriendProfilePage extends StatelessWidget {
                   const SizedBox(height: 12),
                   OutlinedButton.icon(
                     onPressed: () => _verifyByScan(context),
-                    icon: const Icon(Icons.qr_code_scanner_outlined),
+                    icon: const GlyphIcon(AppGlyphs.qrCode),
                     label: const Text('扫码核对'),
                   ),
                 ],
@@ -973,12 +976,12 @@ class _QfChatPageState extends State<QfChatPage> {
             child: Text(
               '消息已端到端加密，服务器只转发密文。'
               '${widget.friend['username'] != null ? '对方账户 ID：${widget.friend['username']}' : ''}',
-              style: const TextStyle(fontSize: 12),
+              style: AppTextStyle.caption1.of(context),
             ),
           ),
           Expanded(
             child: _loading
-                ? const Center(child: CircularProgressIndicator())
+                ? const Center(child: CommonCircleLoading.page())
                 : ListView.builder(
                     padding: const EdgeInsets.all(12),
                     itemCount: _messages.length,

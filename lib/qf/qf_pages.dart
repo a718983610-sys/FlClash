@@ -1,7 +1,9 @@
 import 'dart:io';
 import 'dart:ui' as ui;
 
-import 'package:flutter/material.dart';
+import 'package:fl_clash/ui/ui.dart';
+import 'package:fl_clash/ui/icons/icons.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
@@ -123,7 +125,7 @@ class _QfEntryPageState extends State<QfEntryPage> {
                   Text(
                     'QFClash',
                     textAlign: TextAlign.center,
-                    style: Theme.of(context).textTheme.headlineMedium,
+                    style: AppTextStyle.title1.of(context),
                   ),
                   const SizedBox(height: 8),
                   const Text(
@@ -154,10 +156,10 @@ class _QfEntryPageState extends State<QfEntryPage> {
                     child: const Text('免登录使用（访客模式）'),
                   ),
                   const SizedBox(height: 4),
-                  const Text(
+                  Text(
                     QfCopy.guestNotice,
                     textAlign: TextAlign.center,
-                    style: TextStyle(fontSize: 12),
+                    style: AppTextStyle.caption1.of(context),
                   ),
                   const SizedBox(height: 16),
                   Row(
@@ -349,12 +351,12 @@ class _QfLoginFormState extends State<QfLoginForm> {
           child: const Text('使用谷歌账号登录'),
         ),
         if (!googleReady)
-          const Padding(
+          Padding(
             padding: EdgeInsets.only(top: 4),
             child: Text(
               QfConfig.googleComingSoon,
               textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 12),
+              style: AppTextStyle.caption1.of(context),
             ),
           ),
         Align(
@@ -583,11 +585,11 @@ class _QfRegisterFormState extends State<QfRegisterForm> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         QfField(controller: _id, label: '账户 ID', error: _idError),
-        const Padding(
+        Padding(
           padding: EdgeInsets.only(top: 4),
           child: Text(
             QfCopy.usernameRuleHint,
-            style: TextStyle(fontSize: 12),
+            style: AppTextStyle.caption1.of(context),
           ),
         ),
         const SizedBox(height: 12),
@@ -656,7 +658,7 @@ class QfMinePage extends StatelessWidget {
                     children: [
                       Text(
                         session.email ?? '',
-                        style: Theme.of(context).textTheme.titleMedium,
+                        style: AppTextStyle.headline.of(context),
                       ),
                       const SizedBox(height: 4),
                       const Text(QfCopy.loginBenefit),
@@ -706,7 +708,7 @@ class QfMinePage extends StatelessWidget {
                 ),
               const SizedBox(height: 8),
               ListTile(
-                leading: const Icon(Icons.stars_outlined),
+                leading: const GlyphIcon(AppGlyphs.star),
                 title: const Text('我的积分'),
                 onTap: () {
                   Navigator.of(context).push(
@@ -717,7 +719,7 @@ class QfMinePage extends StatelessWidget {
                 },
               ),
               ListTile(
-                leading: const Icon(Icons.card_giftcard_outlined),
+                leading: const GlyphIcon(AppGlyphs.sparkle),
                 title: const Text('积分兑换'),
                 onTap: () {
                   Navigator.of(context).push(
@@ -728,7 +730,7 @@ class QfMinePage extends StatelessWidget {
                 },
               ),
               ListTile(
-                leading: const Icon(Icons.person_outline),
+                leading: const GlyphIcon(AppGlyphs.account),
                 title: const Text('个人资料'),
                 subtitle: const Text('昵称与头像，好友聊天与论坛共用'),
                 onTap: () {
@@ -740,7 +742,7 @@ class QfMinePage extends StatelessWidget {
                 },
               ),
               ListTile(
-                leading: const Icon(Icons.shield_outlined),
+                leading: const GlyphIcon(AppGlyphs.lock),
                 title: const Text('安全中心'),
                 subtitle: const Text('修改密码、换绑邮箱、登录设备、注销账号'),
                 onTap: () {
@@ -752,7 +754,7 @@ class QfMinePage extends StatelessWidget {
                 },
               ),
               ListTile(
-                leading: const Icon(Icons.system_update_outlined),
+                leading: const GlyphIcon(AppGlyphs.sync),
                 title: const Text('软件更新'),
                 subtitle: Text('当前版本 v${QfRuntime.appVersion}'),
                 onTap: () {
@@ -760,7 +762,7 @@ class QfMinePage extends StatelessWidget {
                 },
               ),
               ListTile(
-                leading: const Icon(Icons.feedback_outlined),
+                leading: const GlyphIcon(AppGlyphs.compose),
                 title: const Text('意见反馈'),
                 onTap: () {
                   Navigator.of(context).push(
@@ -841,7 +843,7 @@ class _QfMyQrCardState extends State<QfMyQrCard> {
           children: [
             Text(
               '我的二维码',
-              style: Theme.of(context).textTheme.titleMedium,
+              style: AppTextStyle.headline.of(context),
             ),
             const SizedBox(height: 4),
             const Text('好友扫码即可查看您的资料并添加好友'),
@@ -947,7 +949,7 @@ class _QfPointsPageState extends State<QfPointsPage> {
     return Scaffold(
       appBar: AppBar(title: const Text('我的积分')),
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? const Center(child: CommonCircleLoading.page())
           : ListView(
               padding: const EdgeInsets.all(16),
               children: [
@@ -959,7 +961,7 @@ class _QfPointsPageState extends State<QfPointsPage> {
                       children: [
                         Text(
                           '当前余额：${points?['balance'] ?? 0} 分',
-                          style: Theme.of(context).textTheme.titleMedium,
+                          style: AppTextStyle.headline.of(context),
                         ),
                         const SizedBox(height: 8),
                         Text(
@@ -987,7 +989,7 @@ class _QfPointsPageState extends State<QfPointsPage> {
                   ),
                 ),
                 const SizedBox(height: 16),
-                Text('积分明细', style: Theme.of(context).textTheme.titleMedium),
+                Text('积分明细', style: AppTextStyle.headline.of(context)),
                 if (_entries.isEmpty)
                   const Padding(
                     padding: EdgeInsets.symmetric(vertical: 12),
@@ -1009,7 +1011,7 @@ class _QfPointsPageState extends State<QfPointsPage> {
                       ),
                     ),
                 const SizedBox(height: 16),
-                Text('积分规则', style: Theme.of(context).textTheme.titleMedium),
+                Text('积分规则', style: AppTextStyle.headline.of(context)),
                 const SizedBox(height: 8),
                 Text(
                   '连接有效使用才计时：每累计 ${params?['minutesPerPoint'] ?? 180} 分钟得 1 分，'
@@ -1139,17 +1141,17 @@ class _QfRedeemPageState extends State<QfRedeemPage> {
     return Scaffold(
       appBar: AppBar(title: const Text('积分兑换')),
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? const Center(child: CommonCircleLoading.page())
           : ListView(
               padding: const EdgeInsets.all(16),
               children: [
                 Text('当前积分：$_balance 分'),
                 if (_regionBlocked)
-                  const Padding(
+                  Padding(
                     padding: EdgeInsets.only(top: 12),
                     child: Text(
                       '该功能在您的国家地区不可用',
-                      style: TextStyle(fontWeight: FontWeight.bold),
+                      style: AppTextStyle.body.of(context, emphasized: true),
                     ),
                   ),
                 const SizedBox(height: 12),
@@ -1186,7 +1188,7 @@ class _QfRedeemPageState extends State<QfRedeemPage> {
                 const SizedBox(height: 16),
                 Text(
                   '我的兑换',
-                  style: Theme.of(context).textTheme.titleMedium,
+                  style: AppTextStyle.headline.of(context),
                 ),
                 if (_orders.isEmpty)
                   const Padding(

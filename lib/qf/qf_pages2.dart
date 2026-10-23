@@ -1,4 +1,6 @@
-import 'package:flutter/material.dart';
+import 'package:fl_clash/ui/ui.dart';
+import 'package:fl_clash/ui/icons/icons.dart';
+import 'package:material_ui/material_ui.dart';
 
 import 'qf_api.dart';
 import 'qf_config.dart';
@@ -167,7 +169,7 @@ class _QfSecurityPageState extends State<QfSecurityPage> {
     return Scaffold(
       appBar: AppBar(title: const Text('安全中心')),
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? const Center(child: CommonCircleLoading.page())
           : ListView(
               padding: const EdgeInsets.all(16),
               children: [
@@ -176,19 +178,19 @@ class _QfSecurityPageState extends State<QfSecurityPage> {
                   subtitle: Text(_me?['email']?.toString() ?? ''),
                 ),
                 ListTile(
-                  leading: const Icon(Icons.lock_outline),
+                  leading: const GlyphIcon(AppGlyphs.lock),
                   title: const Text('修改密码'),
                   onTap: _changePassword,
                 ),
                 ListTile(
-                  leading: const Icon(Icons.alternate_email),
+                  leading: const GlyphIcon(AppGlyphs.send),
                   title: const Text('换绑邮箱'),
                   onTap: _changeEmail,
                 ),
                 const Divider(),
                 Text(
                   '登录设备',
-                  style: Theme.of(context).textTheme.titleMedium,
+                  style: AppTextStyle.headline.of(context),
                 ),
                 for (final raw in _devices)
                   if (raw is Map)
@@ -210,7 +212,7 @@ class _QfSecurityPageState extends State<QfSecurityPage> {
                     ),
                 const Divider(),
                 ListTile(
-                  leading: const Icon(Icons.delete_forever_outlined),
+                  leading: const GlyphIcon(AppGlyphs.delete),
                   title: const Text(
                     '注销账号',
                     style: TextStyle(color: Colors.red),
@@ -574,7 +576,7 @@ class QfBlockingPage extends StatelessWidget {
                   Text(
                     title,
                     textAlign: TextAlign.center,
-                    style: Theme.of(context).textTheme.headlineSmall,
+                    style: AppTextStyle.pageTitle.of(context),
                   ),
                   const SizedBox(height: 16),
                   Text(body, textAlign: TextAlign.center),
@@ -651,11 +653,11 @@ class _QfUpdateDownloadPanelState extends State<QfUpdateDownloadPanel> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         if (notes.isNotEmpty) ...[
-          const Align(
+          Align(
             alignment: Alignment.centerLeft,
             child: Text(
               '更新内容',
-              style: TextStyle(fontWeight: FontWeight.bold),
+              style: AppTextStyle.body.of(context, emphasized: true),
             ),
           ),
           const SizedBox(height: 8),
