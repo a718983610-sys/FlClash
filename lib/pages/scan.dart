@@ -218,7 +218,8 @@ class _ScanPageState extends ConsumerState<ScanPage>
         appBar: AppBar(
           title: const Text('扫一扫'),
           leading: IconButton(
-            icon: const Icon(Icons.close),
+            icon: const GlyphIcon(AppGlyphs.close),
+            tooltip: context.appLocalizations.close,
             onPressed: () => Navigator.of(context).pop(),
           ),
         ),
