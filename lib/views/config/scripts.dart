@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'package:fl_clash/qf/qf_info.dart';
 
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/enum/enum.dart';
@@ -346,6 +347,7 @@ class _ScriptsViewState extends ConsumerState<ScriptsView> {
       canSort: scripts.length > 1,
       isLoading: isLoading,
       actions: [
+        const QfInfoButton(topic: 'overrideScript'),
         CommonPopupBox(
           targetBuilder: (open) {
             return IconButton(

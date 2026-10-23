@@ -10,6 +10,7 @@ import 'package:fl_clash/widgets/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_new_shapes/material_new_shapes.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:fl_clash/qf/qf_info.dart';
 
 import 'card.dart';
 import 'connections_table.dart';
@@ -314,6 +315,7 @@ class _GroupsHeader extends StatelessWidget {
       title: appLocalizations.proxyGroup,
       chevron: mobile && groups.isNotEmpty,
       leading: [
+        const QfInfoButton(topic: 'proxyGroup'),
         if (count && groups.isNotEmpty)
           Tooltip(
             message: appLocalizations.groupCount(groups.length),

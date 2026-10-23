@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:fl_clash/qf/qf_info.dart';
 
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/common/dav_client.dart';
@@ -151,6 +152,7 @@ class _BackupAndRestoreState extends ConsumerState<BackupAndRestore>
     final isLoading = ref.watch(loadingProvider(LoadingTag.backup_restore));
     return CommonScaffold(
       isLoading: isLoading,
+      actions: const [QfInfoButton(topic: 'backup')],
       title: appLocalizations.backupAndRestore,
       body: ListView(
         padding: const EdgeInsets.symmetric(

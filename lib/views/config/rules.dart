@@ -6,6 +6,7 @@ import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/widgets/widgets.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:fl_clash/qf/qf_info.dart';
 
 class AddedRulesView extends ConsumerStatefulWidget {
   const AddedRulesView({super.key});
@@ -127,6 +128,7 @@ class _AddedRulesViewState extends ConsumerState<AddedRulesView> {
               onPressed: _handleAddOrUpdate,
               icon: const GlyphIcon(AppGlyphs.addCircle),
             ),
+          const QfInfoButton(topic: 'rules'),
         ],
         iconActions: [
           if (!isSelecting)

@@ -7,6 +7,7 @@ import 'package:fl_clash/views/dashboard/style.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_new_shapes/material_new_shapes.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:fl_clash/qf/qf_info.dart';
 
 import 'card.dart';
 
@@ -128,6 +129,7 @@ class NetworkTakeoverCard extends StatelessWidget {
           DashboardCardHeader(
             glyph: AppGlyphs.shuffle,
             title: appLocalizations.networkTakeover,
+            leading: const [QfInfoButton(topic: 'proxySwitch')],
           ),
           const SizedBox(height: 12),
           LayoutBuilder(

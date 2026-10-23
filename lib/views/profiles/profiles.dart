@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:fl_clash/qf/qf_info.dart';
 
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/enum/enum.dart';
@@ -113,6 +114,7 @@ class _ProfilesViewState extends ConsumerState<ProfilesView> {
                 ),
           iconActions: picker ? const [] : _buildActions(state.profiles),
           foldPrimaryAction: true,
+          actions: const [QfInfoButton(topic: 'profile')],
           body: NullStatusSwitcher(
             isEmpty: state.profiles.isEmpty,
             nullStatus: NullStatus(
