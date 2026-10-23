@@ -242,9 +242,7 @@ class _QfActionButtonState extends State<QfActionButton> {
         ? FilledButton(onPressed: onPressed, child: child)
         : OutlinedButton(onPressed: onPressed, child: child);
     final failure = _failure;
-    if (!widget.showInlineError ||
-        failure == null ||
-        failure.message.isEmpty) {
+    if (!widget.showInlineError || failure == null || failure.message.isEmpty) {
       return button;
     }
     return Column(
@@ -881,11 +879,7 @@ class _QfLoginFormState extends State<QfLoginForm> {
           dense: true,
         ),
         const SizedBox(height: 8),
-        QfActionButton(
-          label: '登录',
-          busyLabel: '正在登录……',
-          onAction: _submit,
-        ),
+        QfActionButton(label: '登录', busyLabel: '正在登录……', onAction: _submit),
         const SizedBox(height: 8),
         QfActionButton(
           label: '使用通行密钥登录',
@@ -1193,11 +1187,7 @@ class _QfRegisterFormState extends State<QfRegisterForm> {
           ),
         ),
         const SizedBox(height: 16),
-        QfActionButton(
-          label: '注册并登录',
-          busyLabel: '正在注册……',
-          onAction: _submit,
-        ),
+        QfActionButton(label: '注册并登录', busyLabel: '正在注册……', onAction: _submit),
       ],
     );
   }

@@ -758,8 +758,7 @@ void main() {
     });
 
     testWidgets('posts failure is not the empty state', (tester) async {
-      final session = _FakeForumSession(loggedIn: false)
-        ..postsError = netError;
+      final session = _FakeForumSession(loggedIn: false)..postsError = netError;
       await tester.pumpWidget(_wrap(QfForumPage(session: session)));
       await tester.pumpAndSettle();
       expect(find.text(QfCopy.forumLoadFailed), findsOneWidget);

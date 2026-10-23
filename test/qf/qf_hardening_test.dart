@@ -86,19 +86,35 @@ void main() {
   group('W1-09 legacy data directory migration', () {
     test('decision table', () {
       expect(
-        qfShouldMigrate(markerExists: false, newHasData: false, oldHasData: true),
+        qfShouldMigrate(
+          markerExists: false,
+          newHasData: false,
+          oldHasData: true,
+        ),
         isTrue,
       );
       expect(
-        qfShouldMigrate(markerExists: true, newHasData: false, oldHasData: true),
+        qfShouldMigrate(
+          markerExists: true,
+          newHasData: false,
+          oldHasData: true,
+        ),
         isFalse,
       );
       expect(
-        qfShouldMigrate(markerExists: false, newHasData: true, oldHasData: true),
+        qfShouldMigrate(
+          markerExists: false,
+          newHasData: true,
+          oldHasData: true,
+        ),
         isFalse,
       );
       expect(
-        qfShouldMigrate(markerExists: false, newHasData: false, oldHasData: false),
+        qfShouldMigrate(
+          markerExists: false,
+          newHasData: false,
+          oldHasData: false,
+        ),
         isFalse,
       );
       expect(qfNamesContainAppData(['config.yaml', 'x.txt']), isTrue);
@@ -127,9 +143,7 @@ void main() {
         'cfg',
       );
       expect(
-        await File(
-          p.join(current.path, 'profiles', 'a.yaml'),
-        ).readAsString(),
+        await File(p.join(current.path, 'profiles', 'a.yaml')).readAsString(),
         'profile-a',
       );
       expect(
@@ -206,7 +220,8 @@ HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settin
       const quiet = 4;
       final width = (matrix.width + quiet * 2) * scale;
       final height = (matrix.height + quiet * 2) * scale;
-      final pixels = Int32List(width * height)..fillRange(0, width * height, 0xFFFFFFFF);
+      final pixels = Int32List(width * height)
+        ..fillRange(0, width * height, 0xFFFFFFFF);
       for (var y = 0; y < matrix.height; y++) {
         for (var x = 0; x < matrix.width; x++) {
           if (matrix.get(x, y) != 1) continue;
@@ -244,8 +259,7 @@ HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settin
 
     test('returns null for images without a QR code', () {
       expect(qfDecodeQrImageBytes(Uint8List.fromList([1, 2, 3])), isNull);
-      final blank = Int32List(100 * 100)
-        ..fillRange(0, 100 * 100, 0xFFFFFFFF);
+      final blank = Int32List(100 * 100)..fillRange(0, 100 * 100, 0xFFFFFFFF);
       expect(qfDecodeQrPixels(100, 100, blank), isNull);
     });
   });
@@ -291,8 +305,8 @@ HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settin
     });
 
     test('fresh manifest reports manifestFresh for manual checks', () async {
-      QfUpdateService.manifestFetcherForTest =
-          () async => manifest(latest: '0.9.1');
+      QfUpdateService.manifestFetcherForTest = () async =>
+          manifest(latest: '0.9.1');
       final check = await QfUpdateService.check('0.9.1');
       expect(check.decision, QfUpdateDecision.none);
       expect(check.manifestFresh, isTrue);
@@ -300,8 +314,8 @@ HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settin
 
     test('background retry re-judges immediately on success', () async {
       var fresh = false;
-      QfUpdateService.manifestFetcherForTest =
-          () async => fresh ? manifest(maintenance: true) : null;
+      QfUpdateService.manifestFetcherForTest = () async =>
+          fresh ? manifest(maintenance: true) : null;
       final first = await QfUpdateService.check('0.9.1');
       expect(first.decision, QfUpdateDecision.none);
       QfUpdateCheck? pushed;

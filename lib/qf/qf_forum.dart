@@ -352,16 +352,17 @@ class QfLoadFailure extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final text = Text(message ?? QfCopy.forumLoadFailed);
-    final retry = OutlinedButton(
-      onPressed: onRetry,
-      child: const Text('重试'),
-    );
+    final retry = OutlinedButton(onPressed: onRetry, child: const Text('重试'));
     if (compact) {
       return Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
-          children: [Flexible(child: text), const SizedBox(width: 12), retry],
+          children: [
+            Flexible(child: text),
+            const SizedBox(width: 12),
+            retry,
+          ],
         ),
       );
     }
@@ -1267,8 +1268,7 @@ class _QfComposePostPageState extends State<_QfComposePostPage> {
             ],
             onChanged: (value) => setState(() => _campId = value),
           ),
-          if (_campsFailed)
-            QfLoadFailure(compact: true, onRetry: _loadCamps),
+          if (_campsFailed) QfLoadFailure(compact: true, onRetry: _loadCamps),
           const SizedBox(height: 12),
           TextField(
             controller: _title,

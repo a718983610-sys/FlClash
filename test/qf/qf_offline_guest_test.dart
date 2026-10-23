@@ -230,10 +230,7 @@ void main() {
           request.response.statusCode = 400;
           request.response.headers.contentType = ContentType.json;
           request.response.write(
-            jsonEncode({
-              'code': 'RECONCILE_ID_INVALID',
-              'message': '对账编号无效',
-            }),
+            jsonEncode({'code': 'RECONCILE_ID_INVALID', 'message': '对账编号无效'}),
           );
         } else {
           request.response.headers.contentType = ContentType.json;

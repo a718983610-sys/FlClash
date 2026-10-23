@@ -276,8 +276,7 @@ void qfStoreCachedAvatar(
   if (avatarUpdatedAt != null) {
     _qfAvatarStampedCache[qfAvatarCacheKey(userId, avatarUpdatedAt)] = bytes;
     final latest = _qfLatestAvatarStamp[userId];
-    if (latest == null ||
-        _qfTsMillis(avatarUpdatedAt) > _qfTsMillis(latest)) {
+    if (latest == null || _qfTsMillis(avatarUpdatedAt) > _qfTsMillis(latest)) {
       _qfLatestAvatarStamp[userId] = avatarUpdatedAt;
     }
   } else {

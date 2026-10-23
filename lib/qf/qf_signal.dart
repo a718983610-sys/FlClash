@@ -39,9 +39,7 @@ class QfSignalStore extends SignalProtocolStore {
   static Future<bool> _secureWrite(String value) async {
     if (_secureOk == false) return false;
     try {
-      await _secure
-          .write(key: _prefsKey, value: value)
-          .timeout(_secureTimeout);
+      await _secure.write(key: _prefsKey, value: value).timeout(_secureTimeout);
       _secureOk = true;
       return true;
     } catch (_) {

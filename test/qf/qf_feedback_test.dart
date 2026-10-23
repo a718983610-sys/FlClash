@@ -84,8 +84,9 @@ void main() {
         QfFailureKind.cancelled,
       );
       expect(
-        qfClassifyAuthError(const QfPasskeyException('当前设备不支持通行密钥，请改用密码方式。'))
-            .kind,
+        qfClassifyAuthError(
+          const QfPasskeyException('当前设备不支持通行密钥，请改用密码方式。'),
+        ).kind,
         QfFailureKind.unsupported,
       );
       expect(

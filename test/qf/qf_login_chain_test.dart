@@ -288,48 +288,51 @@ void main() {
       },
     );
 
-    test('secure write failure fails loudly without plaintext fallback', () async {
-      SharedPreferences.setMockInitialValues({
-        'qf_device_hash': 'hash-1',
-        'qf_device_name': 'test-box',
-      });
-      _mockSecure(throwOnRead: false, throwOnWrite: true);
-      HttpOverrides.global = _RealHttpOverrides();
-      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-      addTearDown(() => server.close(force: true));
-      server.listen((request) async {
-        await request.drain<void>();
-        final body = request.uri.path == '/auth/login'
-            ? {
-                'accessToken': 'acc-2',
-                'refreshToken': 'ref-2',
-                'accessExpiresAt': 9999999999,
-                'heartbeatKey': 'hk',
-                'user': {'id': 7, 'email': 'a@b.c', 'username': 'tester123'},
-              }
-            : <String, dynamic>{};
-        request.response
-          ..headers.contentType = ContentType.json
-          ..write(jsonEncode(body));
-        await request.response.close();
-      });
-      final session = QfSessionController();
-      session.serverBaseUrl = 'http://127.0.0.1:${server.port}';
-      await expectLater(
-        session.login(
-          emailInput: 'a@b.c',
-          password: 'secret123',
-          remember: true,
-        ),
-        throwsA(
-          isA<QfApiException>().having((e) => e.code, 'code', 'STORAGE'),
-        ),
-      );
-      expect(session.mode, isNot(QfMode.user));
-      final prefs = await SharedPreferences.getInstance();
-      expect(prefs.getString('qf_refresh_token'), isNull);
-      expect(prefs.getString('qf_access_token'), isNull);
-    });
+    test(
+      'secure write failure fails loudly without plaintext fallback',
+      () async {
+        SharedPreferences.setMockInitialValues({
+          'qf_device_hash': 'hash-1',
+          'qf_device_name': 'test-box',
+        });
+        _mockSecure(throwOnRead: false, throwOnWrite: true);
+        HttpOverrides.global = _RealHttpOverrides();
+        final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+        addTearDown(() => server.close(force: true));
+        server.listen((request) async {
+          await request.drain<void>();
+          final body = request.uri.path == '/auth/login'
+              ? {
+                  'accessToken': 'acc-2',
+                  'refreshToken': 'ref-2',
+                  'accessExpiresAt': 9999999999,
+                  'heartbeatKey': 'hk',
+                  'user': {'id': 7, 'email': 'a@b.c', 'username': 'tester123'},
+                }
+              : <String, dynamic>{};
+          request.response
+            ..headers.contentType = ContentType.json
+            ..write(jsonEncode(body));
+          await request.response.close();
+        });
+        final session = QfSessionController();
+        session.serverBaseUrl = 'http://127.0.0.1:${server.port}';
+        await expectLater(
+          session.login(
+            emailInput: 'a@b.c',
+            password: 'secret123',
+            remember: true,
+          ),
+          throwsA(
+            isA<QfApiException>().having((e) => e.code, 'code', 'STORAGE'),
+          ),
+        );
+        expect(session.mode, isNot(QfMode.user));
+        final prefs = await SharedPreferences.getInstance();
+        expect(prefs.getString('qf_refresh_token'), isNull);
+        expect(prefs.getString('qf_access_token'), isNull);
+      },
+    );
   });
 
   group('unavailable login methods must explain themselves', () {
