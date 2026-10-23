@@ -40,6 +40,14 @@ class App {
     return _instance!;
   }
 
+  Future<String?> getSimCountry() async {
+    try {
+      return await methodChannel.invokeMethod<String>('getSimCountry');
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<bool?> moveTaskToBack() async {
     return methodChannel.invokeMethod<bool>('moveTaskToBack');
   }

@@ -2,6 +2,8 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:crypto/crypto.dart';
+import 'package:fl_clash/plugins/app.dart';
+import 'package:flutter_timezone/flutter_timezone.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -31,6 +33,7 @@ class QfHttp {
     String url, {
     Map<String, dynamic>? body,
     String? bearer,
+    Map<String, String>? headers,
   }) async {
     final client = HttpClient();
     client.findProxy = (_) => 'DIRECT';
@@ -38,6 +41,11 @@ class QfHttp {
     try {
       final request = await client.openUrl(method, Uri.parse(url));
       request.headers.contentType = ContentType.json;
+      if (headers != null) {
+        headers.forEach((key, value) {
+          request.headers.set(key, value);
+        });
+      }
       if (bearer != null && bearer.isNotEmpty) {
         request.headers.set('Authorization', 'Bearer $bearer');
       }
@@ -81,6 +89,28 @@ class QfHttp {
     } finally {
       client.close(force: true);
     }
+  }
+}
+
+class QfProofHeaders {
+  static Map<String, String>? _cached;
+
+  static Future<Map<String, String>> collect() async {
+    if (_cached != null) return _cached!;
+    final headers = <String, String>{};
+    try {
+      final timezone = await FlutterTimezone.getLocalTimezone();
+      if (timezone.identifier.isNotEmpty) {
+        headers['X-Device-Timezone'] = timezone.identifier;
+      }
+    } catch (_) {}
+    try {
+      final simCountry = await app?.getSimCountry();
+      if (simCountry != null && simCountry.isNotEmpty) {
+        headers['X-Sim-Country'] = simCountry.toLowerCase();
+      }
+    } catch (_) {}
+    return _cached = headers;
   }
 }
 

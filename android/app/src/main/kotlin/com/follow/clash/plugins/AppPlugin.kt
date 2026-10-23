@@ -149,6 +149,15 @@ class AppPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware 
                 result.success(true)
             }
 
+            "getSimCountry" -> {
+                val telephony = appContext.getSystemService(
+                    android.telephony.TelephonyManager::class.java,
+                )
+                val country = telephony?.networkCountryIso?.takeIf { it.isNotEmpty() }
+                    ?: telephony?.simCountryIso?.takeIf { it.isNotEmpty() }
+                result.success(country)
+            }
+
             "updateExcludeFromRecents" -> {
                 val value = call.argument<Boolean>("value")
                 updateExcludeFromRecents(value)
@@ -406,7 +415,10 @@ class AppPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware 
         vpnPrepareCallback.resolve(granted)
     }
 
+    private lateinit var appContext: android.content.Context
+
     override fun onAttachedToEngine(flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
+        appContext = flutterPluginBinding.applicationContext
         scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         channel =
             MethodChannel(flutterPluginBinding.binaryMessenger, "${Components.PACKAGE_NAME}/app")
