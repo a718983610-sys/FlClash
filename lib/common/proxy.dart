@@ -154,12 +154,17 @@ class SystemProxyQueue {
   bool _closed = false;
   bool _restoredStaleBackup = false;
 
+  /// Outcome of the most recent [apply], so the UI can tell the user the
+  /// system proxy did not take instead of silently looking connected.
+  bool? lastApplyOk;
+  ProxyState? lastApplyState;
+
   SystemProxyQueue(this._proxy);
 
-  Future<void> apply(ProxyState state) {
+  Future<bool> apply(ProxyState state) {
     return _enqueue(() async {
       if (_closed) {
-        return;
+        return false;
       }
       if (!_restoredStaleBackup) {
         _restoredStaleBackup = true;
@@ -168,20 +173,24 @@ class SystemProxyQueue {
       final applied = state.isStart && state.systemProxy
           ? await _startWithBackup(state)
           : await _stopWithRestore();
+      lastApplyOk = applied;
+      lastApplyState = state;
       if (!applied) {
         commonPrint.log(
           'update system proxy failed',
           logLevel: LogLevel.warning,
         );
       }
-    });
+      return applied;
+    }, fallback: false);
   }
 
   Future<void> close() {
     _closed = true;
     return _enqueue(() async {
       await _stopWithRestore();
-    });
+      return true;
+    }, fallback: true).then((_) {});
   }
 
   Future<bool> _startWithBackup(ProxyState state) async {
@@ -222,13 +231,16 @@ class SystemProxyQueue {
     await _backupStore.clear();
   }
 
-  Future<void> _enqueue(Future<void> Function() task) {
-    return _tail = _tail.then((_) => task()).catchError((Object error) {
+  Future<T> _enqueue<T>(Future<T> Function() task, {required T fallback}) {
+    final Future<T> run = _tail.then((_) => task()).catchError((Object error) {
       commonPrint.log(
         'update system proxy failed: $error',
         logLevel: LogLevel.warning,
       );
+      return fallback;
     });
+    _tail = run.then((_) {}, onError: (_) {});
+    return run;
   }
 }
 

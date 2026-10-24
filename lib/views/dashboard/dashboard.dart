@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:fl_clash/common/common.dart';
@@ -10,6 +11,8 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 
+import '../../qf/qf_config.dart';
+import '../../qf/qf_egress.dart';
 import '../../qf/qf_providers.dart';
 import 'edit.dart';
 import 'layout.dart';
@@ -84,8 +87,10 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
       // The providers learn a resize a frame late, too late for the cards.
       body: Column(
         children: [
+          const _QfEgressMonitor(),
           const _QfGuestRemainingBanner(),
           const _QfDirectOnlyBanner(),
+          const _QfEgressBanner(),
           Expanded(
             child: LayoutBuilder(
               builder: (context, constraints) {
@@ -426,6 +431,141 @@ class _MobileDashboard extends ConsumerWidget {
           },
         ),
       ],
+    );
+  }
+}
+
+/// Runs the post-connect egress check shortly after the core starts and
+/// again whenever the takeover state changes while running.
+class _QfEgressMonitor extends ConsumerStatefulWidget {
+  const _QfEgressMonitor();
+
+  @override
+  ConsumerState<_QfEgressMonitor> createState() => _QfEgressMonitorState();
+}
+
+class _QfEgressMonitorState extends ConsumerState<_QfEgressMonitor> {
+  Timer? _pending;
+
+  @override
+  void initState() {
+    super.initState();
+    ref.listenManual(isStartProvider, (prev, next) {
+      if (next) {
+        _schedule();
+      } else {
+        _pending?.cancel();
+        ref.read(qfEgressStateProvider.notifier).set(QfEgressState.idle);
+      }
+    });
+    ref.listenManual(proxyStateProvider, (prev, next) {
+      if (prev != next && next.isStart) _schedule();
+    });
+  }
+
+  void _schedule() {
+    _pending?.cancel();
+    _pending = Timer(const Duration(milliseconds: 900), () {
+      if (!mounted) return;
+      final proxyState = ref.read(proxyStateProvider);
+      unawaited(
+        qfRunEgressCheck(
+          ref,
+          takeoverExpected: proxyState.isStart && proxyState.systemProxy,
+        ),
+      );
+    });
+  }
+
+  @override
+  void dispose() {
+    _pending?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => const SizedBox.shrink();
+}
+
+class _QfEgressBanner extends ConsumerWidget {
+  const _QfEgressBanner();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final isStart = ref.watch(isStartProvider);
+    final egress = ref.watch(qfEgressStateProvider);
+    if (!isStart || egress.status == QfEgressStatus.idle) {
+      return const SizedBox.shrink();
+    }
+    if (egress.status == QfEgressStatus.checking ||
+        egress.status == QfEgressStatus.ok) {
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+        child: Text(
+          egress.status == QfEgressStatus.checking
+              ? QfCopy.egressChecking
+              : QfCopy.egressOk,
+          textAlign: TextAlign.center,
+          style: AppTextStyle.subheadline.of(context),
+        ),
+      );
+    }
+    final takeoverFailed = egress.status == QfEgressStatus.takeoverFailed;
+    final message = switch (egress.status) {
+      QfEgressStatus.handshakeFailed => QfCopy.egressHandshakeFailed,
+      QfEgressStatus.takeoverFailed => QfCopy.egressTakeoverFailed,
+      _ => QfCopy.egressNodeUnreachable,
+    };
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+      child: DecoratedBox(
+        decoration: const ShapeDecoration(
+          color: Color(0xFFB3261E),
+          shape: AppShape.sm,
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  message,
+                  textAlign: TextAlign.center,
+                  style: AppTextStyle.subheadline
+                      .of(context, emphasized: true)
+                      .copyWith(color: Colors.white),
+                ),
+              ),
+              TextButton(
+                onPressed: () => unawaited(_onAction(ref, takeoverFailed)),
+                child: Text(
+                  takeoverFailed
+                      ? QfCopy.egressRetryProxy
+                      : QfCopy.egressRetryCheck,
+                  style: const TextStyle(color: Colors.white),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _onAction(WidgetRef ref, bool takeoverFailed) async {
+    final proxyState = ref.read(proxyStateProvider);
+    if (takeoverFailed) {
+      final queue = systemProxyQueue;
+      if (queue != null) {
+        final ok = await queue.apply(proxyState);
+        ref.read(qfTakeoverStatusProvider.notifier).report(ok);
+      }
+    }
+    await qfRunEgressCheck(
+      ref,
+      takeoverExpected: proxyState.isStart && proxyState.systemProxy,
     );
   }
 }

@@ -28,3 +28,25 @@ class QfRuntime {
   static String googleWebClientId = '';
   static String appVersion = '';
 }
+
+/// Whether the latest system-proxy apply actually took effect, so a
+/// failed apply surfaces in the UI instead of only in the log.
+enum QfTakeoverStatus { unknown, ok, failed }
+
+class QfTakeoverNotifier extends Notifier<QfTakeoverStatus> {
+  @override
+  QfTakeoverStatus build() => QfTakeoverStatus.unknown;
+
+  void report(bool ok) {
+    state = ok ? QfTakeoverStatus.ok : QfTakeoverStatus.failed;
+  }
+
+  void reset() {
+    state = QfTakeoverStatus.unknown;
+  }
+}
+
+final qfTakeoverStatusProvider =
+    NotifierProvider<QfTakeoverNotifier, QfTakeoverStatus>(
+      QfTakeoverNotifier.new,
+    );
