@@ -1127,7 +1127,7 @@ class _QfForumPageState extends State<QfForumPage>
       leading: QfCampAvatar(session: widget.session, camp: camp),
       title: Text((camp['name'] ?? '').toString()),
       subtitle: Text('$members 人加入 · $posts 篇帖子'),
-      trailing: const Icon(Icons.chevron_right),
+      trailing: const GlyphIcon(AppGlyphs.chevronForward),
       onTap: () => _openCamp(camp),
     );
   }
@@ -1219,10 +1219,10 @@ class _QfForumPageState extends State<QfForumPage>
                     child: Row(
                       children: [
                         const Text('个人营地'),
-                        Icon(
+                        GlyphIcon(
                           _campsExpanded
-                              ? Icons.expand_less
-                              : Icons.expand_more,
+                              ? AppGlyphs.chevronUp
+                              : AppGlyphs.chevronDown,
                           size: 18,
                         ),
                       ],
