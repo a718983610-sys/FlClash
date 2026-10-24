@@ -5,6 +5,8 @@ import 'package:fl_clash/ui/ui.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:material_ui/material_ui.dart';
 
+import 'package:url_launcher/url_launcher.dart';
+
 import 'qf_api.dart';
 import 'qf_passkey.dart';
 import 'qf_recovery.dart';
@@ -1386,6 +1388,11 @@ class _QfUpdateDownloadPanelState extends State<QfUpdateDownloadPanel>
         case QfInstallOutcome.launched:
           _installLaunched = true;
           _needsPermission = false;
+          // The download is over once the installer is up: leaving
+          // _downloading set kept the progress bar and a meaningless
+          // 'cancel download' button on the panel and hid the update
+          // button (C-14).
+          _downloading = false;
           _status = '已打开安装程序，请按提示完成安装';
         case QfInstallOutcome.needsPermission:
           _needsPermission = true;
@@ -1442,7 +1449,25 @@ class _QfUpdateDownloadPanelState extends State<QfUpdateDownloadPanel>
             onPressed: () => _control?.cancel(),
             child: const Text('取消下载'),
           )
-        else
+        else if (widget.result.downloadUrl.isEmpty && !canRetryInstall) ...[
+          // No downloadable package for a (possibly blocking) update:
+          // never leave the user at a dead 'update' button - route
+          // them to the official website instead (C-11).
+          const Text(
+            '本次更新暂时无法在应用内直接下载，请前往官网下载最新版安装包。',
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 8),
+          FilledButton(
+            onPressed: () => unawaited(
+              launchUrl(
+                Uri.parse(QfConfig.officialWebsiteUrl),
+                mode: LaunchMode.externalApplication,
+              ),
+            ),
+            child: const Text('前往官网下载'),
+          ),
+        ] else
           FilledButton(
             onPressed: canRetryInstall
                 ? () => unawaited(_install(_downloadedFile!))

@@ -4,6 +4,11 @@ class QfConfig {
       'https://raw.githubusercontent.com/$repository/main/qfclash-release.json';
   static const String fallbackServerBaseUrl =
       'https://qfclash-account.a718983610.workers.dev';
+  // The official website: the update panel's escape hatch when a
+  // force/retire decision has no downloadable package (C-11), so the
+  // blocking page is never a dead end.
+  static const String officialWebsiteUrl =
+      'https://a718983610-sys.github.io/qfclash-website/';
   // Google OAuth client IDs are public identifiers (they ship in every
   // client and in the public release manifest), not secrets. Built in so
   // Google sign-in works on a cold start with no manifest ever fetched;
