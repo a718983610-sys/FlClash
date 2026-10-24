@@ -113,3 +113,5 @@ jobs:
           mv "$SRC" "$APK"
           echo "Publishing $APK to release $TAG $PRERELEASE"
           gh release create "$TAG" $PRERELEASE --title "QFClash 安卓版 v$VERSION" --notes "QFClash 安卓版安装包（arm64）。同签名覆盖安装，数据不丢。Windows 版请到标签 windows-v 开头的发布里下载，不要下错。" "$APK"
+
+# mirror index trigger 2026-10-24 (to be reverted)
