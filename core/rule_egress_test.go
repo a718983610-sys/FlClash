@@ -312,6 +312,15 @@ func applyYamlParams(t *testing.T, yaml string, extraFiles map[string]string, pa
 	// where the service calls startListener after setup.
 	handleStartListener()
 	t.Cleanup(func() {
+		// Leave the process as the stock suites expect it: an empty
+		// config resolves to the defaults, so later tests that download
+		// through the tunnel go direct instead of through this test's
+		// airport groups.
+		home := t.TempDir()
+		constant.SetHomeDir(home)
+		if err := os.WriteFile(filepath.Join(home, "config.yaml"), nil, 0o600); err == nil {
+			_ = applyConfig(defaultSetupParams())
+		}
 		handleStopListener()
 		settleMessageBatcher()
 	})
