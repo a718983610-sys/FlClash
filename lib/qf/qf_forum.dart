@@ -33,6 +33,12 @@ bool? qfForumAuthorHasAvatar(Map<dynamic, dynamic> raw) {
   return null;
 }
 
+bool qfForumAuthorIsOwner(Map<dynamic, dynamic> raw) {
+  final author = raw['author'];
+  if (author is Map) return qfUserIsOwner(author);
+  return false;
+}
+
 int qfForumCount(Map<dynamic, dynamic> raw, String key) {
   return (raw[key] as num?)?.toInt() ?? 0;
 }
@@ -319,7 +325,9 @@ class QfForumAuthorHeader extends StatelessWidget {
             radius: 14,
           ),
           const SizedBox(width: 8),
-          Flexible(child: Text(name)),
+          Flexible(
+            child: QfBadgedName(name: name, isOwner: qfForumAuthorIsOwner(raw)),
+          ),
         ],
       ),
     );
@@ -1504,7 +1512,10 @@ class _QfForumPageState extends State<QfForumPage>
           if (!_readOnly)
             TextButton(
               onPressed: _editNickname,
-              child: Text((_profile?['nickname'] ?? '设置昵称').toString()),
+              child: QfBadgedName(
+                name: (_profile?['nickname'] ?? '设置昵称').toString(),
+                isOwner: qfUserIsOwner(_profile),
+              ),
             ),
         ],
       ),
@@ -2119,7 +2130,12 @@ class QfCampCreatorRow extends StatelessWidget {
           radius: 14,
         ),
         const SizedBox(width: 8),
-        Flexible(child: Text(name)),
+        Flexible(
+          child: QfBadgedName(
+            name: name,
+            isOwner: qfUserIsOwner(qfCampCreator(camp)),
+          ),
+        ),
         const SizedBox(width: 8),
         Text(QfCopy.campCreatorLabel, style: AppTextStyle.caption1.of(context)),
       ],

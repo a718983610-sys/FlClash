@@ -484,7 +484,10 @@ class _QfRecoveryAppealPageState extends State<QfRecoveryAppealPage> {
             if (raw is Map)
               RadioListTile<int?>(
                 value: (raw['userId'] as num?)?.toInt(),
-                title: Text((raw['nickname'] ?? '').toString()),
+                title: QfBadgedName(
+                  name: (raw['nickname'] ?? '').toString(),
+                  isOwner: qfUserIsOwner(raw),
+                ),
                 subtitle: raw['username'] != null
                     ? Text('账户 ID：${raw['username']}')
                     : null,

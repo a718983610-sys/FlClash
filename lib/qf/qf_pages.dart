@@ -116,10 +116,7 @@ class _QfToastViewState extends State<_QfToastView> {
             color: scheme.inverseSurface,
             elevation: 6,
             child: Padding(
-              padding: const EdgeInsets.symmetric(
-                horizontal: 16,
-                vertical: 12,
-              ),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               child: Text(
                 widget.message,
                 textAlign: TextAlign.center,
@@ -2016,6 +2013,65 @@ class _QfPointsPageState extends State<QfPointsPage> {
                 ),
               ],
             ),
+    );
+  }
+}
+
+/// 站长判断：服务端用户视图的 isOwner（原始行形状 is_owner 一并认）。
+bool qfUserIsOwner(Map? user) {
+  if (user == null) return false;
+  return user['isOwner'] == true ||
+      user['is_owner'] == 1 ||
+      user['is_owner'] == true;
+}
+
+/// 绿色站长标识：挂在站长昵称旁，全站统一这一个组件。
+class QfOwnerBadge extends StatelessWidget {
+  const QfOwnerBadge({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: const ShapeDecoration(
+        color: Color(0xFF1DA851),
+        shape: AppShape.sm,
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+        child: Text(
+          '站长',
+          style: AppTextStyle.caption2
+              .of(context, emphasized: true)
+              .copyWith(color: Colors.white),
+        ),
+      ),
+    );
+  }
+}
+
+/// 昵称与（站长时的）绿标同一行，各处显示用户昵称统一用它。
+class QfBadgedName extends StatelessWidget {
+  final String name;
+  final bool isOwner;
+  final TextStyle? style;
+
+  const QfBadgedName({
+    super.key,
+    required this.name,
+    required this.isOwner,
+    this.style,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Flexible(
+          child: Text(name, style: style, overflow: TextOverflow.ellipsis),
+        ),
+        if (isOwner) ...[const SizedBox(width: 6), const QfOwnerBadge()],
+      ],
     );
   }
 }

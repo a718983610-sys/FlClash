@@ -220,6 +220,7 @@ int qfSupportUnreadCount(List<QfSupportMessage> messages, int seenTs) {
 class QfSupportTicket {
   final String sessionId;
   final String userLabel;
+  final bool userIsOwner;
   final String lastBody;
   final int unread;
   final String status;
@@ -227,6 +228,7 @@ class QfSupportTicket {
   const QfSupportTicket({
     required this.sessionId,
     required this.userLabel,
+    required this.userIsOwner,
     required this.lastBody,
     required this.unread,
     required this.status,
@@ -249,9 +251,12 @@ class QfSupportTicket {
       userLabel = '用户 ${raw['userId']}';
     }
     if (userLabel.isEmpty) userLabel = '用户';
+    final user = raw['user'];
     return QfSupportTicket(
       sessionId: sessionId,
       userLabel: userLabel,
+      userIsOwner:
+          qfUserIsOwner(user is Map ? user : null) || qfUserIsOwner(raw),
       lastBody: (raw['lastMessage'] ?? raw['lastBody'] ?? raw['summary'] ?? '')
           .toString(),
       unread:
@@ -780,7 +785,10 @@ class _QfSupportInboxPageState extends State<QfSupportInboxPage> {
                 for (final ticket in _tickets)
                   ListTile(
                     key: ValueKey('qf-support-ticket-${ticket.sessionId}'),
-                    title: Text(ticket.userLabel),
+                    title: QfBadgedName(
+                      name: ticket.userLabel,
+                      isOwner: ticket.userIsOwner,
+                    ),
                     subtitle: Text(
                       ticket.lastBody.isEmpty ? '暂无消息摘要' : ticket.lastBody,
                     ),
@@ -895,7 +903,10 @@ class _QfSupportTicketPageState extends State<QfSupportTicketPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.ticket.userLabel),
+        title: QfBadgedName(
+          name: widget.ticket.userLabel,
+          isOwner: widget.ticket.userIsOwner,
+        ),
         actions: [
           if (!_closed)
             TextButton(

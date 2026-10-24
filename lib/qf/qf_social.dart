@@ -1246,7 +1246,11 @@ class _QfFriendsPageState extends State<QfFriendsPage> {
                 radius: 36,
               ),
               const SizedBox(height: 12),
-              Text(nickname, style: AppTextStyle.headline.of(context)),
+              QfBadgedName(
+                name: nickname,
+                isOwner: qfUserIsOwner(profile),
+                style: AppTextStyle.headline.of(context),
+              ),
             ],
           ),
           actions: [
@@ -1392,7 +1396,7 @@ class _QfFriendsPageState extends State<QfFriendsPage> {
             ),
         ],
       ),
-      title: Text(nickname),
+      title: QfBadgedName(name: nickname, isOwner: qfUserIsOwner(raw)),
       subtitle: subtitle == null ? null : Text(subtitle),
       trailing: trailing,
       onTap: onTap,
@@ -1707,7 +1711,11 @@ class QfFriendProfilePage extends StatelessWidget {
                   radius: 40,
                 ),
                 const SizedBox(height: 12),
-                Text(nickname, style: AppTextStyle.headline.of(context)),
+                QfBadgedName(
+                  name: nickname,
+                  isOwner: qfUserIsOwner(friend),
+                  style: AppTextStyle.headline.of(context),
+                ),
                 if (friend['username'] != null)
                   Text('账户 ID：${friend['username']}'),
               ],
@@ -2579,7 +2587,12 @@ class _QfChatPageState extends State<QfChatPage> {
               radius: 16,
             ),
             const SizedBox(width: 8),
-            Text(_peerName),
+            Flexible(
+              child: QfBadgedName(
+                name: _peerName,
+                isOwner: qfUserIsOwner(widget.friend),
+              ),
+            ),
           ],
         ),
         actions: [
