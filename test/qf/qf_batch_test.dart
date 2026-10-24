@@ -1,4 +1,3 @@
-import 'dart:typed_data';
 
 import 'package:fl_clash/qf/qf_api.dart';
 import 'package:fl_clash/qf/qf_config.dart';
@@ -8,6 +7,7 @@ import 'package:fl_clash/qf/qf_session.dart';
 import 'package:fl_clash/qf/qf_signal.dart';
 import 'package:fl_clash/qf/qf_social.dart';
 import 'package:fl_clash/qf/qf_support.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -172,11 +172,51 @@ Widget _wrap(Widget child) {
   return MaterialApp(home: child);
 }
 
+const _secureChannel = MethodChannel(
+  'plugins.it_nomads.com/flutter_secure_storage',
+);
+
+final Map<String, String> _secureStore = {};
+
+/// A working in-memory secure store: production builds always have a
+/// real keystore behind this channel, and QfSignalStore (C-42) now
+/// refuses to mint a chat identity when the store cannot be read at
+/// all - an unmocked channel (which never answers) would otherwise
+/// block identity creation in widget tests.
+void _mockSecureStorage() {
+  TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+      .setMockMethodCallHandler(_secureChannel, (call) async {
+        final args = (call.arguments as Map?) ?? const {};
+        final key = (args['key'] ?? '').toString();
+        switch (call.method) {
+          case 'read':
+            return _secureStore[key];
+          case 'write':
+            _secureStore[key] = (args['value'] ?? '').toString();
+            return null;
+          case 'delete':
+            _secureStore.remove(key);
+            return null;
+          case 'deleteAll':
+            _secureStore.clear();
+            return null;
+          case 'readAll':
+            return Map<String, String>.from(_secureStore);
+          case 'containsKey':
+            return _secureStore.containsKey(key);
+          default:
+            return null;
+        }
+      });
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   setUp(() {
     SharedPreferences.setMockInitialValues({});
+    _secureStore.clear();
+    _mockSecureStorage();
   });
 
   group('L-09 google complete body', () {
