@@ -18,7 +18,15 @@ class GlobalState {
   late String appEnv;
   late PackageInfo packageInfo;
   late Measure measure;
-  late ProviderContainer container;
+  late ProviderContainer _container;
+  bool containerReady = false;
+
+  ProviderContainer get container => _container;
+
+  set container(ProviderContainer value) {
+    _container = value;
+    containerReady = true;
+  }
   bool needInitStatus = true;
 
   bool get isPre => appEnv != 'stable';
@@ -42,9 +50,14 @@ class GlobalState {
     return _instance!;
   }
 
-  String get ua => container
-      .read(patchClashConfigProvider.select((state) => state.globalUa))
-      .takeFirstValid([packageInfo.ua]);
+  String get ua {
+    // Downloads may run before bootstrap assigns the container (tests,
+    // early boot); the clash token alone still gets clash-format responses.
+    if (!containerReady) return 'clash-verge';
+    return container
+        .read(patchClashConfigProvider.select((state) => state.globalUa))
+        .takeFirstValid([packageInfo.ua]);
+  }
 
   Future<T?> loadingRun<T>(
     FutureOr<T> Function() futureFunction, {
