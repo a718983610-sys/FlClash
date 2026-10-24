@@ -217,22 +217,34 @@ class _QfSecurityPageState extends State<QfSecurityPage> {
     }
   }
 
-  Future<Map<String, String>?> _verifyIdentity(
-    String title,
-    String purpose,
-  ) async {
+  // Sensitive actions carry their identity confirmation inside the action
+  // dialog itself (one reminder, one step); there is no separate verify
+  // gate in front of them.
+  Future<Map<String, String>?> _sensitiveAction({
+    required String title,
+    required String purpose,
+    required String actionLabel,
+    bool withNameField = false,
+  }) async {
     return showDialog<Map<String, String>>(
       context: context,
-      builder: (_) => _QfIdentityVerifyDialog(
+      builder: (_) => _QfSensitiveActionDialog(
         session: widget.session,
         title: title,
         purpose: purpose,
+        actionLabel: actionLabel,
+        withNameField: withNameField,
       ),
     );
   }
 
   Future<void> _createPasskey() async {
-    final proof = await _verifyIdentity('创建通行密钥', 'passkey_manage');
+    final proof = await _sensitiveAction(
+      title: '创建通行密钥',
+      purpose: 'passkey_manage',
+      actionLabel: '创建',
+      withNameField: true,
+    );
     if (proof == null || !mounted) return;
     try {
       final Map<String, dynamic> options;
@@ -254,30 +266,10 @@ class _QfSecurityPageState extends State<QfSecurityPage> {
       }
       final response = await QfPasskeyCeremony.register(options);
       if (!mounted) return;
-      final nameController = TextEditingController(text: '通行密钥');
-      final name = await showDialog<String>(
-        context: context,
-        builder: (dialogContext) {
-          return AlertDialog(
-            title: const Text('通行密钥名称'),
-            content: TextField(
-              controller: nameController,
-              decoration: const InputDecoration(labelText: '名称'),
-            ),
-            actions: [
-              FilledButton(
-                onPressed: () =>
-                    Navigator.of(dialogContext).pop(nameController.text),
-                child: const Text('保存'),
-              ),
-            ],
-          );
-        },
-      );
-      nameController.dispose();
+      final name = (proof['name'] ?? '').trim();
       await widget.session.passkeyRegisterVerify(
         response,
-        name: (name == null || name.trim().isEmpty) ? null : name.trim(),
+        name: name.isEmpty ? null : name,
       );
       if (mounted) qfToast(context, '通行密钥已创建');
       await _load();
@@ -289,7 +281,11 @@ class _QfSecurityPageState extends State<QfSecurityPage> {
   }
 
   Future<void> _deletePasskey(Map<dynamic, dynamic> item) async {
-    final proof = await _verifyIdentity('删除通行密钥', 'passkey_manage');
+    final proof = await _sensitiveAction(
+      title: '删除通行密钥',
+      purpose: 'passkey_manage',
+      actionLabel: '删除',
+    );
     if (proof == null || !mounted) return;
     try {
       final id = (item['id'] as num).toInt();
@@ -463,29 +459,36 @@ class _QfSecurityPageState extends State<QfSecurityPage> {
   }
 }
 
-class _QfIdentityVerifyDialog extends StatefulWidget {
+class _QfSensitiveActionDialog extends StatefulWidget {
   final QfSessionController session;
   final String title;
   final String purpose;
+  final String actionLabel;
+  final bool withNameField;
 
-  const _QfIdentityVerifyDialog({
+  const _QfSensitiveActionDialog({
     required this.session,
     required this.title,
     required this.purpose,
+    required this.actionLabel,
+    this.withNameField = false,
   });
 
   @override
-  State<_QfIdentityVerifyDialog> createState() =>
-      _QfIdentityVerifyDialogState();
+  State<_QfSensitiveActionDialog> createState() =>
+      _QfSensitiveActionDialogState();
 }
 
-class _QfIdentityVerifyDialogState extends State<_QfIdentityVerifyDialog> {
+class _QfSensitiveActionDialogState extends State<_QfSensitiveActionDialog> {
   final _password = TextEditingController();
+  final _name = TextEditingController(text: '通行密钥');
+  String? _reauthToken;
   String? _error;
 
   @override
   void dispose() {
     _password.dispose();
+    _name.dispose();
     super.dispose();
   }
 
@@ -493,12 +496,12 @@ class _QfIdentityVerifyDialogState extends State<_QfIdentityVerifyDialog> {
     setState(() => _error = null);
     try {
       final token = await qfPasskeyReauthToken(widget.session, widget.purpose);
-      if (mounted) Navigator.of(context).pop({'reauthToken': token});
+      if (mounted) setState(() => _reauthToken = token);
     } on QfApiException catch (e) {
       if (mounted) {
         setState(() {
           _error = e.code == 'PASSKEY_NOT_ENROLLED'
-              ? '您尚未创建通行密钥，请使用账户密码验证。'
+              ? '您尚未创建通行密钥，请使用账户密码确认。'
               : qfAccountErrorMessage(e);
         });
       }
@@ -509,46 +512,67 @@ class _QfIdentityVerifyDialogState extends State<_QfIdentityVerifyDialog> {
     }
   }
 
+  void _submit() {
+    final name = widget.withNameField ? _name.text.trim() : null;
+    if (_reauthToken != null) {
+      Navigator.of(context).pop({'reauthToken': _reauthToken!, ?'name': name});
+      return;
+    }
+    if (_password.text.isEmpty) {
+      setState(() => _error = '请输入当前账户密码');
+      return;
+    }
+    Navigator.of(context).pop({'password': _password.text, ?'name': name});
+  }
+
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
       title: Text(widget.title),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const Text('请先完成身份验证：输入当前密码，或使用通行密钥验证。'),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _password,
-            obscureText: true,
-            decoration: InputDecoration(labelText: '当前账户密码', errorText: _error),
-          ),
-          const SizedBox(height: 8),
-          QfActionButton(
-            label: '使用通行密钥验证',
-            busyLabel: '正在验证通行密钥……',
-            filled: false,
-            showInlineError: false,
-            onAction: _usePasskey,
-          ),
-        ],
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text('安全提醒：此操作涉及账号安全，请确认是您本人操作。'),
+            const SizedBox(height: 12),
+            if (widget.withNameField) ...[
+              TextField(
+                controller: _name,
+                decoration: const InputDecoration(labelText: '名称'),
+              ),
+              const SizedBox(height: 12),
+            ],
+            if (_reauthToken == null) ...[
+              TextField(
+                controller: _password,
+                obscureText: true,
+                decoration: InputDecoration(
+                  labelText: '当前账户密码',
+                  errorText: _error,
+                ),
+              ),
+              const SizedBox(height: 8),
+              QfActionButton(
+                label: '使用通行密钥确认',
+                busyLabel: '正在验证通行密钥……',
+                filled: false,
+                showInlineError: false,
+                onAction: _usePasskey,
+              ),
+            ] else ...[
+              const Text('已通过通行密钥确认。'),
+              if (_error != null) ...[const SizedBox(height: 8), Text(_error!)],
+            ],
+          ],
+        ),
       ),
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
           child: const Text('取消'),
         ),
-        FilledButton(
-          onPressed: () {
-            if (_password.text.isEmpty) {
-              setState(() => _error = '请输入当前账户密码');
-              return;
-            }
-            Navigator.of(context).pop({'password': _password.text});
-          },
-          child: const Text('确认'),
-        ),
+        FilledButton(onPressed: _submit, child: Text(widget.actionLabel)),
       ],
     );
   }
@@ -601,7 +625,7 @@ class _QfDeleteAccountDialogState extends State<_QfDeleteAccountDialog> {
 
   Future<void> _submit() async {
     if (_reauthToken == null && _password.text.isEmpty) {
-      setState(() => _error = '请先完成身份复核：输入账户密码，或使用通行密钥验证。');
+      setState(() => _error = '请先输入账户密码，或使用通行密钥确认。');
       return;
     }
     try {
@@ -643,7 +667,7 @@ class _QfDeleteAccountDialogState extends State<_QfDeleteAccountDialog> {
             const SizedBox(height: 12),
             const Text('冷静期结束并完成数据清除后，本账号绑定的邮箱可用于重新注册；账户ID将被保留，不再释放。'),
             const SizedBox(height: 12),
-            const Text('提交前请完成身份复核：输入账户密码，或使用通行密钥验证。'),
+            const Text('安全提醒：为确认是您本人操作，请在本弹窗内输入账户密码，或使用通行密钥确认。'),
             const SizedBox(height: 12),
             if (_reauthToken == null) ...[
               TextField(
@@ -1484,9 +1508,7 @@ class _QfBanAppealEntryState extends State<QfBanAppealEntry> {
     );
     final content = switch (_view) {
       QfBanAppealView.goAppeal => link('去申诉 >>>>'),
-      QfBanAppealView.pendingOnly => Text(
-        '申诉状态：${QfCopy.appealStatusPending}',
-      ),
+      QfBanAppealView.pendingOnly => Text('申诉状态：${QfCopy.appealStatusPending}'),
       QfBanAppealView.rejectedAgain => Row(
         mainAxisSize: MainAxisSize.min,
         children: [
