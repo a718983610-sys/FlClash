@@ -16,5 +16,6 @@
     }
   },
   "retiredBelowVersion": "0.0.0",
-  "serverBaseUrl": "https://qfclash-account.a718983610.workers.dev"
+  "serverBaseUrl": "https://effectively-cube-flood-analyzed.trycloudflare.com",
+  "serverBaseUrlFallback": "https://qfclash-account.a718983610.workers.dev"
 }
