@@ -115,7 +115,7 @@ func loadConfigWithBase(base *SetupBase, configPath string) (*config.Config, err
 	if err := writeConfigDocument(configPath, document); err != nil {
 		return nil, err
 	}
-	cfg, err := config.ParseRawConfig(raw)
+	cfg, err := parseRawConfigTolerant(raw, report)
 	if err != nil {
 		return nil, err
 	}

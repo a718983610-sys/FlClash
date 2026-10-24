@@ -195,13 +195,12 @@ class _EditProfileViewState extends ConsumerState<EditProfileView> {
       return message;
     }, silence: false);
     if (message?.isNotEmpty == true) {
-      unawaited(
-        dialogs.showMessage(
-          title: currentAppLocalizations.tip,
-          message: TextSpan(text: message),
-        ),
+      final proceed = await dialogs.showMessage(
+        title: currentAppLocalizations.tip,
+        message: TextSpan(text: message),
+        confirmText: '仍要保存',
       );
-      return;
+      if (proceed != true) return;
     }
     if (context.mounted) {
       Navigator.of(context).pop(data);

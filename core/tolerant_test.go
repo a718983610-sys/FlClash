@@ -1,6 +1,7 @@
 package core
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -257,5 +258,46 @@ func TestLoadConfigWithBaseTolerantAirport(t *testing.T) {
 	report := handleGetLoadReport()
 	if report.Total != 2 || report.Proxies != 4 {
 		t.Errorf("report = %d skipped / %d proxies, want 2 / 4", report.Total, report.Proxies)
+	}
+}
+
+func TestLoadConfigSecondChanceDropsBrokenSections(t *testing.T) {
+	yamlText := `
+proxies:
+  - {name: ok-node, type: ss, server: 127.0.0.1, port: 8388, cipher: aes-128-gcm, password: pw}
+proxy-groups:
+  - {name: main, type: select, proxies: [ok-node]}
+listeners:
+  - {name: bad-listener, type: definitely-not-a-listener, port: 9999}
+rules:
+  - MATCH,main
+`
+	raw, err := unmarshalRawConfig([]byte(yamlText))
+	if err != nil {
+		t.Fatalf("unmarshalRawConfig: %v", err)
+	}
+	if _, err := config.ParseRawConfig(raw); err == nil {
+		t.Fatal("the poisoned config unexpectedly parses without the second chance")
+	}
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte(yamlText), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := loadConfig(path)
+	if err != nil {
+		t.Fatalf("loadConfig should survive a broken auxiliary section: %v", err)
+	}
+	if _, ok := cfg.Proxies["ok-node"]; !ok {
+		t.Fatal("the usable proxy did not survive the second-chance load")
+	}
+	report := handleGetLoadReport()
+	found := false
+	for _, skip := range report.Skipped {
+		if skip.Kind == "section" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("the dropped section was not recorded in the load report")
 	}
 }

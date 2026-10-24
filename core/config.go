@@ -105,7 +105,7 @@ func loadConfig(path string) (*config.Config, error) {
 	if !usableAfterSanitize(report, raw) {
 		return nil, errNoUsableOutbounds
 	}
-	cfg, err := config.ParseRawConfig(raw)
+	cfg, err := parseRawConfigTolerant(raw, report)
 	if err != nil {
 		return nil, err
 	}

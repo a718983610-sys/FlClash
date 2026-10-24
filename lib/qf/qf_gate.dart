@@ -258,7 +258,6 @@ class _QfSessionGateState extends ConsumerState<QfSessionGate> {
     try {
       await showDialog<void>(
         context: context,
-        barrierDismissible: false,
         builder: (dialogContext) {
           shown = true;
           return AlertDialog(

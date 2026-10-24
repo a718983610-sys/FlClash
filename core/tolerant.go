@@ -452,6 +452,49 @@ func sanitizeRawConfig(raw *config.RawConfig) *loadReport {
 	return s.report
 }
 
+func (r *loadReport) noteSkip(kind, name, reason string) {
+	r.Total++
+	if len(r.Skipped) < maxRecordedSkips {
+		r.Skipped = append(r.Skipped, loadSkip{Kind: kind, Name: name, Reason: reason})
+	}
+	log.Warnln("config entry skipped (%s %q): %s", kind, name, reason)
+}
+
+// Sections outside the outbound set (dns, tun, sniffer, listeners and the
+// like) must not sink a config whose proxies, groups and rules are fine:
+// when the full parse fails, retry once with only the routing essentials
+// kept and the rest reset to defaults.
+func parseRawConfigTolerant(raw *config.RawConfig, report *loadReport) (*config.Config, error) {
+	cfg, err := config.ParseRawConfig(raw)
+	if err == nil {
+		return cfg, nil
+	}
+	stripped := config.DefaultRawConfig()
+	stripped.Proxy = raw.Proxy
+	stripped.ProxyGroup = raw.ProxyGroup
+	stripped.ProxyProvider = raw.ProxyProvider
+	stripped.RuleProvider = raw.RuleProvider
+	stripped.Rule = raw.Rule
+	stripped.SubRules = raw.SubRules
+	stripped.Mode = raw.Mode
+	stripped.LogLevel = raw.LogLevel
+	stripped.IPv6 = raw.IPv6
+	stripped.Port = raw.Port
+	stripped.SocksPort = raw.SocksPort
+	stripped.MixedPort = raw.MixedPort
+	stripped.AllowLan = raw.AllowLan
+	stripped.BindAddress = raw.BindAddress
+	stripped.UnifiedDelay = raw.UnifiedDelay
+	stripped.GlobalUA = raw.GlobalUA
+	stripped.TCPConcurrent = raw.TCPConcurrent
+	retry, retryErr := config.ParseRawConfig(stripped)
+	if retryErr != nil {
+		return nil, err
+	}
+	report.noteSkip("section", "advanced", fmt.Sprintf("unsupported sections reset to defaults: %v", err))
+	return retry, nil
+}
+
 // A profile that declares no proxies and no providers at all is an empty
 // profile: it loads onto the defaults, as it always has (and the host's
 // own health gate still refuses to start a VPN on it). The error is for a

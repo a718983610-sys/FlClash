@@ -217,7 +217,7 @@ class SetupAction extends _$SetupAction {
     }
     if (_isCurrent(request) &&
         !ref.read(safeModeProvider) &&
-        !_appliedConfigHealthy()) {
+        !(await _appliedConfigHealthy())) {
       await globalState.safeRun(() => setRunning(false));
       throw const MessageException(_configLoadFailedMessage);
     }
@@ -250,7 +250,7 @@ class SetupAction extends _$SetupAction {
     }
     if (_isCurrent(request) &&
         !ref.read(safeModeProvider) &&
-        !_appliedConfigHealthy()) {
+        !(await _appliedConfigHealthy())) {
       await globalState.safeRun(() => setRunning(false));
       dialogs.showNotifier(_configLoadFailedMessage, level: MessageLevel.error);
       return false;
@@ -258,16 +258,26 @@ class SetupAction extends _$SetupAction {
     return true;
   }
 
-  /// Whether the config the Core most recently accepted can route at all,
-  /// going by what the build counted in it. Provider-backed profiles
-  /// legitimately declare no inline nodes, so declared proxy-providers
-  /// satisfy the node side. Unknown counts (nothing applied yet this
-  /// session) pass: there is nothing to judge.
-  bool _appliedConfigHealthy() {
+  /// Whether the config the Core most recently accepted can route at all.
+  /// The Core's load report says what it actually kept after tolerant
+  /// loading, so it outranks the host-side count of what the profile
+  /// declared: a config the Core accepted with usable entries kept must
+  /// not be vetoed by a counting mismatch (a profile with nodes but no
+  /// declared groups is the known false positive). Provider-backed
+  /// profiles legitimately declare no inline nodes, so declared
+  /// proxy-providers satisfy the node side. Unknown counts (nothing
+  /// applied yet this session) pass: there is nothing to judge.
+  Future<bool> _appliedConfigHealthy() async {
     final counts = globalState.lastConfigCounts;
     if (counts == null) return true;
-    if (counts.groups <= 0) return false;
-    return counts.proxies > 0 || globalState.lastConfigHasProviders;
+    try {
+      final report = await _core.getLoadReport();
+      if (report.proxies > 0 || report.groups > 0) return true;
+      return globalState.lastConfigHasProviders;
+    } catch (_) {
+      if (counts.groups <= 0) return false;
+      return counts.proxies > 0 || globalState.lastConfigHasProviders;
+    }
   }
 
   Future<void> _startCoreRunning(_RunRequest request) async {
