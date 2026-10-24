@@ -34,8 +34,7 @@ jobs:
 
       - name: Free disk space (TEMP mirror build 2026-10-24, revert after run)
         run: |
-          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost /opt/hostedtoolcache
-          sudo rm -rf /usr/share/swift /opt/miniconda /opt/az /usr/local/lib/android/sdk/ndk
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost /opt/hostedtoolcache/CodeQL
           sudo docker image prune -af >/dev/null 2>&1 || true
           df -h / | tail -1
 
