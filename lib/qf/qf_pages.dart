@@ -2209,7 +2209,6 @@ class _QfRedeemDialogState extends State<_QfRedeemDialog> {
   final _email = TextEditingController();
   String _method = 'usdt';
   String? _fieldError;
-  bool _busy = false;
 
   String get _fulfillment =>
       (widget.product['fulfillment'] ?? '').toString().toLowerCase();
@@ -2251,7 +2250,6 @@ class _QfRedeemDialogState extends State<_QfRedeemDialog> {
 
   Future<void> _confirm() async {
     if (!_validate()) return;
-    setState(() => _busy = true);
     try {
       await widget.session.redeemCreate(
         (widget.product['id'] as num).toInt(),
@@ -2269,7 +2267,6 @@ class _QfRedeemDialogState extends State<_QfRedeemDialog> {
       if (e.code == 'REGION_UNAVAILABLE') {
         Navigator.of(context).pop('region');
       } else {
-        setState(() => _busy = false);
         qfToast(context, qfAccountErrorMessage(e));
       }
     }
@@ -2341,12 +2338,17 @@ class _QfRedeemDialogState extends State<_QfRedeemDialog> {
       ),
       actions: [
         TextButton(
-          onPressed: _busy ? null : () => Navigator.of(context).pop(),
+          onPressed: () => Navigator.of(context).pop(),
           child: const Text('取消'),
         ),
-        FilledButton(
-          onPressed: _busy ? null : _confirm,
-          child: const Text('确认兑换'),
+        QfActionButton(
+          label: '确认兑换',
+          busyLabel: '正在兑换……',
+          showInlineError: false,
+          onFailure: (failure) {
+            if (mounted) qfToast(context, failure.message);
+          },
+          onAction: _confirm,
         ),
       ],
     );
@@ -2369,22 +2371,16 @@ class _QfRevealCodeDialogState extends State<_QfRevealCodeDialog> {
   Timer? _maskTimer;
   String? _revealedCode;
   String? _reauthToken;
-  bool _busy = false;
 
   Future<void> _passkeyVerify() async {
-    setState(() => _busy = true);
     try {
       final token = await qfPasskeyReauthToken(widget.session, 'reveal_code');
       if (mounted) {
-        setState(() {
-          _reauthToken = token;
-          _busy = false;
-        });
+        setState(() => _reauthToken = token);
         qfToast(context, '通行密钥验证已通过，请继续输入邮箱验证码完成查看');
       }
     } on QfApiException catch (e) {
       if (mounted) {
-        setState(() => _busy = false);
         qfToast(
           context,
           e.code == 'PASSKEY_NOT_ENROLLED'
@@ -2393,10 +2389,7 @@ class _QfRevealCodeDialogState extends State<_QfRevealCodeDialog> {
         );
       }
     } catch (e) {
-      if (mounted) {
-        setState(() => _busy = false);
-        qfToast(context, qfPasskeyFailureText(e));
-      }
+      if (mounted) qfToast(context, qfPasskeyFailureText(e));
     }
   }
 
@@ -2425,7 +2418,6 @@ class _QfRevealCodeDialogState extends State<_QfRevealCodeDialog> {
       qfToast(context, '请输入账户密码，或先使用通行密钥验证');
       return;
     }
-    setState(() => _busy = true);
     try {
       final String code;
       if (_reauthToken != null) {
@@ -2443,17 +2435,13 @@ class _QfRevealCodeDialogState extends State<_QfRevealCodeDialog> {
         );
       }
       if (!mounted) return;
-      setState(() {
-        _revealedCode = code;
-        _busy = false;
-      });
+      setState(() => _revealedCode = code);
       _maskTimer = Timer(const Duration(seconds: 60), () {
         if (mounted) Navigator.of(context).pop();
       });
     } on QfApiException catch (e) {
       if (mounted) {
         setState(() {
-          _busy = false;
           if (e.code == 'REAUTH_INVALID') _reauthToken = null;
         });
         qfToast(context, qfAccountErrorMessage(e));
@@ -2482,9 +2470,12 @@ class _QfRevealCodeDialogState extends State<_QfRevealCodeDialog> {
                   decoration: const InputDecoration(labelText: '当前账户密码'),
                 ),
                 const SizedBox(height: 8),
-                OutlinedButton(
-                  onPressed: _busy ? null : _passkeyVerify,
-                  child: const Text('使用通行密钥验证'),
+                QfActionButton(
+                  label: '使用通行密钥验证',
+                  busyLabel: '正在验证通行密钥……',
+                  filled: false,
+                  showInlineError: false,
+                  onAction: _passkeyVerify,
                 ),
               ] else
                 const Text('已通过通行密钥验证，请继续输入邮箱验证码完成查看。'),
@@ -2532,9 +2523,14 @@ class _QfRevealCodeDialogState extends State<_QfRevealCodeDialog> {
           child: const Text('关闭'),
         ),
         if (_revealedCode == null)
-          FilledButton(
-            onPressed: _busy ? null : _reveal,
-            child: const Text('验证并查看'),
+          QfActionButton(
+            label: '验证并查看',
+            busyLabel: '正在验证……',
+            showInlineError: false,
+            onFailure: (failure) {
+              if (mounted) qfToast(context, failure.message);
+            },
+            onAction: _reveal,
           ),
       ],
     );
