@@ -14,6 +14,48 @@ import 'qf_config.dart';
 
 enum QfMode { unknown, entry, user, guest }
 
+int? _qfOwnerUserId;
+
+/// A few server views (forum authors, camp creators, support tickets)
+/// carry a userId but no owner marker. Once any badged view (profile,
+/// friend, login) has identified the owner in this session, those views
+/// badge by id. Nothing is hardcoded: unlearned means unbadged.
+void qfLearnOwnerFromView(Object? view) {
+  var budget = 300;
+  void walk(Object? node, int depth) {
+    if (budget <= 0 || depth > 3) return;
+    if (node is Map) {
+      budget--;
+      if (node['ownerBadge'] == 'green') {
+        final id = node['userId'] ?? node['id'];
+        if (id is num && id > 0) _qfOwnerUserId = id.toInt();
+      }
+      for (final value in node.values) {
+        walk(value, depth + 1);
+        if (budget <= 0) return;
+      }
+    } else if (node is List) {
+      for (final item in node) {
+        walk(item, depth + 1);
+        if (budget <= 0) return;
+      }
+    }
+  }
+
+  walk(view, 0);
+}
+
+bool qfIsOwnerUserId(Object? userId) {
+  return userId is num &&
+      _qfOwnerUserId != null &&
+      userId.toInt() == _qfOwnerUserId;
+}
+
+@visibleForTesting
+void qfResetLearnedOwnerUserId() {
+  _qfOwnerUserId = null;
+}
+
 class QfGuestUsage {
   final int dailyLimitSeconds;
   final int usedSeconds;
@@ -422,6 +464,7 @@ class QfSessionController extends ChangeNotifier {
       email = (user['email'] ?? '').toString();
       username = (user['username'] ?? username ?? '').toString();
       userId = (user['id'] as num?)?.toInt();
+      qfLearnOwnerFromView(user);
     }
     accountDeleting = data['accountDeleting'] == true;
     deletionEffectiveAt = (data['deletionEffectiveAt'] as num?)?.toInt();
@@ -561,13 +604,15 @@ class QfSessionController extends ChangeNotifier {
   }) async {
     await _refreshIfNeeded();
     try {
-      return await QfHttp.send(
+      final data = await QfHttp.send(
         method,
         '$serverBaseUrl$path',
         body: body,
         bearer: _accessToken,
         headers: headers,
       );
+      qfLearnOwnerFromView(data);
+      return data;
     } on QfApiException catch (e) {
       if (e.code == 'ACCOUNT_BANNED') {
         await handleBanned(e);
@@ -580,13 +625,15 @@ class QfSessionController extends ChangeNotifier {
       if (e.status == 401 && _refreshToken != null) {
         final refreshed = await _refreshIfNeeded(force: true);
         if (refreshed) {
-          return QfHttp.send(
+          final data = await QfHttp.send(
             method,
             '$serverBaseUrl$path',
             body: body,
             bearer: _accessToken,
             headers: headers,
           );
+          qfLearnOwnerFromView(data);
+          return data;
         }
         await _clearUserSession();
         mode = QfMode.entry;

@@ -2017,10 +2017,12 @@ class _QfPointsPageState extends State<QfPointsPage> {
   }
 }
 
-/// 站长判断：服务端用户视图的 isOwner（原始行形状 is_owner 一并认）。
+/// 站长判断：三种下发口径全认——本人/站长台视图的 isOwner、公开视图的
+/// ownerBadge（'green'）、原始行形状的 is_owner，任一命中即站长。
 bool qfUserIsOwner(Map? user) {
   if (user == null) return false;
   return user['isOwner'] == true ||
+      user['ownerBadge'] == 'green' ||
       user['is_owner'] == 1 ||
       user['is_owner'] == true;
 }

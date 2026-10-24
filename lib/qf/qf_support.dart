@@ -256,7 +256,9 @@ class QfSupportTicket {
       sessionId: sessionId,
       userLabel: userLabel,
       userIsOwner:
-          qfUserIsOwner(user is Map ? user : null) || qfUserIsOwner(raw),
+          qfUserIsOwner(user is Map ? user : null) ||
+          qfUserIsOwner(raw) ||
+          qfIsOwnerUserId(raw['userId']),
       lastBody: (raw['lastMessage'] ?? raw['lastBody'] ?? raw['summary'] ?? '')
           .toString(),
       unread:

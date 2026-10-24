@@ -35,7 +35,9 @@ bool? qfForumAuthorHasAvatar(Map<dynamic, dynamic> raw) {
 
 bool qfForumAuthorIsOwner(Map<dynamic, dynamic> raw) {
   final author = raw['author'];
-  if (author is Map) return qfUserIsOwner(author);
+  if (author is Map) {
+    return qfUserIsOwner(author) || qfIsOwnerUserId(author['userId']);
+  }
   return false;
 }
 
@@ -2133,7 +2135,9 @@ class QfCampCreatorRow extends StatelessWidget {
         Flexible(
           child: QfBadgedName(
             name: name,
-            isOwner: qfUserIsOwner(qfCampCreator(camp)),
+            isOwner:
+                qfUserIsOwner(qfCampCreator(camp)) ||
+                qfIsOwnerUserId(qfCampCreator(camp)?['userId']),
           ),
         ),
         const SizedBox(width: 8),
