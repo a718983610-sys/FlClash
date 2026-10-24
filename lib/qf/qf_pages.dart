@@ -2063,8 +2063,6 @@ class _QfRedeemPageState extends State<QfRedeemPage> {
   List<dynamic> _orders = const [];
   int _balance = 0;
   bool _loading = true;
-  bool _regionBlocked = false;
-  String _redeemBlockedMessage = '';
 
   @override
   void initState() {
@@ -2074,7 +2072,6 @@ class _QfRedeemPageState extends State<QfRedeemPage> {
 
   Future<void> _load() async {
     try {
-      final rules = await widget.session.pointsRules();
       final data = await widget.session.redeemProducts();
       final orders = await widget.session.myOrders();
       if (mounted) {
@@ -2083,9 +2080,6 @@ class _QfRedeemPageState extends State<QfRedeemPage> {
           _products = products is List ? products : const [];
           _balance = (data['balance'] as num?)?.toInt() ?? 0;
           _orders = orders;
-          _regionBlocked = rules['redeemRegionBlocked'] == true;
-          _redeemBlockedMessage = (rules['redeemBlockedMessage'] ?? '')
-              .toString();
           _loading = false;
         });
       }
@@ -2104,9 +2098,7 @@ class _QfRedeemPageState extends State<QfRedeemPage> {
       ),
     );
     if (!mounted) return;
-    if (outcome == 'region') {
-      qfToast(context, '该功能在您的国家地区不可用');
-    } else if (outcome == 'done') {
+    if (outcome == 'done') {
       qfToast(context, '兑换申请已提交');
       await _load();
       await widget.session.refreshPoints();
@@ -2229,16 +2221,6 @@ class _QfRedeemPageState extends State<QfRedeemPage> {
               padding: const EdgeInsets.all(16),
               children: [
                 Text('当前积分：$_balance 分'),
-                if (_regionBlocked)
-                  Padding(
-                    padding: EdgeInsets.only(top: 12),
-                    child: Text(
-                      _redeemBlockedMessage.isNotEmpty
-                          ? _redeemBlockedMessage
-                          : '该功能在您的国家地区不可用',
-                      style: AppTextStyle.body.of(context, emphasized: true),
-                    ),
-                  ),
                 const SizedBox(height: 12),
                 for (final raw in _products)
                   if (raw is Map)
@@ -2254,8 +2236,7 @@ class _QfRedeemPageState extends State<QfRedeemPage> {
                         isThreeLine: true,
                         trailing: FilledButton(
                           onPressed:
-                              _regionBlocked ||
-                                  qfStockSoldOut(raw) ||
+                              qfStockSoldOut(raw) ||
                                   _balance <
                                       ((raw['pricePoints'] as num?)?.toInt() ??
                                           0)
@@ -2403,11 +2384,7 @@ class _QfRedeemDialogState extends State<_QfRedeemDialog> {
       if (mounted) Navigator.of(context).pop('done');
     } on QfApiException catch (e) {
       if (!mounted) return;
-      if (e.code == 'REGION_UNAVAILABLE') {
-        Navigator.of(context).pop('region');
-      } else {
-        qfToast(context, qfAccountErrorMessage(e));
-      }
+      qfToast(context, qfAccountErrorMessage(e));
     }
   }
 
