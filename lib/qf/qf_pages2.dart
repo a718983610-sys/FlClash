@@ -918,7 +918,6 @@ class _QfChangeEmailDialogState extends State<_QfChangeEmailDialog> {
   final _newEmail = TextEditingController();
   final _oldCode = TextEditingController();
   final _newCode = TextEditingController();
-  bool _busy = false;
 
   @override
   void dispose() {
@@ -929,7 +928,6 @@ class _QfChangeEmailDialogState extends State<_QfChangeEmailDialog> {
   }
 
   Future<void> _submit() async {
-    setState(() => _busy = true);
     try {
       await widget.session.authed(
         'POST',
@@ -946,8 +944,6 @@ class _QfChangeEmailDialogState extends State<_QfChangeEmailDialog> {
       }
     } on QfApiException catch (e) {
       if (mounted) qfToast(context, qfAccountErrorMessage(e));
-    } finally {
-      if (mounted) setState(() => _busy = false);
     }
   }
 
@@ -1008,9 +1004,14 @@ class _QfChangeEmailDialogState extends State<_QfChangeEmailDialog> {
           onPressed: () => Navigator.of(context).pop(),
           child: const Text('取消'),
         ),
-        FilledButton(
-          onPressed: _busy ? null : _submit,
-          child: const Text('确认换绑'),
+        QfActionButton(
+          label: '确认换绑',
+          busyLabel: '正在换绑……',
+          showInlineError: false,
+          onFailure: (failure) {
+            if (mounted) qfToast(context, failure.message);
+          },
+          onAction: _submit,
         ),
       ],
     );
@@ -1475,10 +1476,8 @@ class _QfAppealPageState extends State<QfAppealPage> {
   int? _limit;
   String? _quotaError;
   bool _checking = false;
-  bool _busy = false;
   QfAppealStatus? _appealStatus;
   String? _statusError;
-  bool _statusBusy = false;
   bool _statusQueried = false;
 
   bool get _exhausted => _remaining != null && _remaining! <= 0;
@@ -1543,10 +1542,7 @@ class _QfAppealPageState extends State<QfAppealPage> {
       );
       return;
     }
-    setState(() {
-      _statusBusy = true;
-      _statusError = null;
-    });
+    setState(() => _statusError = null);
     try {
       Map<String, dynamic> body;
       if (byPasskey) {
@@ -1573,22 +1569,15 @@ class _QfAppealPageState extends State<QfAppealPage> {
         setState(() {
           _appealStatus = qfParseAppealStatus(data);
           _statusQueried = true;
-          _statusBusy = false;
         });
       }
     } on QfApiException catch (e) {
       if (mounted) {
-        setState(() {
-          _statusBusy = false;
-          _statusError = qfAccountErrorMessage(e);
-        });
+        setState(() => _statusError = qfAccountErrorMessage(e));
       }
     } catch (e) {
       if (mounted) {
-        setState(() {
-          _statusBusy = false;
-          _statusError = qfPasskeyFailureText(e);
-        });
+        setState(() => _statusError = qfPasskeyFailureText(e));
       }
     }
   }
@@ -1602,7 +1591,6 @@ class _QfAppealPageState extends State<QfAppealPage> {
     }
     final quotaOk = await _checkQuota();
     if (!quotaOk || _exhausted) return;
-    setState(() => _busy = true);
     try {
       final result = await QfHttp.send(
         'POST',
@@ -1619,8 +1607,6 @@ class _QfAppealPageState extends State<QfAppealPage> {
       }
     } on QfApiException catch (e) {
       if (mounted) qfToast(context, qfAccountErrorMessage(e));
-    } finally {
-      if (mounted) setState(() => _busy = false);
     }
   }
 
@@ -1682,9 +1668,15 @@ class _QfAppealPageState extends State<QfAppealPage> {
               ),
             ),
           const SizedBox(height: 16),
-          FilledButton(
-            onPressed: _busy || _exhausted ? null : _submit,
-            child: const Text('提交申诉'),
+          QfActionButton(
+            label: '提交申诉',
+            busyLabel: '正在提交……',
+            enabled: !_exhausted,
+            showInlineError: false,
+            onFailure: (failure) {
+              if (mounted) qfToast(context, failure.message);
+            },
+            onAction: _submit,
           ),
           const SizedBox(height: 12),
           const Text('也可通过邮箱 a718983610@gmail.com 进行申诉。'),
@@ -1698,23 +1690,24 @@ class _QfAppealPageState extends State<QfAppealPage> {
           const SizedBox(height: 8),
           Row(
             children: [
-              FilledButton(
-                onPressed: _statusBusy ? null : () => _queryStatus(),
-                child: const Text(QfCopy.appealStatusTitle),
+              QfActionButton(
+                label: QfCopy.appealStatusTitle,
+                busyLabel: '正在查询申诉结果……',
+                showInlineError: false,
+                onAction: _queryStatus,
               ),
               const SizedBox(width: 8),
-              OutlinedButton(
-                onPressed: _statusBusy
-                    ? null
-                    : () => _queryStatus(byPasskey: true),
-                child: const Text(QfCopy.appealPasskeyVerify),
+              QfActionButton(
+                label: QfCopy.appealPasskeyVerify,
+                busyLabel: '正在查询申诉结果……',
+                filled: false,
+                showInlineError: false,
+                onAction: () => _queryStatus(byPasskey: true),
               ),
             ],
           ),
           const SizedBox(height: 8),
-          if (_statusBusy)
-            const Text('正在查询申诉结果……')
-          else if (_statusError != null)
+          if (_statusError != null)
             Text(_statusError!, style: const TextStyle(color: Colors.red))
           else if (_statusQueried && _appealStatus != null)
             if (!_appealStatus!.hasAppeal)
