@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:developer';
 import 'dart:io';
@@ -50,6 +51,98 @@ String qfGuestErrorMessage(Object error) {
   return error.toString();
 }
 
+/// The account-server entrypoints, in try order: the base that last
+/// succeeded (persisted across launches), the manifest's serverBaseUrl,
+/// the manifest's serverBaseUrlFallback, and the built-in workers.dev
+/// host. Domestic networks often cannot reach workers.dev directly, so
+/// no single one of these may be the only door.
+class QfEndpoints {
+  static const String _lastGoodKey = 'qf_endpoints_last_good';
+
+  static String primary = QfConfig.fallbackServerBaseUrl;
+  static String fallback = '';
+  static String lastGood = '';
+  static bool _loaded = false;
+
+  static String _clean(String url) => url.trim().replaceAll(RegExp(r'/+$'), '');
+
+  static void apply({String? primaryUrl, String? backupUrl}) {
+    final nextPrimary = _clean(primaryUrl ?? '');
+    if (nextPrimary.isNotEmpty) primary = nextPrimary;
+    if (backupUrl != null) fallback = _clean(backupUrl);
+  }
+
+  static void applyManifest(QfReleaseManifest manifest) {
+    apply(
+      primaryUrl: manifest.serverBaseUrl,
+      backupUrl: manifest.serverBaseUrlFallback,
+    );
+  }
+
+  static List<String> orderedBases() {
+    final seen = <String>{};
+    final ordered = <String>[];
+    for (final base in [
+      lastGood,
+      primary,
+      fallback,
+      QfConfig.fallbackServerBaseUrl,
+    ]) {
+      final cleaned = _clean(base);
+      if (cleaned.isNotEmpty && seen.add(cleaned)) ordered.add(cleaned);
+    }
+    return ordered;
+  }
+
+  /// Try-order for [url]: when it sits on a known account base, the same
+  /// path on every base in order; otherwise the URL unchanged.
+  static List<String> rotationFor(String url) {
+    final bases = orderedBases();
+    for (final base in bases) {
+      if (url.startsWith(base)) {
+        final path = url.substring(base.length);
+        return [for (final candidate in bases) '$candidate$path'];
+      }
+    }
+    return [url];
+  }
+
+  static void noteSuccess(String url) {
+    for (final base in orderedBases()) {
+      if (!url.startsWith(base)) continue;
+      if (base != lastGood) {
+        lastGood = base;
+        unawaited(_persistLastGood(base));
+      }
+      return;
+    }
+  }
+
+  static Future<void> loadPersisted() async {
+    if (_loaded) return;
+    _loaded = true;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final stored = _clean(prefs.getString(_lastGoodKey) ?? '');
+      if (stored.isNotEmpty) lastGood = stored;
+    } catch (_) {}
+  }
+
+  static Future<void> _persistLastGood(String base) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_lastGoodKey, base);
+    } catch (_) {}
+  }
+
+  static void resetForTest() {
+    primary = QfConfig.fallbackServerBaseUrl;
+    fallback = '';
+    lastGood = '';
+    _loaded = false;
+  }
+}
+
 class QfHttp {
   static Future<Map<String, dynamic>> send(
     String method,
@@ -58,7 +151,51 @@ class QfHttp {
     String? bearer,
     Map<String, String>? headers,
   }) async {
-    final client = await QfHttpClient.create(uri: Uri.parse(url));
+    QfApiException? lastNetworkError;
+    for (final candidate in QfEndpoints.rotationFor(url)) {
+      QfProxySource? force;
+      while (true) {
+        try {
+          final data = await _sendOnce(
+            method,
+            candidate,
+            body: body,
+            bearer: bearer,
+            headers: headers,
+            forceSource: force,
+          );
+          QfEndpoints.noteSuccess(candidate);
+          return data;
+        } on QfApiException catch (e) {
+          if (!e.isNetworkFailure) rethrow;
+          lastNetworkError = e;
+          if (force != null) break;
+          // One cross-path retry per endpoint: a request that died on the
+          // proxied path gets a direct attempt and vice versa, so a core
+          // that is up but has no working outbound cannot blackhole
+          // account traffic.
+          force = QfHttpClient.lastDecision.source == QfProxySource.direct
+              ? QfProxySource.core
+              : QfProxySource.direct;
+        }
+      }
+    }
+    throw lastNetworkError ??
+        const QfApiException(0, 'NETWORK', '网络连接失败，请检查网络后重试');
+  }
+
+  static Future<Map<String, dynamic>> _sendOnce(
+    String method,
+    String url, {
+    Map<String, dynamic>? body,
+    String? bearer,
+    Map<String, String>? headers,
+    QfProxySource? forceSource,
+  }) async {
+    final client = await QfHttpClient.create(
+      uri: Uri.parse(url),
+      forceSource: forceSource,
+    );
     client.connectionTimeout = const Duration(seconds: 15);
     try {
       final request = await client.openUrl(method, Uri.parse(url));
@@ -140,7 +277,11 @@ class QfProofHeaders {
 class QfManifestService {
   static const String _cacheKey = 'qf_release_manifest_cache';
 
+  static Future<QfReleaseManifest?> Function()? fetcherForTest;
+
   static Future<QfReleaseManifest?> fetchRemote() async {
+    final fetcher = fetcherForTest;
+    if (fetcher != null) return fetcher();
     try {
       final data = await QfHttp.send('GET', QfConfig.manifestUrl);
       final manifest = QfReleaseManifest.fromJson(data);
@@ -153,6 +294,7 @@ class QfManifestService {
       }
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(_cacheKey, jsonEncode(manifest.toJson()));
+      QfEndpoints.applyManifest(manifest);
       return manifest;
     } catch (e) {
       log('release manifest fetch failed: $e', name: 'QFClash');

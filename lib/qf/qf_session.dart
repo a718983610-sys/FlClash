@@ -295,6 +295,14 @@ class QfSessionController extends ChangeNotifier {
     if (url.isNotEmpty && url != serverBaseUrl) {
       serverBaseUrl = url.replaceAll(RegExp(r'/+$'), '');
     }
+    QfEndpoints.apply(primaryUrl: serverBaseUrl);
+  }
+
+  String serverBaseUrlFallback = '';
+
+  void applyServerBaseUrlFallback(String url) {
+    serverBaseUrlFallback = url.replaceAll(RegExp(r'/+$'), '');
+    QfEndpoints.apply(backupUrl: serverBaseUrlFallback);
   }
 
   Future<void> init({required bool envEmulator}) async {
@@ -645,13 +653,22 @@ class QfSessionController extends ChangeNotifier {
 
   Future<Uint8List?> qfGetBinary(String path) async {
     await _refreshIfNeeded();
+    for (final url in QfEndpoints.rotationFor('$serverBaseUrl$path')) {
+      final bytes = await _getBinaryAt(url);
+      if (bytes != null) {
+        QfEndpoints.noteSuccess(url);
+        return bytes;
+      }
+    }
+    return null;
+  }
+
+  Future<Uint8List?> _getBinaryAt(String fullUrl) async {
     for (var attempt = 0; attempt < 2; attempt++) {
-      final client = await QfHttpClient.create(
-        uri: Uri.parse('$serverBaseUrl$path'),
-      );
+      final client = await QfHttpClient.create(uri: Uri.parse(fullUrl));
       client.connectionTimeout = const Duration(seconds: 15);
       try {
-        final request = await client.getUrl(Uri.parse('$serverBaseUrl$path'));
+        final request = await client.getUrl(Uri.parse(fullUrl));
         final token = _accessToken;
         if (token != null && token.isNotEmpty) {
           request.headers.set('Authorization', 'Bearer $token');
@@ -694,13 +711,33 @@ class QfSessionController extends ChangeNotifier {
     Map<String, String>? headers,
   }) async {
     await _refreshIfNeeded();
+    final candidates = QfEndpoints.rotationFor('$serverBaseUrl$path');
+    for (var i = 0; i < candidates.length; i++) {
+      try {
+        final data = await _postBinaryAt(
+          candidates[i],
+          bytes,
+          headers: headers,
+        );
+        QfEndpoints.noteSuccess(candidates[i]);
+        return data;
+      } on QfApiException catch (e) {
+        if (!e.isNetworkFailure || i == candidates.length - 1) rethrow;
+      }
+    }
+    throw const QfApiException(0, 'NETWORK', '网络连接失败，请检查网络后重试');
+  }
+
+  Future<Map<String, dynamic>> _postBinaryAt(
+    String fullUrl,
+    Uint8List bytes, {
+    Map<String, String>? headers,
+  }) async {
     for (var attempt = 0; attempt < 2; attempt++) {
-      final client = await QfHttpClient.create(
-        uri: Uri.parse('$serverBaseUrl$path'),
-      );
+      final client = await QfHttpClient.create(uri: Uri.parse(fullUrl));
       client.connectionTimeout = const Duration(seconds: 15);
       try {
-        final request = await client.postUrl(Uri.parse('$serverBaseUrl$path'));
+        final request = await client.postUrl(Uri.parse(fullUrl));
         if (headers != null) {
           headers.forEach((key, value) {
             request.headers.set(key, value);

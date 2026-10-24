@@ -74,14 +74,35 @@ class QfHttpClient {
   static String? _systemProxyCache;
   static DateTime? _systemProxyCacheAt;
 
-  static Future<HttpClient> create({Uri? uri}) async {
+  static Future<HttpClient> create({
+    Uri? uri,
+    QfProxySource? forceSource,
+  }) async {
     final client = HttpClient();
-    final decision = await resolveDecision(host: uri?.host);
+    final decision = await resolveDecision(
+      host: uri?.host,
+      forceSource: forceSource,
+    );
     client.findProxy = (_) => decision.proxy;
     return client;
   }
 
-  static Future<QfProxyDecision> resolveDecision({String? host}) async {
+  static Future<QfProxyDecision> resolveDecision({
+    String? host,
+    QfProxySource? forceSource,
+  }) async {
+    if (forceSource == QfProxySource.direct) {
+      const decision = QfProxyDecision('DIRECT', QfProxySource.direct);
+      lastDecision = decision;
+      return decision;
+    }
+    if (forceSource == QfProxySource.core) {
+      final decision = await _probeCore(corePort)
+          ? QfProxyDecision('PROXY 127.0.0.1:$corePort', QfProxySource.core)
+          : const QfProxyDecision('DIRECT', QfProxySource.direct);
+      lastDecision = decision;
+      return decision;
+    }
     var core = false;
     try {
       core = coreRunningProbe?.call() ?? false;

@@ -56,6 +56,7 @@ class QfReleaseManifest {
   final String minUsableVersion;
   final bool maintenance;
   final String serverBaseUrl;
+  final String serverBaseUrlFallback;
   final String googleClientId;
   final Map<String, QfPlatformRelease> platforms;
 
@@ -65,6 +66,7 @@ class QfReleaseManifest {
     this.minUsableVersion = '0.0.0',
     required this.maintenance,
     required this.serverBaseUrl,
+    this.serverBaseUrlFallback = '',
     required this.googleClientId,
     required this.platforms,
   });
@@ -87,6 +89,7 @@ class QfReleaseManifest {
       minUsableVersion: (json['minUsableVersion'] ?? '0.0.0').toString(),
       maintenance: json['maintenance'] == true,
       serverBaseUrl: (json['serverBaseUrl'] ?? '').toString(),
+      serverBaseUrlFallback: (json['serverBaseUrlFallback'] ?? '').toString(),
       googleClientId: (json['googleClientId'] ?? '').toString(),
       platforms: platforms,
     );
@@ -99,6 +102,7 @@ class QfReleaseManifest {
       'minUsableVersion': minUsableVersion,
       'maintenance': maintenance,
       'serverBaseUrl': serverBaseUrl,
+      'serverBaseUrlFallback': serverBaseUrlFallback,
       'googleClientId': googleClientId,
       'platforms': platforms.map((key, value) => MapEntry(key, value.toJson())),
     };
@@ -111,6 +115,7 @@ class QfReleaseManifest {
       minUsableVersion: minUsableVersion,
       maintenance: value,
       serverBaseUrl: serverBaseUrl,
+      serverBaseUrlFallback: serverBaseUrlFallback,
       googleClientId: googleClientId,
       platforms: platforms,
     );

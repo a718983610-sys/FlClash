@@ -4,6 +4,16 @@ class QfConfig {
       'https://raw.githubusercontent.com/$repository/main/qfclash-release.json';
   static const String fallbackServerBaseUrl =
       'https://qfclash-account.a718983610.workers.dev';
+  // Google OAuth client IDs are public identifiers (they ship in every
+  // client and in the public release manifest), not secrets. Built in so
+  // Google sign-in works on a cold start with no manifest ever fetched;
+  // a fetched manifest still overrides them.
+  static const String builtinGoogleWebClientId =
+      '340614194006-7a7anda3p473qjlhr67k6hn3o6aaqu9o.apps.googleusercontent.com';
+  static const String builtinGoogleAndroidClientId =
+      '340614194006-80vi66ee45a447nvudpqc93vp7u0mo31.apps.googleusercontent.com';
+  static const String builtinGoogleWindowsClientId =
+      '340614194006-m77lgrsv2ne7dn921lkascgg3ehvvvjf.apps.googleusercontent.com';
   static const String agreementVersion = '3.0';
   static const String contactEmail = 'a718983610@gmail.com';
 }
@@ -128,11 +138,22 @@ class QfCopy {
   static const String networkAccountNeedsProxy =
       '当前网络无法连接账户服务器（当前网络可能需要代理）。您可以先以访客模式使用，或开启代理后重试。';
   static const String networkGuestUnreachable = '当前网络无法连接服务器，请检查网络后重试。';
+  static const String egressChecking = '正在检测网络连通性…';
+  static const String egressOk = '已连接，网络正常。';
+  static const String egressNodeUnreachable = '已连接，但当前节点无法访问网络，请切换节点后重试。';
+  static const String egressTakeoverFailed =
+      '系统代理没有设置成功，其他应用的流量不会经过代理。请点击重试；若仍失败，请检查安全软件是否拦截了系统代理设置。';
+  static const String egressHandshakeFailed =
+      '节点握手失败，请检查电脑系统时间是否准确（与标准时间误差超过半分钟时，节点会拒绝连接），校准后重新连接再试。';
+  static const String egressRetryCheck = '重新检测';
+  static const String egressRetryProxy = '重试设置';
   static const String storageSaveFailed = '无法安全保存登录状态，请重试。';
   static const String avatarUpdateFailed = '头像更新失败，请重试。';
   static const String qrCameraUnsupported = '当前设备不支持相机扫码，请导入二维码图片。';
   static const String qrNoCodeFound = '图片中没有识别到有效的二维码';
   static const String googleNotConfiguredHint = '谷歌登录尚未完成配置，请改用邮箱或账户 ID 登录。';
+  static const String googleConfigNetworkHint =
+      '暂时无法连接谷歌登录服务，请检查网络后重试，或改用邮箱或账户 ID 登录。';
   static const String actionFailedRetry = '操作没有完成，请检查网络后重试；如果连续失败，请稍后再试。';
   static const String attachmentsTitle = '我的附件';
   static const String attachmentsEmpty = '暂无附件';
