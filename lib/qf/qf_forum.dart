@@ -1723,6 +1723,8 @@ class _QfForumPostPageState extends State<QfForumPostPage> {
   bool _loading = true;
   bool _failed = false;
   bool _rewardsFailed = false;
+  bool _likingPost = false;
+  bool _sendingReply = false;
 
   @override
   void initState() {
@@ -1782,7 +1784,8 @@ class _QfForumPostPageState extends State<QfForumPostPage> {
       await qfForumGuideLogin(context, widget.session);
       return;
     }
-    if (_reply.text.trim().isEmpty) return;
+    if (_reply.text.trim().isEmpty || _sendingReply) return;
+    setState(() => _sendingReply = true);
     try {
       final result = await widget.session.forumCreateReply(
         widget.postId,
@@ -1803,6 +1806,8 @@ class _QfForumPostPageState extends State<QfForumPostPage> {
       await _load();
     } on QfApiException catch (e) {
       if (mounted) qfToast(context, e.message);
+    } finally {
+      if (mounted) setState(() => _sendingReply = false);
     }
   }
 
@@ -1812,8 +1817,9 @@ class _QfForumPostPageState extends State<QfForumPostPage> {
       return;
     }
     final post = _post;
-    if (post == null) return;
+    if (post == null || _likingPost) return;
     final liked = post['likedByMe'] != true;
+    setState(() => _likingPost = true);
     try {
       final data = await widget.session.forumLikePost(widget.postId, liked);
       if (mounted) {
@@ -1826,6 +1832,8 @@ class _QfForumPostPageState extends State<QfForumPostPage> {
       }
     } on QfApiException catch (e) {
       if (mounted) qfToast(context, e.message);
+    } finally {
+      if (mounted) setState(() => _likingPost = false);
     }
   }
 
@@ -1914,14 +1922,14 @@ class _QfForumPostPageState extends State<QfForumPostPage> {
                         children: [
                           if (post['likedByMe'] == true)
                             FilledButton(
-                              onPressed: _toggleLike,
+                              onPressed: _likingPost ? null : _toggleLike,
                               child: Text(
                                 '已赞 ${qfForumCount(post, 'likeCount')}',
                               ),
                             )
                           else
                             OutlinedButton(
-                              onPressed: _toggleLike,
+                              onPressed: _likingPost ? null : _toggleLike,
                               child: Text(
                                 '点赞 ${qfForumCount(post, 'likeCount')}',
                               ),
@@ -1987,7 +1995,7 @@ class _QfForumPostPageState extends State<QfForumPostPage> {
                               ),
                               const SizedBox(width: 8),
                               FilledButton(
-                                onPressed: _sendReply,
+                                onPressed: _sendingReply ? null : _sendReply,
                                 child: const Text('回复'),
                               ),
                             ],
@@ -2243,7 +2251,16 @@ class _QfCampFormPageState extends State<QfCampFormPage> {
         name: name,
         description: description,
       );
-      if (mounted) setState(() => _outcome = qfCampCreateOutcome(result));
+      if (!mounted) return;
+      final outcome = qfCampCreateOutcome(result);
+      setState(() => _outcome = outcome);
+      if (outcome.state != 'rejected') {
+        // Match the resubmit/edit branches: leave the form on success
+        // so the caller refreshes the camp list, and so the form
+        // cannot be submitted again to create duplicates (C-45).
+        qfToast(context, outcome.text);
+        Navigator.of(context).pop(true);
+      }
     } on QfApiException catch (e) {
       if (!mounted) return;
       if (widget.isEdit) {

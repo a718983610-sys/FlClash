@@ -539,13 +539,13 @@ class _QfSupportPageState extends State<QfSupportPage> {
     }
   }
 
-  Future<void> _ask({
+  Future<bool> _ask({
     String? text,
     bool notThis = false,
     String? kbId,
     String? localEcho,
   }) async {
-    if (_sending) return;
+    if (_sending) return false;
     setState(() => _sending = true);
     try {
       final data = await widget.session.supportAsk(
@@ -570,8 +570,10 @@ class _QfSupportPageState extends State<QfSupportPage> {
         });
         _scrollToBottom();
       }
+      return true;
     } on QfApiException catch (e) {
       if (mounted) qfToast(context, e.message);
+      return false;
     } finally {
       if (mounted) setState(() => _sending = false);
     }
@@ -580,8 +582,11 @@ class _QfSupportPageState extends State<QfSupportPage> {
   Future<void> _send() async {
     final text = _input.text.trim();
     if (text.isEmpty) return;
-    _input.clear();
-    await _ask(text: text, localEcho: text);
+    // Clear the composer only once the send actually succeeded: the
+    // old order (clear first, ask second) lost the user's words
+    // whenever the request failed (C-48).
+    final sent = await _ask(text: text, localEcho: text);
+    if (sent && _input.text.trim() == text) _input.clear();
   }
 
   Future<void> _handoff() async {
