@@ -58,6 +58,40 @@ rules:
 	}
 }
 
+// Display pseudo-nodes are dropped wherever they arrive, but the rule is
+// narrow on purpose: a deliberate local proxy on a working port with a
+// working name is a real outbound and stays, and so does a public node
+// that merely mentions traffic in its name.
+func TestSanitizeDropsLoopbackDisplayPseudoNodes(t *testing.T) {
+	raw, report := sanitizeForTest(t, `
+proxies:
+  - {name: "📊 流量：已用约 9.22G", type: ss, server: 127.0.0.1, port: 1, cipher: aes-256-gcm, password: x}
+  - {name: "到期提醒", type: ss, server: 127.0.0.1, port: 9999, cipher: aes-256-gcm, password: x}
+  - {name: local-socks, type: socks5, server: 127.0.0.1, port: 1080}
+  - {name: "大流量套餐·东京", type: ss, server: 192.0.2.9, port: 8388, cipher: aes-256-gcm, password: x}
+proxy-groups:
+  - {name: pick, type: select, proxies: ["📊 流量：已用约 9.22G", "到期提醒", local-socks, "大流量套餐·东京"]}
+rules:
+  - MATCH,pick
+`)
+	_ = parseAfterSanitize(t, raw)
+	if report.Proxies != 2 {
+		t.Errorf("kept = %d, want 2 (local-socks and the public node)", report.Proxies)
+	}
+	if report.Total != 2 {
+		t.Errorf("skipped = %d, want the 2 display pseudo-nodes; skips: %+v", report.Total, report.Skipped)
+	}
+	keptNames := map[string]bool{}
+	for _, mapping := range raw.Proxy {
+		if name, ok := mapping["name"].(string); ok {
+			keptNames[name] = true
+		}
+	}
+	if !keptNames["local-socks"] || !keptNames["大流量套餐·东京"] {
+		t.Errorf("kept = %v, want local-socks and the public traffic-named node", keptNames)
+	}
+}
+
 func TestSanitizeDuplicateProxyDropped(t *testing.T) {
 	raw, report := sanitizeForTest(t, `
 proxies:

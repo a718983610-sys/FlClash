@@ -353,3 +353,93 @@ func TestProfileBaseRejectsUndecodableFile(t *testing.T) {
 		t.Fatal("handleGetProfileBase accepted an undecodable file")
 	}
 }
+
+// The owner's 2026-10-24 report, as a fixture: a subscription body that is
+// one base64 blob wrapping a share-link list - two loopback display
+// pseudo-nodes (127.0.0.1:1, traffic labels) ahead of four real nodes
+// (Tokyo/Taipei, SS + Hysteria2). It validated, imported and could be set
+// current, then failed the build forever because the merge only spoke
+// YAML. The fixture is structurally identical to the live body with
+// documentation-range servers and dummy secrets.
+func shareListFixture(t *testing.T) (string, []string) {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("testdata", "qf_sharelist_sub.txt"))
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	return string(data), []string{
+		"🇯🇵东京（SS协议首选）",
+		"🇯🇵东京（Hy2协议 备选）",
+		"🇹🇼台北（SS协议首选）",
+		"🇹🇼台北（Hy2协议备用）",
+	}
+}
+
+func TestShareListProfileBaseCountsOnlyRealNodes(t *testing.T) {
+	body, wantNames := shareListFixture(t)
+	path := writeBaseProfile(t, body)
+
+	base, err := handleGetProfileBase(path)
+	if err != nil {
+		t.Fatalf("handleGetProfileBase = %v", err)
+	}
+	if !base.Converted {
+		t.Error("Converted = false, want the share-link conversion flagged")
+	}
+	if base.Proxies != 4 {
+		t.Errorf("base.Proxies = %d, want 4 real nodes (display pseudo-nodes dropped)", base.Proxies)
+	}
+	outbounds, err := handleGetProfileOutbounds(path)
+	if err != nil {
+		t.Fatalf("handleGetProfileOutbounds = %v", err)
+	}
+	gotNames := make([]string, 0, len(outbounds.Proxies))
+	for _, proxy := range outbounds.Proxies {
+		gotNames = append(gotNames, proxy.Name)
+	}
+	if !reflect.DeepEqual(gotNames, wantNames) {
+		t.Errorf("outbound names = %v, want %v", gotNames, wantNames)
+	}
+	stored, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if string(stored) != body {
+		t.Error("stored file changed: conversion must stay in memory only")
+	}
+}
+
+func TestShareListProfileBuildsThroughTheMerge(t *testing.T) {
+	body, wantNames := shareListFixture(t)
+	path := writeBaseProfile(t, body)
+	base, err := handleGetProfileBase(path)
+	if err != nil {
+		t.Fatalf("handleGetProfileBase = %v", err)
+	}
+	// The host composes the group from the outbound list and a MATCH rule,
+	// exactly as it does for a profile whose file carries no groups.
+	overlay := overlayOf(t, base, []string{"MATCH,PROXY"}, map[string]any{
+		"proxy-groups": []map[string]any{
+			{"name": "PROXY", "type": "select", "proxies": wantNames},
+		},
+	})
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+
+	cfg, err := loadConfigWithBase(&SetupBase{Path: path, Overlay: overlay}, configPath)
+	if err != nil {
+		t.Fatalf("loadConfigWithBase = %v, want the share-list profile to build", err)
+	}
+	for _, name := range wantNames {
+		if cfg.Proxies[name] == nil {
+			t.Errorf("proxy %s missing from the built config", name)
+		}
+	}
+	for name := range cfg.Proxies {
+		if strings.Contains(name, "流量") {
+			t.Errorf("display pseudo-node %s reached the built config", name)
+		}
+	}
+	if got := ruleStrings(cfg); len(got) == 0 || got[len(got)-1] != "Match,,PROXY" {
+		t.Errorf("rules = %v, want the MATCH,PROXY tail", got)
+	}
+}

@@ -3,7 +3,9 @@ package core
 import (
 	"errors"
 	"fmt"
+	"net"
 	"regexp"
+	"strings"
 	"sync"
 
 	"github.com/metacubex/mihomo/adapter"
@@ -12,6 +14,56 @@ import (
 	R "github.com/metacubex/mihomo/rules"
 	RC "github.com/metacubex/mihomo/rules/common"
 )
+
+// Display pseudo-nodes ride along in subscription bodies (Shadowrocket
+// style): they point at a loopback address and exist only so a client
+// can render account info - remaining traffic, expiry, the panel site -
+// as a fake node entry. They can never carry traffic, and presented as
+// real nodes they crowd out the usable ones, so conversion and
+// sanitizing both drop them. A proxy counts as one when its server is a
+// loopback address AND either its port is a privileged display port
+// (< 100, e.g. the canonical 127.0.0.1:1) or its name is an info label.
+// A deliberate local proxy (127.0.0.1:1080 and the like, with a working
+// name) matches neither condition and is kept.
+var displayNodeNamePattern = regexp.MustCompile(`剩余|剩餘|流量|到期|过期|過期|有效期|官网|官網|公告|套餐|重置`)
+
+func isDisplayPseudoProxy(mapping map[string]any) bool {
+	server, _ := mapping["server"].(string)
+	if !isLoopbackServer(server) {
+		return false
+	}
+	if port, ok := proxyPortOf(mapping["port"]); ok && port < 100 {
+		return true
+	}
+	name, _ := mapping["name"].(string)
+	return displayNodeNamePattern.MatchString(name)
+}
+
+func isLoopbackServer(server string) bool {
+	host := strings.TrimSpace(strings.ToLower(server))
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+func proxyPortOf(raw any) (int, bool) {
+	switch value := raw.(type) {
+	case int:
+		return value, true
+	case int64:
+		return int(value), true
+	case float64:
+		return int(value), true
+	case string:
+		var port int
+		if _, err := fmt.Sscanf(value, "%d", &port); err == nil {
+			return port, true
+		}
+	}
+	return 0, false
+}
 
 // A single bad entry in a subscription must not reject the whole config:
 // panels emit entries this core cannot parse (a newer protocol revision, a
@@ -161,6 +213,11 @@ func (s *sanitizer) dropBadProxies(raw *config.RawConfig, groupNames map[string]
 			continue
 		case names[name]:
 			s.skip("proxy", name, "duplicate name")
+			changed = true
+			continue
+		}
+		if isDisplayPseudoProxy(mapping) {
+			s.skip("proxy", name, "loopback display pseudo-node (info entry, not a usable proxy)")
 			changed = true
 			continue
 		}

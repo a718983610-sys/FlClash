@@ -22,17 +22,42 @@ import (
 // in memory only: the stored file is never rewritten, so a real config's
 // groups and rules can never be dropped by a fallback.
 func unmarshalProfileBytes(buf []byte) (*config.RawConfig, error) {
+	raw, _, err := unmarshalProfileBytesConverted(buf)
+	return raw, err
+}
+
+// The converted flag reports whether the share-link branch produced the
+// config, so the host can mark such profiles instead of presenting them
+// as native YAML subscriptions.
+func unmarshalProfileBytesConverted(buf []byte) (*config.RawConfig, bool, error) {
 	raw, err := unmarshalRawConfig(buf)
 	if err == nil {
-		return raw, nil
+		return raw, false, nil
 	}
-	proxies, convErr := convert.ConvertsV2Ray(buf)
+	proxies, convErr := convertedProxies(buf)
 	if convErr != nil || len(proxies) == 0 {
-		return nil, err
+		return nil, false, err
 	}
 	raw = config.DefaultRawConfig()
 	raw.Proxy = proxies
-	return raw, nil
+	return raw, true, nil
+}
+
+// convertedProxies runs the share-link converter and drops the display
+// pseudo-nodes described at isDisplayPseudoProxy.
+func convertedProxies(buf []byte) ([]map[string]any, error) {
+	proxies, err := convert.ConvertsV2Ray(buf)
+	if err != nil {
+		return nil, err
+	}
+	kept := make([]map[string]any, 0, len(proxies))
+	for _, proxy := range proxies {
+		if isDisplayPseudoProxy(proxy) {
+			continue
+		}
+		kept = append(kept, proxy)
+	}
+	return kept, nil
 }
 
 // What makes a profile large stays in the Core; the overlay the host sends
@@ -46,7 +71,7 @@ func handleGetProfileBase(path string) (*ProfileBase, error) {
 		return nil, err
 	}
 	digest := sha256.Sum256(buf)
-	raw, err := unmarshalProfileBytes(buf)
+	raw, converted, err := unmarshalProfileBytesConverted(buf)
 	if err != nil {
 		return nil, err
 	}
@@ -56,6 +81,7 @@ func handleGetProfileBase(path string) (*ProfileBase, error) {
 		Proxies:     len(raw.Proxy),
 		ProxyGroups: len(raw.ProxyGroup),
 		Rules:       len(raw.Rule),
+		Converted:   converted,
 	}
 	for _, rule := range raw.Rule {
 		if isMatchRule(rule) {
@@ -150,15 +176,25 @@ func mergeProfileBase(base *SetupBase) (*yaml.Node, error) {
 	}
 	retag := bytes.Contains(buf, []byte("short-id"))
 	var profileDocument, overlayDocument yaml.Node
-	if err := yaml.Unmarshal(buf, &profileDocument); err != nil {
-		return nil, err
-	}
+	yamlErr := yaml.Unmarshal(buf, &profileDocument)
 	if err := yaml.Unmarshal([]byte(base.Overlay), &overlayDocument); err != nil {
 		return nil, err
 	}
-	profile, err := documentMapping(&profileDocument)
+	profile, err := profileMappingOf(&profileDocument, yamlErr)
 	if err != nil {
-		return nil, err
+		// Not a YAML mapping: a share-link list validates and reads fine
+		// through the in-memory conversion (see unmarshalProfileBytes),
+		// so the build takes the same road instead of failing forever
+		// on a profile the rest of the app accepts. The stored file is
+		// never rewritten; only the converted proxies join the merge,
+		// groups and rules come from the overlay as for any profile
+		// whose file carries none. Genuine YAML errors resurface when
+		// the content is not a link list either.
+		converted, convErr := convertedProfileMapping(buf)
+		if convErr != nil {
+			return nil, err
+		}
+		profile = converted
 	}
 	root, err := documentMapping(&overlayDocument)
 	if err != nil {
@@ -180,6 +216,35 @@ func mergeProfileBase(base *SetupBase) (*yaml.Node, error) {
 		retagShortIDs(root)
 	}
 	return &yaml.Node{Kind: yaml.DocumentNode, Content: []*yaml.Node{root}}, nil
+}
+
+func profileMappingOf(document *yaml.Node, yamlErr error) (*yaml.Node, error) {
+	if yamlErr != nil {
+		return nil, yamlErr
+	}
+	return documentMapping(document)
+}
+
+// The profile side of a merge for a share-link list file: a mapping that
+// carries only the converted proxies, built in memory from the same
+// conversion the read/validate paths use.
+func convertedProfileMapping(buf []byte) (*yaml.Node, error) {
+	proxies, err := convertedProxies(buf)
+	if err != nil {
+		return nil, err
+	}
+	if len(proxies) == 0 {
+		return nil, fmt.Errorf("no usable proxies after conversion")
+	}
+	encoded, err := yaml.Marshal(map[string]any{"proxies": proxies})
+	if err != nil {
+		return nil, err
+	}
+	var document yaml.Node
+	if err := yaml.Unmarshal(encoded, &document); err != nil {
+		return nil, err
+	}
+	return documentMapping(&document)
 }
 
 func documentMapping(document *yaml.Node) (*yaml.Node, error) {

@@ -115,6 +115,7 @@ type ProfileBase struct {
 	Proxies     int               `json:"proxies"`
 	ProxyGroups int               `json:"proxy-groups"`
 	Rules       int               `json:"rules"`
+	Converted   bool              `json:"converted,omitempty"`
 }
 
 type ProfileOutbounds struct {
