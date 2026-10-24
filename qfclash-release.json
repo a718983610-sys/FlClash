@@ -1,18 +1,18 @@
 {
   "googleClientId": "340614194006-7a7anda3p473qjlhr67k6hn3o6aaqu9o.apps.googleusercontent.com",
-  "latestVersion": "1.0.0",
+  "latestVersion": "1.0.1",
   "maintenance": false,
-  "minUsableVersion": "1.0.0",
+  "minUsableVersion": "1.0.1",
   "platforms": {
     "android": {
-      "downloadUrl": "https://github.com/a718983610-sys/FlClash/releases/download/android-v1.0.0/QFClash-Android-v1.0.0.apk",
+      "downloadUrl": "https://github.com/a718983610-sys/FlClash/releases/download/android-v1.0.1/QFClash-Android-v1.0.1.apk",
       "googleClientId": "340614194006-80vi66ee45a447nvudpqc93vp7u0mo31.apps.googleusercontent.com",
-      "notes": "QFClash 1.0.0 正式发布：新增账号登录与访客模式、积分与兑换、安全中心、好友与端到端加密聊天、论坛，以及应用内更新。登录状态不受限制，连接时长不限，全部功能完整开放。\n服务地域：本软件及相关服务计划仅在允许提供和使用本软件相关功能的国家或地区提供。用户应遵守所在国家或地区适用的法律法规，并自行确认其使用行为是否合法；违反所在地法律法规使用所产生的一切后果，由用户自行承担。"
+      "notes": "QFClash 1.0.1 更新：修复了在部分设备上开启连接后无法上网的问题。订阅配置加载异常时，应用会停止连接并给出明确提示，不再出现已连接但无法上网的状态；优化连接启动流程，先确认订阅配置加载成功再开启连接，启动更稳定；优化节点选择，订阅更新后已失效的节点选择会自动修正为当前可用节点。建议所有 v1.0.0 用户升级到本版本。\n服务地域：本软件及相关服务计划仅在允许提供和使用本软件相关功能的国家或地区提供。用户应遵守所在国家或地区适用的法律法规，并自行确认其使用行为是否合法；违反所在地法律法规使用所产生的一切后果，由用户自行承担。"
     },
     "windows": {
-      "downloadUrl": "https://github.com/a718983610-sys/FlClash/releases/download/windows-v1.0.0/QFClash-Windows-v1.0.0.exe",
+      "downloadUrl": "https://github.com/a718983610-sys/FlClash/releases/download/windows-v1.0.1/QFClash-Windows-v1.0.1.exe",
       "googleClientId": "340614194006-m77lgrsv2ne7dn921lkascgg3ehvvvjf.apps.googleusercontent.com",
-      "notes": "QFClash 1.0.0 正式发布：新增账号登录与访客模式、积分与兑换、安全中心、好友与端到端加密聊天、论坛，以及应用内更新。登录状态不受限制，连接时长不限，全部功能完整开放。\n服务地域：本软件及相关服务计划仅在允许提供和使用本软件相关功能的国家或地区提供。用户应遵守所在国家或地区适用的法律法规，并自行确认其使用行为是否合法；违反所在地法律法规使用所产生的一切后果，由用户自行承担。"
+      "notes": "QFClash 1.0.1 更新：修复了在部分设备上开启连接后无法上网的问题。订阅配置加载异常时，应用会停止连接并给出明确提示，不再出现已连接但无法上网的状态；优化连接启动流程，先确认订阅配置加载成功再开启连接，启动更稳定；优化节点选择，订阅更新后已失效的节点选择会自动修正为当前可用节点。建议所有 v1.0.0 用户升级到本版本。\n服务地域：本软件及相关服务计划仅在允许提供和使用本软件相关功能的国家或地区提供。用户应遵守所在国家或地区适用的法律法规，并自行确认其使用行为是否合法；违反所在地法律法规使用所产生的一切后果，由用户自行承担。"
     }
   },
   "retiredBelowVersion": "0.0.0",
