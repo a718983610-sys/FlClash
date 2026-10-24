@@ -270,11 +270,19 @@ class SetupAction extends _$SetupAction {
   Future<bool> _appliedConfigHealthy() async {
     final counts = globalState.lastConfigCounts;
     if (counts == null) return true;
+    // An empty subscription declares nothing to route with. The core
+    // accepts it as a direct-only config, so it starts and the dashboard
+    // banner explains the state; only a config that declared nodes and
+    // kept none is refused, as the blackhole guard requires.
+    final emptyProfile =
+        counts.proxies <= 0 && !globalState.lastConfigHasProviders;
     try {
       final report = await _core.getLoadReport();
       if (report.proxies > 0 || report.groups > 0) return true;
-      return globalState.lastConfigHasProviders;
+      if (globalState.lastConfigHasProviders) return true;
+      return emptyProfile;
     } catch (_) {
+      if (emptyProfile) return true;
       if (counts.groups <= 0) return false;
       return counts.proxies > 0 || globalState.lastConfigHasProviders;
     }
@@ -821,6 +829,7 @@ class SetupAction extends _$SetupAction {
       globalState.lastConfigMd5 = null;
       globalState.lastConfigCounts = null;
       globalState.lastConfigHasProviders = false;
+      ref.read(qfDirectOnlyProfileProvider.notifier).update(false);
       return _SetupTaskResult.failed;
     }
     // Until this push succeeds no applied config is known: a config the
@@ -854,6 +863,7 @@ class SetupAction extends _$SetupAction {
           if (message.isNotEmpty) {
             globalState.lastConfigCounts = configCountsOf(const {});
             globalState.lastConfigHasProviders = false;
+            ref.read(qfDirectOnlyProfileProvider.notifier).update(false);
             await globalState.safeRun(() => onUpdated?.call());
             throw MessageException(message);
           }
@@ -867,6 +877,11 @@ class SetupAction extends _$SetupAction {
         globalState.lastConfigMd5 = yamlMd5;
         globalState.lastConfigCounts = realProfile.counts;
         globalState.lastConfigHasProviders = realProfile.hasProviders;
+        ref
+            .read(qfDirectOnlyProfileProvider.notifier)
+            .update(
+              realProfile.counts.proxies <= 0 && !realProfile.hasProviders,
+            );
         _appliedInputs = inputs;
         await onUpdated?.call();
       },

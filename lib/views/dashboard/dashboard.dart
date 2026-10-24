@@ -85,6 +85,7 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
       body: Column(
         children: [
           const _QfGuestRemainingBanner(),
+          const _QfDirectOnlyBanner(),
           Expanded(
             child: LayoutBuilder(
               builder: (context, constraints) {
@@ -111,6 +112,36 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _QfDirectOnlyBanner extends ConsumerWidget {
+  const _QfDirectOnlyBanner();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    if (!ref.watch(qfDirectOnlyProfileProvider)) {
+      return const SizedBox.shrink();
+    }
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+      child: DecoratedBox(
+        decoration: const ShapeDecoration(
+          color: Color(0xFFB3261E),
+          shape: AppShape.sm,
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          child: Text(
+            '当前订阅没有任何可用节点，已按仅直连模式运行，网络流量不会经过代理。请更新或更换订阅。',
+            textAlign: TextAlign.center,
+            style: AppTextStyle.subheadline
+                .of(context, emphasized: true)
+                .copyWith(color: Colors.white),
+          ),
+        ),
       ),
     );
   }
