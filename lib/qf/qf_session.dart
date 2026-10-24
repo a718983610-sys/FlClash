@@ -1657,6 +1657,11 @@ class QfSessionController extends ChangeNotifier {
     );
   }
 
+  /// 营地头像原图（服务端 GET /forum/camps/:id/avatar），无头像时返回 null。
+  Future<Uint8List?> forumCampAvatarBytes(int campId) {
+    return qfGetBinary('/forum/camps/$campId/avatar');
+  }
+
   Future<Map<String, dynamic>> forumJoinCamp(int campId, bool joined) {
     return authed(
       'POST',

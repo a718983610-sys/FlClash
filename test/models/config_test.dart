@@ -165,6 +165,7 @@ void main() {
       });
       expect(restored.dashboardWidgets, [
         DashboardWidget.currentOutbound,
+        DashboardWidget.subscriptionTree,
         DashboardWidget.networkSpeed,
         DashboardWidget.profiles,
       ]);
@@ -174,6 +175,7 @@ void main() {
       });
       expect(both.dashboardWidgets, [
         DashboardWidget.currentOutbound,
+        DashboardWidget.subscriptionTree,
         DashboardWidget.networkSpeed,
       ]);
     });
@@ -215,6 +217,7 @@ void main() {
       });
       expect(restored.dashboardWidgets, [
         DashboardWidget.currentOutbound,
+        DashboardWidget.subscriptionTree,
         DashboardWidget.intranetIp,
         DashboardWidget.profiles,
       ]);
@@ -883,6 +886,7 @@ void main() {
 
       expect(props.dashboardWidgets, [
         DashboardWidget.currentOutbound,
+        DashboardWidget.subscriptionTree,
         DashboardWidget.proxyGroups,
       ]);
       expect(props.hideIp, true);

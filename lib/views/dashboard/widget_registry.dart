@@ -7,6 +7,7 @@ import 'package:material_ui/material_ui.dart';
 extension DashboardWidgetView on DashboardWidget {
   Widget get card => switch (this) {
     DashboardWidget.currentOutbound => const CurrentOutboundCard(),
+    DashboardWidget.subscriptionTree => const SubscriptionTreeCard(),
     DashboardWidget.networkSpeed => const NetworkSpeedCard(),
     DashboardWidget.outboundMode => const OutboundModeCard(),
     DashboardWidget.vpnButton => const VpnCard(),
@@ -21,6 +22,7 @@ extension DashboardWidgetView on DashboardWidget {
 
   Glyph get glyph => switch (this) {
     DashboardWidget.currentOutbound => AppGlyphs.status,
+    DashboardWidget.subscriptionTree => AppGlyphs.layers,
     DashboardWidget.networkSpeed => AppGlyphs.speed,
     DashboardWidget.outboundMode => AppGlyphs.split,
     DashboardWidget.vpnButton => AppGlyphs.vpn,
@@ -37,6 +39,7 @@ extension DashboardWidgetView on DashboardWidget {
     final appLocalizations = context.appLocalizations;
     return switch (this) {
       DashboardWidget.currentOutbound => appLocalizations.status,
+      DashboardWidget.subscriptionTree => '我的订阅',
       DashboardWidget.networkSpeed => appLocalizations.networkSpeed,
       DashboardWidget.outboundMode => appLocalizations.outboundMode,
       DashboardWidget.vpnButton => 'VPN',
@@ -60,6 +63,10 @@ extension DashboardWidgetView on DashboardWidget {
     };
   }
 
-  /// It holds the start button, which has nowhere else to go.
-  bool get removable => this != DashboardWidget.currentOutbound;
+  /// The connection card holds the start button and the subscription tree
+  /// is the node picker the main screen promises; neither has anywhere
+  /// else to go.
+  bool get removable =>
+      this != DashboardWidget.currentOutbound &&
+      this != DashboardWidget.subscriptionTree;
 }
