@@ -32,12 +32,6 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Free disk space (TEMP mirror build 2026-10-24, revert after run)
-        run: |
-          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost /opt/hostedtoolcache/CodeQL
-          sudo docker image prune -af >/dev/null 2>&1 || true
-          df -h / | tail -1
-
       - name: Setup Android Signing
         run: |
           echo "${{ secrets.KEYSTORE }}" | base64 --decode > android/app/keystore.jks
