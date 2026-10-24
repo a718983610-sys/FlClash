@@ -515,14 +515,14 @@ class _QfSensitiveActionDialogState extends State<_QfSensitiveActionDialog> {
   void _submit() {
     final name = widget.withNameField ? _name.text.trim() : null;
     if (_reauthToken != null) {
-      Navigator.of(context).pop({'reauthToken': _reauthToken!, ?'name': name});
+      Navigator.of(context).pop({'reauthToken': _reauthToken!, 'name': ?name});
       return;
     }
     if (_password.text.isEmpty) {
       setState(() => _error = '请输入当前账户密码');
       return;
     }
-    Navigator.of(context).pop({'password': _password.text, ?'name': name});
+    Navigator.of(context).pop({'password': _password.text, 'name': ?name});
   }
 
   @override
