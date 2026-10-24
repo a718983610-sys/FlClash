@@ -1070,44 +1070,37 @@ void main() {
       },
     );
 
-    test(
-      'a profile that fails to build still pushes the empty config to core',
-      () async {
-        final profile = Profile.normal(label: 'p');
-        final core = _MockCoreHandlerInterface();
-        when(
-          () => core.getProfileBase(any()),
-        ).thenThrow(Exception('broken yaml'));
-        String? pushedConfig;
-        when(() => core.setupConfig(any())).thenAnswer((_) async {
-          pushedConfig = await File(
-            await appPath.configFilePath,
-          ).readAsString();
-          return '';
-        });
-        final scoped = ProviderContainer(
-          overrides: [
-            profilesProvider.overrideWith(() => TestProfiles([profile])),
-            currentProfileIdProvider.overrideWithBuild((_, _) => profile.id),
-            setupStateProvider.overrideWith(
-              (_, profileId) =>
-                  nullProfileSetupState.copyWith(profileId: profileId),
-            ),
-            coreHandlerProvider.overrideWithValue(CoreController.scoped(core)),
-            setupActionProvider.overrideWith(SetupAction.new),
-          ],
-        );
-        addTearDown(scoped.dispose);
+    test('a profile that fails to build is not pushed to the core', () async {
+      final profile = Profile.normal(label: 'p');
+      final core = _MockCoreHandlerInterface();
+      when(
+        () => core.getProfileBase(any()),
+      ).thenThrow(Exception('broken yaml'));
+      when(() => core.setupConfig(any())).thenAnswer((_) async => '');
+      final scoped = ProviderContainer(
+        overrides: [
+          profilesProvider.overrideWith(() => TestProfiles([profile])),
+          currentProfileIdProvider.overrideWithBuild((_, _) => profile.id),
+          setupStateProvider.overrideWith(
+            (_, profileId) =>
+                nullProfileSetupState.copyWith(profileId: profileId),
+          ),
+          coreHandlerProvider.overrideWithValue(CoreController.scoped(core)),
+          setupActionProvider.overrideWith(SetupAction.new),
+        ],
+      );
+      addTearDown(scoped.dispose);
 
-        final succeeded = await scoped
-            .read(setupActionProvider.notifier)
-            .applyProfile(force: true);
+      final succeeded = await scoped
+          .read(setupActionProvider.notifier)
+          .applyProfile(force: true);
 
-        expect(succeeded, isFalse);
-        expect(pushedConfig, isEmpty);
-        expect(scoped.read(currentProfileIdProvider), profile.id);
-      },
-    );
+      // Fail closed: the Core keeps its previous config instead of
+      // being handed an empty one that routes nowhere.
+      expect(succeeded, isFalse);
+      verifyNever(() => core.setupConfig(any()));
+      expect(scoped.read(currentProfileIdProvider), profile.id);
+    });
 
     test(
       'a config write failure reports setup as failed without calling core',
@@ -1461,9 +1454,14 @@ void main() {
       () async {
         final profile = Profile.normal(label: 'p');
         final core = _MockCoreHandlerInterface();
-        when(
-          () => core.getProfileBase(any()),
-        ).thenAnswer((_) async => const ProfileBase(config: {}, digest: 'd'));
+        when(() => core.getProfileBase(any())).thenAnswer(
+          (_) async => const ProfileBase(
+            config: {},
+            digest: 'd',
+            proxies: 1,
+            proxyGroups: 1,
+          ),
+        );
         when(() => core.setupConfig(any())).thenAnswer((_) async => '');
         when(() => core.startListener()).thenAnswer((_) async => true);
         when(() => core.stopListener()).thenAnswer((_) async => true);
@@ -1832,7 +1830,9 @@ void main() {
 
         await messageAction.setRunning(true, initialize: true);
 
-        expect(messageAction.coreRunningCalls, [true, false]);
+        // Serial start: the rejected apply means the listener never
+        // started, so only the rollback stop is recorded.
+        expect(messageAction.coreRunningCalls, [false]);
         expect(scoped.read(runTimeProvider), isNull);
         verify(() => core.setupConfig(any())).called(1);
       },

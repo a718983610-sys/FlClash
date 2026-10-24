@@ -32,6 +32,7 @@ class GlobalState {
 
   String? lastConfigMd5;
   ConfigCounts? lastConfigCounts;
+  bool lastConfigHasProviders = false;
   bool isAttach = false;
 
   GlobalState._internal();

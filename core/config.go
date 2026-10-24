@@ -129,20 +129,15 @@ func applyConfig(params *SetupParams) error {
 	skipCertVerify.Store(params.SkipCertVerify)
 	cfg, err := loadSetupConfig(params)
 	if err != nil {
-		// The fallback is what keeps the listeners serving while the host
-		// reports the error, but it applies a config with no proxies in it.
-		// From the UI that is indistinguishable from a subscription that went
-		// dead: the profile still lists every node, every delay test answers
-		// Timeout, and nothing routes. Name the real cause in the log.
-		logError(
-			"config apply failed, falling back to the built-in default - no proxies will be available: %v",
-			err,
-		)
-		fallback, fallbackErr := config.ParseRawConfig(config.DefaultRawConfig())
-		if fallbackErr != nil {
-			return err
-		}
-		cfg = fallback
+		// A config that fails to load must never be replaced by the
+		// built-in default: that default has no proxies in it, yet the
+		// listeners would come up and the VPN would capture every packet
+		// with nowhere to route it - the whole device goes offline while
+		// the UI still shows the profile's nodes. Fail the apply instead
+		// and leave whatever config was already running untouched, so the
+		// host can surface the error and refuse to start.
+		logError("config apply failed, keeping the previous config: %v", err)
+		return err
 	}
 
 	currentConfig = cfg
@@ -152,7 +147,7 @@ func applyConfig(params *SetupParams) error {
 	updateListeners(cfg)
 	reconcileGeoUpdater()
 	scheduleLoadMemoryRelease()
-	return err
+	return nil
 }
 
 func updateConfig(params *UpdateParams) error {

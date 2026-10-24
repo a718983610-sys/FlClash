@@ -111,9 +111,30 @@ class ProxiesAction extends _$ProxiesAction {
     return ref.read(currentProfileProvider)?.selectedMap[groupName] ?? '';
   }
 
+  /// Repairs saved selections the Core no longer reports as members of
+  /// their group (a subscription refresh renamed or dropped the node):
+  /// the saved map would otherwise keep restoring a name the group does
+  /// not have on every apply. The group's current selection wins.
+  void _reconcileSelectedMap(List<Group> groups) {
+    final profile = ref.read(currentProfileProvider);
+    if (profile == null || profile.selectedMap.isEmpty) return;
+    for (final group in groups) {
+      final saved = profile.selectedMap[group.name];
+      if (saved == null) continue;
+      final memberNames = group.all.map((proxy) => proxy.name).toSet();
+      if (memberNames.isEmpty || memberNames.contains(saved)) continue;
+      final now = group.now;
+      if (now != null && memberNames.contains(now)) {
+        ref
+            .read(profilesActionProvider.notifier)
+            .updateCurrentSelectedMap(group.name, now);
+      }
+    }
+  }
+
   Future<void> updateGroups() async {
     try {
-      ref.read(groupsProvider.notifier).value = await retry(
+      final List<Group> groups = await retry(
         task: () async {
           final sortType = ref.read(
             proxiesStyleSettingProvider.select((state) => state.sortType),
@@ -142,6 +163,8 @@ class ProxiesAction extends _$ProxiesAction {
         },
         retryIf: (res) => res.isEmpty,
       );
+      ref.read(groupsProvider.notifier).value = groups;
+      _reconcileSelectedMap(groups);
     } catch (e) {
       // The Core failure path already runs inside the retry task above; a
       // throw here only means ref.read hit a disposed container or the

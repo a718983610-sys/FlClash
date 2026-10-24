@@ -14,6 +14,7 @@ import (
 	"github.com/metacubex/mihomo/common/convert"
 	"github.com/metacubex/mihomo/config"
 	"github.com/metacubex/mihomo/constant"
+	P "github.com/metacubex/mihomo/constant/provider"
 	"github.com/metacubex/mihomo/log"
 	"github.com/metacubex/mihomo/tunnel"
 )
@@ -177,8 +178,47 @@ func patchSelectGroup(mapping map[string]string) {
 	defer selectMu.Unlock()
 	proxies := tunnel.AllProxies()
 	for name, selected := range mapping {
-		if selector, ok := adapterAs[outboundgroup.SelectAble](proxies[name]); ok {
+		selector, ok := adapterAs[outboundgroup.SelectAble](proxies[name])
+		if !ok {
+			continue
+		}
+		group, isGroup := adapterAs[outboundgroup.ProxyGroup](proxies[name])
+		if !isGroup {
 			selector.ForceSet(selected)
+			continue
+		}
+		members := group.Proxies()
+		memberNames := make([]string, 0, len(members))
+		found := false
+		for _, member := range members {
+			memberNames = append(memberNames, member.Name())
+			if member.Name() == selected {
+				found = true
+			}
+		}
+		// Inline members ride on compatible providers, whose contents are
+		// final the moment the config parses. Only remote (HTTP/file)
+		// providers can still deliver the selected member after the apply.
+		remoteProvider := false
+		for _, pd := range group.Providers() {
+			if pd.VehicleType() != P.Compatible {
+				remoteProvider = true
+			}
+		}
+		switch {
+		case found || len(memberNames) == 0 || remoteProvider:
+			selector.ForceSet(selected)
+		default:
+			// A static group's member list is final: a saved selection
+			// that is not in it (a node renamed or dropped by a refresh)
+			// would otherwise sit in Now() forever while routing falls
+			// through unpredictably. Fall back to the first member; the
+			// host reconciles its saved selection from the group's Now().
+			logError(
+				"patchSelectGroup: selection %q is not a member of group %q, falling back to %q",
+				selected, name, memberNames[0],
+			)
+			selector.ForceSet(memberNames[0])
 		}
 	}
 }

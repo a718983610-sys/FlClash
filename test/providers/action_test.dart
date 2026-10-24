@@ -559,7 +559,7 @@ void main() {
             container.read(setupActionProvider.notifier) as _RaceSetupAction;
         await action.setRunning(true);
         action.transitions.clear();
-        action.applyProfileDebounceCount = 0;
+        action.applyProfileCount = 0;
         action.stopCompleter = stopCompleter;
 
         final stopFuture = action.setRunning(false);
@@ -576,7 +576,7 @@ void main() {
         expect(action.transitions, [false, true]);
         expect(container.read(runTimeProvider), isNotNull);
         expect(container.read(isStartProvider), isTrue);
-        expect(action.applyProfileDebounceCount, 1);
+        expect(action.applyProfileCount, 1);
         expect(action.resetCoreTrafficCount, 0);
 
         await action.setRunning(false);
@@ -614,7 +614,9 @@ void main() {
         expect(action.transitions, [true, false]);
         expect(container.read(runTimeProvider), isNull);
         expect(container.read(isStartProvider), isFalse);
-        expect(action.applyProfileDebounceCount, 0);
+        // The serial start applies before the listener; this start was
+        // still current when it applied, so the apply stands.
+        expect(action.applyProfileCount, 1);
         expect(action.resetCoreTrafficCount, 1);
       });
 
@@ -642,7 +644,9 @@ void main() {
 
         expect(action.transitions, [true, true]);
         expect(container.read(isStartProvider), isTrue);
-        expect(action.applyProfileDebounceCount, 1);
+        // Both starts apply first under the serial start; the dedupe
+        // lives inside applyProfile itself.
+        expect(action.applyProfileCount, 2);
         expect(action.resetCoreTrafficCount, 0);
 
         await action.setRunning(false);
@@ -694,7 +698,7 @@ void main() {
 
           expect(action.transitions, isEmpty);
           expect(container.read(isStartProvider), isTrue);
-          expect(action.applyProfileDebounceCount, 1);
+          expect(action.applyProfileCount, 1);
 
           await action.setRunning(false);
           expect(action.transitions, [false]);
@@ -975,6 +979,7 @@ class _AuthorizationSetupAction extends SetupAction {
 
 class _RaceSetupAction extends SetupAction {
   int applyProfileDebounceCount = 0;
+  int applyProfileCount = 0;
   int resetCoreTrafficCount = 0;
   final transitions = <bool>[];
   Completer<bool>? startCompleter;
@@ -983,6 +988,17 @@ class _RaceSetupAction extends SetupAction {
   @override
   void applyProfileDebounce({bool silence = false, bool force = false}) {
     applyProfileDebounceCount++;
+  }
+
+  @override
+  Future<bool> applyProfile({
+    bool silence = false,
+    bool force = false,
+    Future<void> Function()? preloadInvoke,
+  }) async {
+    applyProfileCount++;
+    await preloadInvoke?.call();
+    return true;
   }
 
   @override

@@ -14,6 +14,7 @@ typedef BuiltProfile = ({
   String md5,
   ConfigCounts counts,
   SetupBase? base,
+  bool hasProviders,
 });
 
 class _RunRequest {
@@ -177,34 +178,96 @@ class SetupAction extends _$SetupAction {
     return running ? _start(request) : _stop(request);
   }
 
-  Future<bool> _start(_RunRequest request) async {
-    if (request.initialize) {
-      var applied = false;
-      try {
-        applied = await applyProfile(
-          force: true,
-          preloadInvoke: () => _startCoreRunning(request),
-        );
-      } catch (_) {
-        applied = false;
-      }
-      if (!applied && _isCurrent(request)) {
-        await globalState.safeRun(() => setRunning(false));
-      }
-      return applied;
-    }
+  static const _configLoadFailedMessage = '订阅配置加载失败，请检查订阅是否可用后重试。';
 
+  Future<bool> _start(_RunRequest request) async {
+    // Config first, listeners second - always. Starting the listeners
+    // before the profile is applied (or letting a failed apply catch up
+    // in the background) lets the VPN capture every packet while the Core
+    // runs an old or empty config with no usable outbound, which takes
+    // the whole device offline while the UI shows a running state.
+    if (request.initialize) {
+      return _startFromInitialize(request);
+    }
+    // A start whose inputs the Core already runs needs no re-apply;
+    // applyProfile itself does not dedupe forced calls.
+    final bool applied;
+    if (await _inputsApplied()) {
+      applied = true;
+    } else {
+      try {
+        applied = await applyProfile(force: true);
+      } catch (_) {
+        _rollbackRunning(request);
+        rethrow;
+      }
+    }
+    if (!_isCurrent(request)) {
+      return true;
+    }
+    if (!applied) {
+      _rollbackRunning(request);
+      throw const MessageException(_configLoadFailedMessage);
+    }
     try {
       await _startCoreRunning(request);
     } catch (_) {
       _rollbackRunning(request);
       rethrow;
     }
-    final inputsApplied = await _inputsApplied();
-    if (_isCurrent(request) && !inputsApplied) {
-      applyProfileDebounce(force: true, silence: true);
+    if (_isCurrent(request) &&
+        !ref.read(safeModeProvider) &&
+        !_appliedConfigHealthy()) {
+      await globalState.safeRun(() => setRunning(false));
+      throw const MessageException(_configLoadFailedMessage);
     }
     return true;
+  }
+
+  /// The boot path: apply, then start, undoing the run through
+  /// setRunning(false) when either step fails. initStatus is not
+  /// error-wrapped, so failures surface here and in the return value.
+  Future<bool> _startFromInitialize(_RunRequest request) async {
+    var applied = false;
+    try {
+      applied = await applyProfile(force: true);
+    } catch (_) {
+      applied = false;
+    }
+    if (!applied) {
+      if (_isCurrent(request)) {
+        await globalState.safeRun(() => setRunning(false));
+      }
+      return false;
+    }
+    try {
+      await _startCoreRunning(request);
+    } catch (_) {
+      if (_isCurrent(request)) {
+        await globalState.safeRun(() => setRunning(false));
+      }
+      return false;
+    }
+    if (_isCurrent(request) &&
+        !ref.read(safeModeProvider) &&
+        !_appliedConfigHealthy()) {
+      await globalState.safeRun(() => setRunning(false));
+      dialogs.showNotifier(_configLoadFailedMessage, level: MessageLevel.error);
+      return false;
+    }
+    return true;
+  }
+
+  /// Whether the config the Core most recently accepted can route at all,
+  /// going by what the build counted in it. Provider-backed profiles
+  /// legitimately declare no inline nodes, so declared proxy-providers
+  /// satisfy the node side. Unknown counts (nothing applied yet this
+  /// session) pass: there is nothing to judge.
+  bool _appliedConfigHealthy() {
+    final counts = globalState.lastConfigCounts;
+    if (counts == null) return true;
+    if (counts.groups <= 0) return false;
+    return counts.proxies > 0 || globalState.lastConfigHasProviders;
   }
 
   Future<void> _startCoreRunning(_RunRequest request) async {
@@ -379,8 +442,9 @@ class SetupAction extends _$SetupAction {
   }
 
   // False means building the profile, the config write, or the Core setup
-  // step failed; a profile that fails to build is still pushed to the Core
-  // as the empty config so it never keeps serving the previous one.
+  // step failed. A profile that fails to build is NOT pushed to the Core:
+  // the Core keeps serving the previous config, and callers that want to
+  // start must refuse (see _start) rather than run with no proxies.
   // authorizeCore failures still throw.
   Future<bool> applyProfile({
     bool silence = false,
@@ -436,7 +500,13 @@ class SetupAction extends _$SetupAction {
   }) async {
     final profileId = setupState.profileId;
     if (profileId == null) {
-      return (yaml: '', md5: '', counts: configCountsOf(const {}), base: null);
+      return (
+        yaml: '',
+        md5: '',
+        counts: configCountsOf(const {}),
+        base: null,
+        hasProviders: false,
+      );
     }
     final defaultUA = globalState.packageInfo.ua;
     final networkSetting = ref.read(
@@ -470,6 +540,10 @@ class SetupAction extends _$SetupAction {
         : profileBase?.base.config ?? await _core.getConfig(profileId);
     final proxyGroups = isCustom ? setupState.proxyGroups : <ProxyGroup>[];
     final rules = isCustom ? setupState.rules : <Rule>[];
+    final hasProviders = switch (rawConfig['proxy-providers']) {
+      final Map providers => providers.isNotEmpty,
+      _ => false,
+    };
     if (hasScript) {
       rawConfig = await handleEvaluate(scriptContent!, rawConfig);
     }
@@ -508,7 +582,13 @@ class SetupAction extends _$SetupAction {
       ),
     );
     if (profileBase == null) {
-      return (yaml: res.yaml, md5: res.md5, counts: res.counts, base: null);
+      return (
+        yaml: res.yaml,
+        md5: res.md5,
+        counts: res.counts,
+        base: null,
+        hasProviders: hasProviders,
+      );
     }
     final (:base, :path) = profileBase;
     return (
@@ -520,6 +600,7 @@ class SetupAction extends _$SetupAction {
         rules: res.counts.rules + base.rules,
       ),
       base: SetupBase(path: path, overlay: res.yaml),
+      hasProviders: hasProviders,
     );
   }
 
@@ -718,8 +799,23 @@ class SetupAction extends _$SetupAction {
       _appliedInputs = inputs;
       return _SetupTaskResult.completed;
     }
-    // Go answers a config it rejects by running its built-in default, which
-    // has no proxies, so until this push succeeds no applied config is known.
+    if (profileFailed) {
+      // Never push a failed build: the empty config it used to send took
+      // every route down while the profile's nodes stayed on screen.
+      // The Core keeps its previous config; report the failure instead.
+      commonPrint.log(
+        'setup ===> profile build failed, keeping the previous config',
+        logLevel: LogLevel.warning,
+      );
+      _appliedInputs = null;
+      globalState.lastConfigMd5 = null;
+      globalState.lastConfigCounts = null;
+      globalState.lastConfigHasProviders = false;
+      return _SetupTaskResult.failed;
+    }
+    // Until this push succeeds no applied config is known: a config the
+    // Core rejects now fails the whole apply (see core/config.go), it no
+    // longer falls back to a built-in default with no proxies.
     _appliedInputs = null;
     globalState.lastConfigMd5 = null;
     globalState.lastConfigCounts = null;
@@ -747,6 +843,7 @@ class SetupAction extends _$SetupAction {
           );
           if (message.isNotEmpty) {
             globalState.lastConfigCounts = configCountsOf(const {});
+            globalState.lastConfigHasProviders = false;
             await globalState.safeRun(() => onUpdated?.call());
             throw MessageException(message);
           }
@@ -758,8 +855,8 @@ class SetupAction extends _$SetupAction {
           rethrow;
         }
         globalState.lastConfigMd5 = yamlMd5;
-        globalState.lastConfigCounts =
-            realProfile?.counts ?? configCountsOf(const {});
+        globalState.lastConfigCounts = realProfile.counts;
+        globalState.lastConfigHasProviders = realProfile.hasProviders;
         _appliedInputs = inputs;
         await onUpdated?.call();
       },
