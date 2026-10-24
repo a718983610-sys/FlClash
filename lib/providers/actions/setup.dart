@@ -29,6 +29,17 @@ class _RunRequest {
   });
 }
 
+/// The rollback target when a profile cannot build: the first profile
+/// that has not already failed to build in this session.
+Profile? qfRollbackCandidate(List<Profile> profiles, Set<int> failedIds) {
+  for (final profile in profiles) {
+    if (!failedIds.contains(profile.id)) {
+      return profile;
+    }
+  }
+  return null;
+}
+
 @Riverpod(keepAlive: true)
 class SetupAction extends _$SetupAction {
   CoreController get _core => ref.read(coreHandlerProvider);
@@ -40,6 +51,7 @@ class SetupAction extends _$SetupAction {
   DateTime? _startTime;
   _SetupInputs? _appliedInputs;
   var _pendingForceApply = false;
+  final _unbuildableProfileIds = <int>{};
 
   bool get _isRunning => _startTime != null && _startTime!.isBeforeNow;
 
@@ -769,6 +781,35 @@ class SetupAction extends _$SetupAction {
     return fallback;
   }
 
+  /// A profile the core refuses to build must not stay current: it keeps
+  /// showing its nodes while nothing can route through it. Fall back to
+  /// the first profile that has not failed to build; when none is left,
+  /// clear the current selection so the home screen says so plainly.
+  Future<void> _rollbackUnbuildableProfile(Profile failed) async {
+    _unbuildableProfileIds.add(failed.id);
+    if (ref.read(currentProfileIdProvider) != failed.id) {
+      return;
+    }
+    final candidate = qfRollbackCandidate(
+      ref.read(profilesProvider),
+      _unbuildableProfileIds,
+    );
+    if (candidate == null) {
+      ref.read(currentProfileIdProvider.notifier).value = null;
+      dialogs.showNotifier(
+        '订阅「${failed.realLabel}」无法使用，已取消将其设为当前订阅，请检查订阅内容后重试。',
+        level: MessageLevel.error,
+      );
+      return;
+    }
+    ref.read(currentProfileIdProvider.notifier).value = candidate.id;
+    dialogs.showNotifier(
+      '订阅「${failed.realLabel}」无法使用，已自动切换到「${candidate.realLabel}」。',
+      level: MessageLevel.warning,
+    );
+    applyProfileDebounce(force: true);
+  }
+
   Future<_SetupTaskResult> _setupConfig({
     bool force = false,
     bool silence = false,
@@ -845,6 +886,7 @@ class SetupAction extends _$SetupAction {
     // Recaptured so _start's catch can roll back after safeRun swallows it.
     (Object, StackTrace)? handoffFailure;
     var setupFailed = false;
+    Object? setupError;
     await globalState.loadingRun(
       () async {
         try {
@@ -869,6 +911,7 @@ class SetupAction extends _$SetupAction {
           }
         } catch (e, s) {
           setupFailed = true;
+          setupError = e;
           if (preloadInvoke != null) {
             handoffFailure = (e, s);
           }
@@ -890,6 +933,13 @@ class SetupAction extends _$SetupAction {
     );
     if (handoffFailure != null) {
       Error.throwWithStackTrace(handoffFailure!.$1, handoffFailure!.$2);
+    }
+    if (setupFailed &&
+        setupError is MessageException &&
+        profile != null &&
+        realProfile.base != null) {
+      // The core rejected this profile's build: never leave it current.
+      await _rollbackUnbuildableProfile(profile);
     }
     if (setupFailed || profileFailed) {
       return _SetupTaskResult.failed;

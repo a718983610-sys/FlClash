@@ -186,32 +186,71 @@ extension ProfileExtension on Profile {
     final response = await request.getFileResponseForUrl(url);
     final disposition = response.headers.value('content-disposition');
     final userinfo = response.headers.value('subscription-userinfo');
+    final data = decompressUnlabeled(response.data ?? Uint8List(0));
+    final issue = qfSubscriptionContentIssue(data);
+    if (issue != null) {
+      throw MessageException(issue);
+    }
     return copyWith(
       label: label.takeFirstValid([
         getFileNameForDisposition(disposition),
         defaultLabel,
       ]),
       subscriptionInfo: SubscriptionInfo.formHString(userinfo),
-    ).saveFile(
-      decompressUnlabeled(response.data ?? Uint8List(0)),
-      validate: validate,
-    );
+    ).saveFile(data, validate: validate);
   }
 
   Future<Profile> saveFile(
     Uint8List bytes, {
     required ValidateConfig validate,
   }) async {
-    final path = await appPath.tempFilePath;
+    // A unique temp per call: batch imports save several profiles in
+    // parallel, and one shared temp path lets them clobber each other
+    // mid-validation.
+    final path =
+        '${await appPath.tempFilePath}.$id.${DateTime.now().microsecondsSinceEpoch}';
     final tempFile = File(path);
-    await tempFile.safeWriteAsBytes(bytes);
-    final message = await validate(path, ageSecretKey);
-    if (message.isNotEmpty) {
-      throw MessageException(message);
+    try {
+      await tempFile.safeWriteAsBytes(bytes);
+      final message = await validate(path, ageSecretKey);
+      if (message.isNotEmpty) {
+        throw MessageException(message);
+      }
+      final mFile = await file;
+      await tempFile.copy(mFile.path);
+      return copyWith(lastUpdateDate: DateTime.now());
+    } finally {
+      // The temp goes on every path: a validation failure used to leave
+      // it behind in the process temp dir.
+      await tempFile.safeDelete();
     }
-    final mFile = await file;
-    await tempFile.copy(mFile.path);
-    await tempFile.safeDelete();
-    return copyWith(lastUpdateDate: DateTime.now());
   }
+}
+
+/// An endpoint that answers an empty body or a web page (login wall, WAF
+/// block, expiry notice) has not delivered a config. Refuse it here so a
+/// good saved profile is never replaced by either; genuine configs (YAML
+/// mappings, share-link lists, base64 bodies) never start with '<'.
+String? qfSubscriptionContentIssue(Uint8List bytes) {
+  if (bytes.isEmpty) {
+    return '订阅服务器没有返回内容，请稍后重试。';
+  }
+  var start = 0;
+  if (bytes.length >= 3 &&
+      bytes[0] == 0xEF &&
+      bytes[1] == 0xBB &&
+      bytes[2] == 0xBF) {
+    start = 3;
+  }
+  while (start < bytes.length &&
+      (bytes[start] == 0x20 ||
+          bytes[start] == 0x09 ||
+          bytes[start] == 0x0A ||
+          bytes[start] == 0x0D)) {
+    start++;
+  }
+  if (start < bytes.length && bytes[start] == 0x3C) {
+    return '订阅服务器返回了网页内容，而不是订阅配置，请检查订阅地址是否正确。';
+  }
+  return null;
 }

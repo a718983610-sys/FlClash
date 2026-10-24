@@ -4,6 +4,8 @@ part of '../action.dart';
 class ProfilesAction extends _$ProfilesAction {
   CoreController get _core => ref.read(coreHandlerProvider);
 
+  final _updatingProfileIds = <int>{};
+
   @override
   void build() {}
 
@@ -16,6 +18,25 @@ class ProfilesAction extends _$ProfilesAction {
       ref
           .read(profilesProvider.notifier)
           .put(currentProfile.copyWith(selectedMap: selectedMap));
+    }
+  }
+
+  /// Import-time marking: a subscription delivered as a share-link list
+  /// is converted in memory by the core (the stored file is untouched).
+  /// Say so once, at import, so the format is never a silent surprise.
+  Future<void> notifyIfLinkListProfile(Profile profile) async {
+    if (profile.type == ProfileType.custom) {
+      return;
+    }
+    try {
+      final path = await appPath.getProfilePath(profile.id.toString());
+      final content = await File(path).readAsString();
+      if (!qfIsLinkListContent(content)) {
+        return;
+      }
+      dialogs.showNotifier('这份订阅是链接格式，应用已自动转换，节点可以正常使用。');
+    } catch (_) {
+      // The marking is informational only; never fail an import over it.
     }
   }
 
@@ -139,6 +160,26 @@ class ProfilesAction extends _$ProfilesAction {
     Profile profile, {
     bool showLoading = false,
   }) async {
+    if (!_updatingProfileIds.add(profile.id)) {
+      // A refresh for this profile is already running (a manual tap
+      // racing the auto-update, or the reverse): merge into it instead
+      // of racing the same stored file with two downloads.
+      commonPrint.log(
+        'updateProfile(${profile.id}) already in flight, skipping',
+      );
+      return;
+    }
+    try {
+      await _updateProfileNow(profile, showLoading: showLoading);
+    } finally {
+      _updatingProfileIds.remove(profile.id);
+    }
+  }
+
+  Future<void> _updateProfileNow(
+    Profile profile, {
+    bool showLoading = false,
+  }) async {
     final operation = showLoading
         ? ref.read(updatingKeysProvider.notifier).start(profile.updatingKey)
         : null;
@@ -204,6 +245,7 @@ class ProfilesAction extends _$ProfilesAction {
     );
     if (profile != null) {
       putProfile(profile);
+      unawaited(notifyIfLinkListProfile(profile));
     }
   }
 
@@ -354,15 +396,27 @@ class ProfilesAction extends _$ProfilesAction {
     String? label,
     String ageSecretKey = '',
   }) async {
+    // Clipboard and deep-link entries arrive with stray whitespace and
+    // newlines; trim centrally so every entry point behaves the same,
+    // and refuse anything that is neither a share link nor an http(s)
+    // URL before a doomed download starts.
+    final trimmed = link.trim();
+    if (!trimmed.isShareLink && trimmed.webUri == null) {
+      dialogs.showNotifier(
+        '链接格式不正确，请粘贴有效的订阅链接或节点链接。',
+        level: MessageLevel.error,
+      );
+      return;
+    }
     _showProfiles();
     final profile = await globalState.loadingRun(
       tag: LoadingTag.profiles,
-      () => link.isShareLink
-          ? _fromShareLinks(Profile.normal(label: label), [link])
+      () => trimmed.isShareLink
+          ? _fromShareLinks(Profile.normal(label: label), [trimmed])
           : _withAgeSecretKey(
               Profile.normal(
                 label: label,
-                url: link,
+                url: trimmed,
               ).copyWith(ageSecretKey: ageSecretKey),
               _download,
             ),
@@ -377,13 +431,17 @@ class ProfilesAction extends _$ProfilesAction {
   /// links among them make up one profile, in the place of the first.
   Future<void> addProfilesFromLinks(List<String> links) async {
     _showProfiles();
-    final shareLinks = [
+    final cleaned = [
       for (final link in links)
+        if (link.trim().isNotEmpty) link.trim(),
+    ];
+    final shareLinks = [
+      for (final link in cleaned)
         if (link.isShareLink) link,
     ];
     await globalState.batchRun(
       [
-        for (final link in links)
+        for (final link in cleaned)
           if (!link.isShareLink)
             (profile: Profile.normal(url: link), shareLinks: const <String>[])
           else if (link == shareLinks.first)
@@ -476,5 +534,15 @@ class ProfilesAction extends _$ProfilesAction {
         logLevel: coreFailureLogLevel(error),
       );
     }
+  }
+}
+
+/// True when [content] is not a YAML mapping: share-link lists, plain or
+/// base64-wrapped, parse as a scalar or not at all - never as a map.
+bool qfIsLinkListContent(String content) {
+  try {
+    return loadPlainYaml(content) is! Map;
+  } catch (_) {
+    return true;
   }
 }

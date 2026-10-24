@@ -16,6 +16,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:yaml/yaml.dart';
 
+import '../../../qf/qf_providers.dart';
 import 'card.dart';
 
 /// Expansion state of the subscription tree. A big group, once opened by
@@ -191,6 +192,16 @@ class SubscriptionTreeCard extends ConsumerWidget {
             _BigGroupSection(
               profile: profile,
               isCurrent: profile.id == currentProfileId,
+            ),
+          if (profiles.isNotEmpty && ref.watch(qfDirectOnlyProfileProvider))
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 8, 20, 4),
+              child: Text(
+                '当前订阅没有可用节点，请更新订阅或更换订阅。',
+                style: AppTextStyle.subheadline
+                    .of(context)
+                    .copyWith(color: const Color(0xFFB3261E)),
+              ),
             ),
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 4, 12, 4),

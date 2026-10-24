@@ -57,6 +57,23 @@ void main() {
       expect(await savedFile.readAsString(), 'proxies: []');
     });
 
+    test('removes its temp file when validation fails', () async {
+      final profile = Profile.normal(label: 'p');
+      final bytes = Uint8List.fromList(utf8.encode('bad: ['));
+
+      await expectLater(
+        profile.saveFile(bytes, validate: (_, _) async => 'invalid config'),
+        throwsA(isA<MessageException>()),
+      );
+
+      final leftovers = tempDir
+          .listSync(recursive: true)
+          .whereType<File>()
+          .where((f) => f.uri.pathSegments.last.startsWith('temp'))
+          .toList();
+      expect(leftovers, isEmpty);
+    });
+
     test('validates with the profile age key', () async {
       final profile = Profile.normal(
         label: 'p',

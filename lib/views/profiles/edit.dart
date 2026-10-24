@@ -163,6 +163,7 @@ class _EditProfileViewState extends ConsumerState<EditProfileView> {
         return;
       }
       profilesAction.putProfile(savedProfile);
+      unawaited(profilesAction.notifyIfLinkListProfile(savedProfile));
     } else if (!hasUpdate) {
       profilesAction.putProfile(profile);
     } else {
@@ -171,6 +172,7 @@ class _EditProfileViewState extends ConsumerState<EditProfileView> {
           await Future.delayed(commonDuration);
           if (hasUpdate) {
             await profilesAction.updateProfile(profile);
+            await profilesAction.notifyIfLinkListProfile(profile);
           }
         }),
       );

@@ -36,6 +36,7 @@ abstract class ProfileBase with _$ProfileBase {
     @Default(0) int proxies,
     @Default(0) @JsonKey(name: 'proxy-groups') int proxyGroups,
     @Default(0) int rules,
+    @Default(false) bool converted,
   }) = _ProfileBase;
 
   factory ProfileBase.fromJson(Map<String, dynamic> json) =>
