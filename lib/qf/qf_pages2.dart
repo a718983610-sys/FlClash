@@ -479,7 +479,6 @@ class _QfIdentityVerifyDialog extends StatefulWidget {
 class _QfIdentityVerifyDialogState extends State<_QfIdentityVerifyDialog> {
   final _password = TextEditingController();
   String? _error;
-  bool _busy = false;
 
   @override
   void dispose() {
@@ -488,17 +487,13 @@ class _QfIdentityVerifyDialogState extends State<_QfIdentityVerifyDialog> {
   }
 
   Future<void> _usePasskey() async {
-    setState(() {
-      _busy = true;
-      _error = null;
-    });
+    setState(() => _error = null);
     try {
       final token = await qfPasskeyReauthToken(widget.session, widget.purpose);
       if (mounted) Navigator.of(context).pop({'reauthToken': token});
     } on QfApiException catch (e) {
       if (mounted) {
         setState(() {
-          _busy = false;
           _error = e.code == 'PASSKEY_NOT_ENROLLED'
               ? '您尚未创建通行密钥，请使用账户密码验证。'
               : qfAccountErrorMessage(e);
@@ -506,10 +501,7 @@ class _QfIdentityVerifyDialogState extends State<_QfIdentityVerifyDialog> {
       }
     } catch (e) {
       if (mounted) {
-        setState(() {
-          _busy = false;
-          _error = qfPasskeyFailureText(e);
-        });
+        setState(() => _error = qfPasskeyFailureText(e));
       }
     }
   }
@@ -530,27 +522,28 @@ class _QfIdentityVerifyDialogState extends State<_QfIdentityVerifyDialog> {
             decoration: InputDecoration(labelText: '当前账户密码', errorText: _error),
           ),
           const SizedBox(height: 8),
-          OutlinedButton(
-            onPressed: _busy ? null : _usePasskey,
-            child: const Text('使用通行密钥验证'),
+          QfActionButton(
+            label: '使用通行密钥验证',
+            busyLabel: '正在验证通行密钥……',
+            filled: false,
+            showInlineError: false,
+            onAction: _usePasskey,
           ),
         ],
       ),
       actions: [
         TextButton(
-          onPressed: _busy ? null : () => Navigator.of(context).pop(),
+          onPressed: () => Navigator.of(context).pop(),
           child: const Text('取消'),
         ),
         FilledButton(
-          onPressed: _busy
-              ? null
-              : () {
-                  if (_password.text.isEmpty) {
-                    setState(() => _error = '请输入当前账户密码');
-                    return;
-                  }
-                  Navigator.of(context).pop({'password': _password.text});
-                },
+          onPressed: () {
+            if (_password.text.isEmpty) {
+              setState(() => _error = '请输入当前账户密码');
+              return;
+            }
+            Navigator.of(context).pop({'password': _password.text});
+          },
           child: const Text('确认'),
         ),
       ],
@@ -571,7 +564,6 @@ class _QfDeleteAccountDialogState extends State<_QfDeleteAccountDialog> {
   final _password = TextEditingController();
   String? _reauthToken;
   String? _error;
-  bool _busy = false;
 
   @override
   void dispose() {
@@ -580,25 +572,18 @@ class _QfDeleteAccountDialogState extends State<_QfDeleteAccountDialog> {
   }
 
   Future<void> _usePasskey() async {
-    setState(() {
-      _busy = true;
-      _error = null;
-    });
+    setState(() => _error = null);
     try {
       final token = await qfPasskeyReauthToken(
         widget.session,
         'delete_account',
       );
       if (mounted) {
-        setState(() {
-          _reauthToken = token;
-          _busy = false;
-        });
+        setState(() => _reauthToken = token);
       }
     } on QfApiException catch (e) {
       if (mounted) {
         setState(() {
-          _busy = false;
           _error = e.code == 'PASSKEY_NOT_ENROLLED'
               ? '您尚未创建通行密钥，请使用账户密码验证。'
               : qfAccountErrorMessage(e);
@@ -606,10 +591,7 @@ class _QfDeleteAccountDialogState extends State<_QfDeleteAccountDialog> {
       }
     } catch (e) {
       if (mounted) {
-        setState(() {
-          _busy = false;
-          _error = qfPasskeyFailureText(e);
-        });
+        setState(() => _error = qfPasskeyFailureText(e));
       }
     }
   }
@@ -619,7 +601,6 @@ class _QfDeleteAccountDialogState extends State<_QfDeleteAccountDialog> {
       setState(() => _error = '请先完成身份复核：输入账户密码，或使用通行密钥验证。');
       return;
     }
-    setState(() => _busy = true);
     try {
       await widget.session.authed(
         'POST',
@@ -636,7 +617,6 @@ class _QfDeleteAccountDialogState extends State<_QfDeleteAccountDialog> {
     } on QfApiException catch (e) {
       if (mounted) {
         setState(() {
-          _busy = false;
           if (e.code == 'REAUTH_INVALID') _reauthToken = null;
           _error = qfAccountErrorMessage(e);
         });
@@ -672,9 +652,12 @@ class _QfDeleteAccountDialogState extends State<_QfDeleteAccountDialog> {
                 ),
               ),
               const SizedBox(height: 8),
-              OutlinedButton(
-                onPressed: _busy ? null : _usePasskey,
-                child: const Text('使用通行密钥验证'),
+              QfActionButton(
+                label: '使用通行密钥验证',
+                busyLabel: '正在验证通行密钥……',
+                filled: false,
+                showInlineError: false,
+                onAction: _usePasskey,
               ),
             ] else ...[
               const Text('已通过通行密钥验证。'),
@@ -685,12 +668,17 @@ class _QfDeleteAccountDialogState extends State<_QfDeleteAccountDialog> {
       ),
       actions: [
         TextButton(
-          onPressed: _busy ? null : () => Navigator.of(context).pop(false),
+          onPressed: () => Navigator.of(context).pop(false),
           child: const Text('取消'),
         ),
-        FilledButton(
-          onPressed: _busy ? null : _submit,
-          child: const Text('确认提交注销'),
+        QfActionButton(
+          label: '确认提交注销',
+          busyLabel: '正在提交……',
+          showInlineError: false,
+          onFailure: (failure) {
+            if (mounted) setState(() => _error = failure.message);
+          },
+          onAction: _submit,
         ),
       ],
     );
@@ -715,7 +703,6 @@ class _QfChangePasswordDialogState extends State<_QfChangePasswordDialog> {
   String? _confirmError;
   String? _reauthToken;
   int _method = 0;
-  bool _busy = false;
   bool _vaultFailed = false;
 
   @override
@@ -728,21 +715,16 @@ class _QfChangePasswordDialogState extends State<_QfChangePasswordDialog> {
   }
 
   Future<void> _usePasskey() async {
-    setState(() => _busy = true);
     try {
       final token = await qfPasskeyReauthToken(
         widget.session,
         'change_password',
       );
       if (mounted) {
-        setState(() {
-          _reauthToken = token;
-          _busy = false;
-        });
+        setState(() => _reauthToken = token);
       }
     } on QfApiException catch (e) {
       if (mounted) {
-        setState(() => _busy = false);
         qfToast(
           context,
           e.code == 'PASSKEY_NOT_ENROLLED'
@@ -751,10 +733,7 @@ class _QfChangePasswordDialogState extends State<_QfChangePasswordDialog> {
         );
       }
     } catch (e) {
-      if (mounted) {
-        setState(() => _busy = false);
-        qfToast(context, qfPasskeyFailureText(e));
-      }
+      if (mounted) qfToast(context, qfPasskeyFailureText(e));
     }
   }
 
@@ -769,7 +748,6 @@ class _QfChangePasswordDialogState extends State<_QfChangePasswordDialog> {
       qfToast(context, '请先使用通行密钥完成验证');
       return;
     }
-    setState(() => _busy = true);
     try {
       await widget.session.authed(
         'POST',
@@ -808,10 +786,7 @@ class _QfChangePasswordDialogState extends State<_QfChangePasswordDialog> {
           rewrapped = false;
         }
         if (!rewrapped) {
-          setState(() {
-            _busy = false;
-            _vaultFailed = true;
-          });
+          setState(() => _vaultFailed = true);
           return;
         }
       }
@@ -820,7 +795,6 @@ class _QfChangePasswordDialogState extends State<_QfChangePasswordDialog> {
     } on QfApiException catch (e) {
       if (mounted) {
         setState(() {
-          _busy = false;
           if (e.code == 'REAUTH_INVALID') _reauthToken = null;
         });
         qfToast(context, qfAccountErrorMessage(e));
@@ -875,9 +849,12 @@ class _QfChangePasswordDialogState extends State<_QfChangePasswordDialog> {
               )
             else if (_method == 1)
               if (_reauthToken == null)
-                OutlinedButton(
-                  onPressed: _busy ? null : _usePasskey,
-                  child: const Text('使用通行密钥验证'),
+                QfActionButton(
+                  label: '使用通行密钥验证',
+                  busyLabel: '正在验证通行密钥……',
+                  filled: false,
+                  showInlineError: false,
+                  onAction: _usePasskey,
                 )
               else
                 const Text('已通过通行密钥验证。')
@@ -913,9 +890,14 @@ class _QfChangePasswordDialogState extends State<_QfChangePasswordDialog> {
             onPressed: () => Navigator.of(context).pop(false),
             child: const Text('取消'),
           ),
-          FilledButton(
-            onPressed: _busy ? null : _submit,
-            child: const Text('确认修改'),
+          QfActionButton(
+            label: '确认修改',
+            busyLabel: '正在修改……',
+            showInlineError: false,
+            onFailure: (failure) {
+              if (mounted) qfToast(context, failure.message);
+            },
+            onAction: _submit,
           ),
         ],
       ],
