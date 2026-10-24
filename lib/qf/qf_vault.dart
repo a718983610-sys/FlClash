@@ -437,6 +437,7 @@ class QfSettingsSync {
   static QfSettingsSyncDecision decide({
     required int cloudUpdatedAt,
     required int localUpdatedAt,
+    bool localDirty = false,
   }) {
     if (cloudUpdatedAt > localUpdatedAt) {
       return QfSettingsSyncDecision.cloudNewer;
@@ -444,13 +445,41 @@ class QfSettingsSync {
     if (localUpdatedAt > cloudUpdatedAt) {
       return QfSettingsSyncDecision.localNewer;
     }
-    return QfSettingsSyncDecision.inSync;
+    // The same second on both sides proves nothing about content: if
+    // the local side carries changes that were never uploaded, they
+    // must still go up instead of being silently judged in sync (C-29).
+    return localDirty
+        ? QfSettingsSyncDecision.localNewer
+        : QfSettingsSyncDecision.inSync;
   }
 }
 
 class QfVaultService {
   static const String _kLocalSettingsUpdatedAt = 'qf_settings_local_updated_at';
   static const String _kCloudSettingsUpdatedAt = 'qf_settings_cloud_updated_at';
+  static const String _kSettingsClockOffset = 'qf_settings_clock_offset';
+  static const String _kSettingsDirty = 'qf_settings_dirty';
+
+  /// Local settings stamps are anchored to server time (C-29): every
+  /// successful upload teaches us the offset between this device's
+  /// wall clock and the server's clock, and local change stamps are
+  /// written in server time. A device whose clock runs minutes fast
+  /// or slow can then neither dominate every sync decision nor be
+  /// permanently silenced by one.
+  static Future<int> _anchoredNowSecs() async {
+    final prefs = await SharedPreferences.getInstance();
+    return _nowSecs() + (prefs.getInt(_kSettingsClockOffset) ?? 0);
+  }
+
+  static Future<bool> _settingsDirty() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_kSettingsDirty) ?? false;
+  }
+
+  static Future<void> _setSettingsDirty(bool value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_kSettingsDirty, value);
+  }
 
   static Uint8List? _subscriptionKey;
   static Uint8List? _settingsKey;
@@ -555,11 +584,16 @@ class QfVaultService {
     await session.deleteSettingsVault();
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_kCloudSettingsUpdatedAt);
+    await prefs.remove(_kSettingsDirty);
   }
 
   static Future<void> noteLocalSettingsChanged() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt(_kLocalSettingsUpdatedAt, _nowSecs());
+    await prefs.setInt(
+      _kLocalSettingsUpdatedAt,
+      await _anchoredNowSecs(),
+    );
+    await prefs.setBool(_kSettingsDirty, true);
   }
 
   static Future<void> _saveSettingsTimestamps({
@@ -644,8 +678,17 @@ class QfVaultService {
     );
     final cloudUpdatedAt = (result['updatedAt'] as num?)?.toInt();
     if (cloudUpdatedAt != null) {
-      await _saveSettingsTimestamps(cloudUpdatedAt: cloudUpdatedAt);
+      // Learn this device's clock offset from the write just made and
+      // re-anchor the local stamp to the server's, so later sync
+      // comparisons are same-clock comparisons (C-29).
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setInt(_kSettingsClockOffset, cloudUpdatedAt - writtenAt);
+      await _saveSettingsTimestamps(
+        localUpdatedAt: cloudUpdatedAt,
+        cloudUpdatedAt: cloudUpdatedAt,
+      );
     }
+    await _setSettingsDirty(false);
     return cloudUpdatedAt;
   }
 
@@ -676,6 +719,7 @@ class QfVaultService {
     final decision = QfSettingsSync.decide(
       cloudUpdatedAt: cloudUpdatedAt,
       localUpdatedAt: await localSettingsUpdatedAt(),
+      localDirty: await _settingsDirty(),
     );
     if (decision != QfSettingsSyncDecision.cloudNewer) {
       return QfSettingsPullResult(
@@ -696,6 +740,7 @@ class QfVaultService {
       localUpdatedAt: cloudUpdatedAt,
       cloudUpdatedAt: cloudUpdatedAt,
     );
+    await _setSettingsDirty(false);
     return QfSettingsPullResult(
       decision: decision,
       settings: Map<String, dynamic>.from(decoded['settings'] as Map),
