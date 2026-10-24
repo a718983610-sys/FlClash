@@ -1969,6 +1969,7 @@ class _QfChatPageState extends State<QfChatPage> {
       final history = await widget.session.socialChatHistory(_peerId);
       final myId = widget.session.userId;
       final sentCache = await _sentCache();
+      final deletedIds = await QfChatHistoryVault.deletedLocalIds();
       final decoded = <Map<String, dynamic>>[];
       final reactions = <String, Map<String, String>>{};
       int? lastIncomingId;
@@ -2002,6 +2003,9 @@ class _QfChatPageState extends State<QfChatPage> {
             : raw['id'] != null
             ? 'r-${raw['id']}'
             : 'c-$_peerId-$ts-${text.hashCode}';
+        // Deleted on this device stays deleted, even though the
+        // server still returns the message (C-38).
+        if (deletedIds.contains(localId)) continue;
         final payload = QfChatPayload.parse(text);
         if (payload.kind == QfChatPayloadKind.reaction) {
           QfReactions.apply(
@@ -2286,7 +2290,7 @@ class _QfChatPageState extends State<QfChatPage> {
     }
   }
 
-  Future<void> _deleteForEveryone(Map<String, dynamic> message) async {
+  Future<void> _deleteLocalCopy(Map<String, dynamic> message) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) {
@@ -2321,7 +2325,7 @@ class _QfChatPageState extends State<QfChatPage> {
       setState(() {
         _messages.removeWhere((item) => item['localId'] == localId);
       });
-      qfToast(context, '消息已经删除。');
+      qfToast(context, '本机记录已删除。');
     }
   }
 
@@ -2515,10 +2519,10 @@ class _QfChatPageState extends State<QfChatPage> {
               if (mine)
                 ListTile(
                   leading: const GlyphIcon(AppGlyphs.delete),
-                  title: const Text('删除（对所有人）'),
+                  title: const Text('删除本机记录'),
                   onTap: () {
                     Navigator.of(sheetContext).pop();
-                    unawaited(_deleteForEveryone(message));
+                    unawaited(_deleteLocalCopy(message));
                   },
                 ),
             ],

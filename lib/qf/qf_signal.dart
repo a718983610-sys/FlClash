@@ -11,6 +11,7 @@ import 'package:pointycastle/key_derivators/argon2.dart';
 import 'package:pointycastle/macs/poly1305.dart';
 import 'package:pointycastle/stream/chacha20poly1305.dart' hide State;
 import 'package:pointycastle/stream/chacha7539.dart';
+import 'package:flutter/services.dart' show MissingPluginException;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -21,31 +22,91 @@ import 'qf_social.dart';
 class QfSignalStore extends SignalProtocolStore {
   static const String _prefsKey = 'qf_signal_store_v1';
   static const FlutterSecureStorage _secure = FlutterSecureStorage();
-  static const Duration _secureTimeout = Duration(milliseconds: 500);
+  // 500ms was far too tight: one slow read on a busy keystore (cold
+  // start, low-end device) used to condemn the secure store for the
+  // whole process and flip the chat identity (C-42). Five seconds and
+  // one retry, and a failure is only latched for a minute.
+  static const Duration _secureTimeout = Duration(seconds: 5);
   static bool? _secureOk;
+  static DateTime? _secureFailedAt;
+  static bool lastSecureReadFailed = false;
+  static bool _pluginMissing = false;
+
+  static bool get _secureRetryDue {
+    final at = _secureFailedAt;
+    return at == null ||
+        DateTime.now().difference(at) > const Duration(seconds: 60);
+  }
 
   static Future<String?> _secureRead() async {
-    if (_secureOk == false) return null;
-    try {
-      final value = await _secure.read(key: _prefsKey).timeout(_secureTimeout);
-      _secureOk = true;
-      return value;
-    } catch (_) {
-      _secureOk = false;
+    if (_pluginMissing) return null;
+    if (_secureOk == false && !_secureRetryDue) {
+      lastSecureReadFailed = true;
       return null;
     }
+    for (var attempt = 0; attempt < 2; attempt++) {
+      try {
+        final value = await _secure
+            .read(key: _prefsKey)
+            .timeout(_secureTimeout);
+        _secureOk = true;
+        lastSecureReadFailed = false;
+        return value;
+      } on MissingPluginException {
+        // No secure-storage plugin on this platform at all: the
+        // preferences fallback is the only store, by design - this is
+        // not the transient failure the identity guard protects
+        // against (C-42).
+        _pluginMissing = true;
+        _secureOk = false;
+        lastSecureReadFailed = false;
+        return null;
+      } catch (_) {
+        // One retry before the store is judged unreachable.
+      }
+    }
+    _secureOk = false;
+    _secureFailedAt = DateTime.now();
+    lastSecureReadFailed = true;
+    return null;
   }
 
   static Future<bool> _secureWrite(String value) async {
-    if (_secureOk == false) return false;
+    if (_pluginMissing) return false;
+    if (_secureOk == false && !_secureRetryDue) return false;
     try {
-      await _secure.write(key: _prefsKey, value: value).timeout(_secureTimeout);
+      await _secure
+          .write(key: _prefsKey, value: value)
+          .timeout(_secureTimeout);
       _secureOk = true;
       return true;
-    } catch (_) {
+    } on MissingPluginException {
+      _pluginMissing = true;
       _secureOk = false;
       return false;
+    } catch (_) {
+      _secureOk = false;
+      _secureFailedAt = DateTime.now();
+      return false;
     }
+  }
+
+  static int _blobSavedAt(String raw) {
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is Map) return (decoded['savedAt'] as num?)?.toInt() ?? 0;
+    } catch (_) {}
+    return 0;
+  }
+
+  /// When both stores hold a copy of the identity blob, the newer one
+  /// wins (C-42): a persist() that fell back to preferences while the
+  /// secure store was briefly unavailable must not be shadowed by the
+  /// stale secure copy on the next launch.
+  static String newerBlob(String secureRaw, String legacyRaw) {
+    return _blobSavedAt(legacyRaw) > _blobSavedAt(secureRaw)
+        ? legacyRaw
+        : secureRaw;
   }
 
   IdentityKeyPair _identityPair;
@@ -62,12 +123,21 @@ class QfSignalStore extends SignalProtocolStore {
     if (_cached != null) return _cached!;
     final prefs = await SharedPreferences.getInstance();
     final raw = await _secureRead();
+    final legacy = prefs.getString(_prefsKey);
     String? resolved = raw;
-    if (resolved == null) {
+    if (raw != null && legacy != null && legacy.isNotEmpty) {
+      resolved = newerBlob(raw, legacy);
+      if (resolved == legacy) {
+        if (await _secureWrite(legacy)) {
+          await prefs.remove(_prefsKey);
+        }
+      } else {
+        await prefs.remove(_prefsKey);
+      }
+    } else if (resolved == null) {
       // Migrate the legacy plaintext copy (identity private key included)
       // into secure storage; the plaintext is dropped only once the secure
       // copy actually landed, so a broken secure store cannot lose it.
-      final legacy = prefs.getString(_prefsKey);
       if (legacy != null && legacy.isNotEmpty) {
         resolved = legacy;
         if (await _secureWrite(legacy)) {
@@ -76,6 +146,14 @@ class QfSignalStore extends SignalProtocolStore {
       }
     } else {
       await prefs.remove(_prefsKey);
+    }
+    if ((resolved == null || resolved.isEmpty) && lastSecureReadFailed) {
+      // The secure store could not be read at all and there is no
+      // legacy copy: the identity may well exist in secure storage and
+      // merely be unreachable right now. Minting a fresh identity here
+      // is what flipped users' chat identity between launches (C-42) -
+      // fail loudly so the caller can ask for a retry instead.
+      throw StateError('安全存储暂时不可用，请稍后重试。');
     }
     if (resolved != null && resolved.isNotEmpty) {
       final data = Map<String, dynamic>.from(jsonDecode(resolved) as Map);
@@ -111,10 +189,14 @@ class QfSignalStore extends SignalProtocolStore {
 
   static Future<void> replaceFromJson(Map<String, dynamic> data) async {
     final prefs = await SharedPreferences.getInstance();
-    if (await _secureWrite(jsonEncode(data))) {
+    final stamped = {
+      ...data,
+      'savedAt': DateTime.now().millisecondsSinceEpoch,
+    };
+    if (await _secureWrite(jsonEncode(stamped))) {
       await prefs.remove(_prefsKey);
     } else {
-      await prefs.setString(_prefsKey, jsonEncode(data));
+      await prefs.setString(_prefsKey, jsonEncode(stamped));
     }
     resetCache();
   }
@@ -125,6 +207,7 @@ class QfSignalStore extends SignalProtocolStore {
       'registrationId': _registrationId,
       'bundlePublished': bundlePublished,
       'entries': _entries,
+      'savedAt': DateTime.now().millisecondsSinceEpoch,
     };
   }
 
@@ -1099,6 +1182,10 @@ class QfChatHistoryVault {
     if (record.text == '无法解密的消息' || record.text == '已加密发送的消息') {
       return false;
     }
+    // A record the user deleted on this device stays deleted: the
+    // server still returns it, but it must never be re-archived (C-38).
+    final tombstones = await _loadTombstones();
+    if (tombstones.contains(record.localId)) return false;
     final records = await localRecords();
     if (records.any((item) => item.localId == record.localId)) return false;
     records.add(record);
@@ -1119,6 +1206,10 @@ class QfChatHistoryVault {
     } catch (_) {}
     return {};
   }
+
+  /// Local ids the user deleted on this device. History rebuilds must
+  /// filter these out even though the server still returns them (C-38).
+  static Future<Set<String>> deletedLocalIds() => _loadTombstones();
 
   static Future<void> removeLocalRecord(String localId) async {
     final records = await localRecords();
@@ -1213,14 +1304,37 @@ class QfChatHistoryVault {
     return restored;
   }
 
+  static const String _kUploadBlocked = 'qf_chathistory_upload_blocked_v1';
+
+  static Future<Set<String>> _loadUploadBlocked() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_kUploadBlocked);
+    if (raw == null || raw.isEmpty) return {};
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is List) return decoded.map((e) => e.toString()).toSet();
+    } catch (_) {}
+    return {};
+  }
+
+  static Future<void> _saveUploadBlocked(Set<String> ids) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_kUploadBlocked, jsonEncode(ids.toList()));
+  }
+
   static Future<void> pushPending(QfSessionController session) async {
     final key = _historyKey;
     if (key == null) return;
     final uploaded = await _loadUploaded();
+    final blocked = await _loadUploadBlocked();
     final records = await localRecords()
       ..sort((a, b) => a.ts.compareTo(b.ts));
     final pending = records
-        .where((record) => !uploaded.contains(record.localId))
+        .where(
+          (record) =>
+              !uploaded.contains(record.localId) &&
+              !blocked.contains(record.localId),
+        )
         .toList();
     if (pending.isEmpty) return;
     final seqMap = await _loadSeqMap();
@@ -1269,7 +1383,10 @@ class QfChatHistoryVault {
     final key = _historyKey;
     if (key == null) throw const QfChatHistoryException(_decryptFailed);
     final totals = await knownTotals();
-    final records = await localRecords()
+    final blocked = await _loadUploadBlocked();
+    final records = (await localRecords())
+        .where((record) => !blocked.contains(record.localId))
+        .toList()
       ..sort((a, b) => a.ts.compareTo(b.ts));
     final entries = records.map((r) => _encryptRecord(key, r)).toList();
     final data = await session.authed(
@@ -1331,6 +1448,14 @@ class QfChatHistoryVault {
     await session.authed('DELETE', '/me/chathistory');
     _historyKey = null;
     capacityExceeded = false;
+    // Everything archived locally right now was just wiped from the
+    // cloud on purpose: mark it never-upload, or the next vault unlock
+    // would quietly push the whole local archive back up and the
+    // 'cleared for good' promise would be a lie (C-41). Records
+    // created after the clear are unaffected and sync normally.
+    final blocked = await _loadUploadBlocked()
+      ..addAll((await localRecords()).map((record) => record.localId));
+    await _saveUploadBlocked(blocked);
     await _saveUploaded({});
     await _saveSeqMap({});
     await _savePendingDeletes({});
