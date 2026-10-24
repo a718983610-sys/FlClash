@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:io';
+
 import 'package:fl_clash/ui/ui.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:material_ui/material_ui.dart';
@@ -1237,10 +1240,38 @@ class QfUpdateDownloadPanel extends StatefulWidget {
   State<QfUpdateDownloadPanel> createState() => _QfUpdateDownloadPanelState();
 }
 
-class _QfUpdateDownloadPanelState extends State<QfUpdateDownloadPanel> {
+class _QfUpdateDownloadPanelState extends State<QfUpdateDownloadPanel>
+    with WidgetsBindingObserver {
   double? _progress;
   String? _status;
   bool _downloading = false;
+  bool _needsPermission = false;
+  bool _installLaunched = false;
+  File? _downloadedFile;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Back from the system settings page after granting the install
+    // permission: retry the pending install instead of dead-ending.
+    if (state == AppLifecycleState.resumed &&
+        _needsPermission &&
+        !_installLaunched &&
+        _downloadedFile != null) {
+      unawaited(_install(_downloadedFile!));
+    }
+  }
 
   Future<void> _start() async {
     final url = widget.result.downloadUrl;
@@ -1261,18 +1292,8 @@ class _QfUpdateDownloadPanelState extends State<QfUpdateDownloadPanel> {
         expectedSha256: widget.result.sha256,
         expectedSizeBytes: widget.result.sizeBytes,
       );
-      if (mounted) setState(() => _status = '下载完成，正在打开安装');
-      final launched = await QfUpdateService.install(file);
-      if (mounted) {
-        setState(() {
-          if (launched) {
-            _status = '已打开安装程序，请按提示完成安装';
-          } else {
-            _status = '自动安装未能启动，请前往官网下载最新版安装包。';
-            _downloading = false;
-          }
-        });
-      }
+      _downloadedFile = file;
+      await _install(file);
     } catch (e) {
       if (mounted) {
         setState(() {
@@ -1283,9 +1304,32 @@ class _QfUpdateDownloadPanelState extends State<QfUpdateDownloadPanel> {
     }
   }
 
+  Future<void> _install(File file) async {
+    if (mounted) setState(() => _status = '下载完成，正在打开安装');
+    final outcome = await QfUpdateService.installOutcome(file);
+    if (!mounted) return;
+    setState(() {
+      switch (outcome) {
+        case QfInstallOutcome.launched:
+          _installLaunched = true;
+          _needsPermission = false;
+          _status = '已打开安装程序，请按提示完成安装';
+        case QfInstallOutcome.needsPermission:
+          _needsPermission = true;
+          _downloading = false;
+          _status = '还差一步：请先允许本应用安装更新。点「去开启」在系统设置里打开允许开关，回到本页面会自动继续安装。';
+        case QfInstallOutcome.failed:
+          _needsPermission = false;
+          _downloading = false;
+          _status = '自动安装未能启动，请前往官网下载最新版安装包。';
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final notes = widget.result.notes;
+    final canRetryInstall = _needsPermission && _downloadedFile != null;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -1308,9 +1352,21 @@ class _QfUpdateDownloadPanelState extends State<QfUpdateDownloadPanel> {
           Text(_status!, textAlign: TextAlign.center),
         ],
         const SizedBox(height: 12),
+        if (canRetryInstall) ...[
+          OutlinedButton(
+            onPressed: () =>
+                unawaited(QfUpdateService.openInstallPermissionSettings()),
+            child: const Text('去开启'),
+          ),
+          const SizedBox(height: 8),
+        ],
         FilledButton(
-          onPressed: _downloading ? null : _start,
-          child: const Text('立即更新'),
+          onPressed: _downloading
+              ? null
+              : canRetryInstall
+              ? () => unawaited(_install(_downloadedFile!))
+              : _start,
+          child: Text(canRetryInstall ? '已开启，继续安装' : '立即更新'),
         ),
       ],
     );

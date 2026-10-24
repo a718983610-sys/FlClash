@@ -271,26 +271,72 @@ class QfUpdateService {
     'com.follow.clash/app',
   );
 
+  static bool? isAndroidForTest;
+  static bool? isWindowsForTest;
+  static Future<Object?> Function(String method, Object? arguments)?
+  appChannelInvokerForTest;
+
+  static bool get _isAndroid => isAndroidForTest ?? Platform.isAndroid;
+  static bool get _isWindows => isWindowsForTest ?? Platform.isWindows;
+
+  static Future<Object?> _invokeAppChannel(
+    String method,
+    Object? arguments,
+  ) {
+    final invoker = appChannelInvokerForTest;
+    if (invoker != null) return invoker(method, arguments);
+    return _appChannel.invokeMethod<Object?>(method, arguments);
+  }
+
   /// Returns true only when an installer was actually launched.
   static Future<bool> install(File file) async {
+    return await installOutcome(file) == QfInstallOutcome.launched;
+  }
+
+  /// A missing install permission is reported separately from a plain
+  /// failure, so the UI can guide the user through it and then retry.
+  static Future<QfInstallOutcome> installOutcome(File file) async {
     try {
-      if (!await file.exists()) return false;
-      if (Platform.isWindows) {
+      if (!await file.exists()) return QfInstallOutcome.failed;
+      if (_isWindows) {
         final lower = file.path.toLowerCase();
-        if (!lower.endsWith('.exe') && !lower.endsWith('.msi')) return false;
+        if (!lower.endsWith('.exe') && !lower.endsWith('.msi')) {
+          return QfInstallOutcome.failed;
+        }
         await Process.start(file.path, [], mode: ProcessStartMode.detached);
-        return true;
+        return QfInstallOutcome.launched;
       }
-      if (Platform.isAndroid) {
-        if (!file.path.toLowerCase().endsWith('.apk')) return false;
-        return await _appChannel.invokeMethod<bool>('installApk', {
-              'path': file.path,
-            }) ??
-            false;
+      if (_isAndroid) {
+        if (!file.path.toLowerCase().endsWith('.apk')) {
+          return QfInstallOutcome.failed;
+        }
+        final result = await _invokeAppChannel('installApk', {
+          'path': file.path,
+        });
+        return switch (result) {
+          'launched' => QfInstallOutcome.launched,
+          'needs_permission' => QfInstallOutcome.needsPermission,
+          // Older native builds answer with a plain bool.
+          true => QfInstallOutcome.launched,
+          _ => QfInstallOutcome.failed,
+        };
       }
+    } catch (_) {
+      return QfInstallOutcome.failed;
+    }
+    return QfInstallOutcome.failed;
+  }
+
+  /// Opens the system page for allowing installs from this app; false
+  /// when there is nothing to open (already allowed or unsupported).
+  static Future<bool> openInstallPermissionSettings() async {
+    try {
+      if (!_isAndroid) return false;
+      return await _invokeAppChannel('openUnknownAppSettings', null) == true;
     } catch (_) {
       return false;
     }
-    return false;
   }
 }
+
+enum QfInstallOutcome { launched, needsPermission, failed }

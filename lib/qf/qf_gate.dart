@@ -88,6 +88,10 @@ class _QfSessionGateState extends ConsumerState<QfSessionGate> {
     } catch (_) {}
   }
 
+  // Boot renders from local state alone; network steps run in _bootBackground.
+  static const Duration _manifestTimeout = Duration(seconds: 10);
+  static const Duration _regionTimeout = Duration(seconds: 8);
+
   Future<void> _boot() async {
     final session = _session;
     var emulator = false;
@@ -121,35 +125,46 @@ class _QfSessionGateState extends ConsumerState<QfSessionGate> {
       QfRuntime.appVersion = (await PackageInfo.fromPlatform()).version;
     } catch (_) {}
     await session.init(envEmulator: emulator);
-    final manifest = await QfManifestService.fetchRemote();
-    if (manifest != null) {
-      session.applyServerBaseUrl(manifest.serverBaseUrl);
-      QfRuntime.googleClientId = manifest.googleClientIdFor(
-        QfUpdateService.platformKey,
+    if (!mounted) return;
+    setState(() => _booted = true);
+    unawaited(_bootBackground(session));
+  }
+
+  Future<void> _bootBackground(QfSessionController session) async {
+    try {
+      final manifest = await QfManifestService.fetchRemote().timeout(
+        _manifestTimeout,
+        onTimeout: () => null,
       );
-      QfRuntime.googleWebClientId = manifest.googleClientId;
-      if (session.isGuest) {
-        await session.refreshGuestUsage();
+      if (manifest != null) {
+        session.applyServerBaseUrl(manifest.serverBaseUrl);
+        QfRuntime.googleClientId = manifest.googleClientIdFor(
+          QfUpdateService.platformKey,
+        );
+        QfRuntime.googleWebClientId = manifest.googleClientId;
+        if (session.isGuest) {
+          unawaited(session.refreshGuestUsage());
+        }
       }
-    }
+    } catch (_) {}
+    if (!mounted) return;
     if (session.isGuest && session.guestExhausted) {
       await _stopCore();
     }
     if (QfSessionController.startupHeldForQuota) {
       QfSessionController.startupHeldForQuota = false;
       if (!(session.isGuest && session.guestExhausted)) {
-        await ref.read(setupActionProvider.notifier).initStatus();
+        try {
+          await ref.read(setupActionProvider.notifier).initStatus();
+        } catch (_) {}
       }
     }
-    await _checkRegion();
+    unawaited(_checkRegion().timeout(_regionTimeout, onTimeout: () {}));
     session.startHeartbeat();
     QfUpdateService.onFreshCheck = (_) => unawaited(_recheckManifest());
     final check = await QfUpdateService.check(QfRuntime.appVersion);
     if (!mounted) return;
-    setState(() {
-      _check = check;
-      _booted = true;
-    });
+    setState(() => _check = check);
     _manifestTimer?.cancel();
     _manifestTimer = Timer.periodic(
       const Duration(minutes: 5),

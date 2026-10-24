@@ -212,6 +212,10 @@ class AppPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware 
                 result.success(openApkInstaller(call.argument<String>("path")))
             }
 
+            "openUnknownAppSettings" -> {
+                result.success(openUnknownAppSettings())
+            }
+
             "getLastExitInfo" -> reply(result) {
                 GlobalState.lastExitInfo()
             }
@@ -269,20 +273,17 @@ class AppPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware 
             QuickAction.TOGGLE -> R.drawable.ic_shortcut_toggle
         }
 
-    private fun openApkInstaller(path: String?): Boolean {
-        val activity = activity ?: return false
-        if (path.isNullOrEmpty()) return false
+    // Dart contract: "launched" / "needs_permission" / "failed".
+    private fun openApkInstaller(path: String?): String {
+        val activity = activity ?: return "failed"
+        if (path.isNullOrEmpty()) return "failed"
         val file = java.io.File(path)
-        if (!file.exists() || !file.isFile) return false
+        if (!file.exists() || !file.isFile) return "failed"
         return try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
                 !activity.packageManager.canRequestPackageInstalls()
             ) {
-                val settings = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply {
-                    data = "package:${activity.packageName}".toUri()
-                }
-                activity.startActivity(settings)
-                return false
+                return "needs_permission"
             }
             val uri = androidx.core.content.FileProvider.getUriForFile(
                 activity,
@@ -297,6 +298,21 @@ class AppPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware 
                 )
             }
             activity.startActivity(intent)
+            "launched"
+        } catch (_: Exception) {
+            "failed"
+        }
+    }
+
+    private fun openUnknownAppSettings(): Boolean {
+        val activity = activity ?: return false
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false
+        if (activity.packageManager.canRequestPackageInstalls()) return false
+        return try {
+            val settings = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply {
+                data = "package:${activity.packageName}".toUri()
+            }
+            activity.startActivity(settings)
             true
         } catch (_: Exception) {
             false

@@ -22,8 +22,115 @@ import 'qf_session.dart';
 import 'qf_social.dart';
 import 'qf_update.dart';
 
+OverlayEntry? _qfToastEntry;
+OverlayState? _qfToastOverlay;
+bool _qfToastShowing = false;
+final List<String> _qfToastQueue = <String>[];
+
+// The toast goes into the root overlay, above every page, dialog and the
+// bottom navigation bar: a Scaffold-hosted SnackBar can render underneath
+// the bar in this app's nested Scaffolds, hiding its text. The bottom
+// offset clears the bar and the gesture area; messages queue like SnackBars.
 void qfToast(BuildContext context, String message) {
-  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  if (_qfToastShowing &&
+      (_qfToastOverlay == null || !_qfToastOverlay!.mounted)) {
+    _qfToastEntry = null;
+    _qfToastOverlay = null;
+    _qfToastShowing = false;
+    _qfToastQueue.clear();
+  }
+  _qfToastQueue.add(message);
+  if (_qfToastShowing) return;
+  _qfToastShowing = true;
+  _qfToastOverlay = Overlay.of(context, rootOverlay: true);
+  _showNextToast(MediaQuery.paddingOf(context).bottom);
+}
+
+void _showNextToast(double bottomInset) {
+  final overlay = _qfToastOverlay;
+  if (overlay == null || !overlay.mounted || _qfToastQueue.isEmpty) {
+    _qfToastShowing = false;
+    _qfToastOverlay = null;
+    return;
+  }
+  final message = _qfToastQueue.removeAt(0);
+  late final OverlayEntry entry;
+  entry = OverlayEntry(
+    builder: (overlayContext) => _QfToastView(
+      message: message,
+      bottomInset: bottomInset,
+      onDismissed: () {
+        if (_qfToastEntry == entry) {
+          _qfToastEntry = null;
+          entry.remove();
+        }
+        _showNextToast(bottomInset);
+      },
+    ),
+  );
+  _qfToastEntry = entry;
+  overlay.insert(entry);
+}
+
+class _QfToastView extends StatefulWidget {
+  final String message;
+  final double bottomInset;
+  final VoidCallback onDismissed;
+
+  const _QfToastView({
+    required this.message,
+    required this.bottomInset,
+    required this.onDismissed,
+  });
+
+  @override
+  State<_QfToastView> createState() => _QfToastViewState();
+}
+
+class _QfToastViewState extends State<_QfToastView> {
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer(const Duration(seconds: 4), widget.onDismissed);
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Positioned(
+      left: 24,
+      right: 24,
+      bottom: widget.bottomInset + 88,
+      child: IgnorePointer(
+        child: Center(
+          child: Material(
+            shape: AppShape.lg,
+            color: scheme.inverseSurface,
+            elevation: 6,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(
+                horizontal: 16,
+                vertical: 12,
+              ),
+              child: Text(
+                widget.message,
+                textAlign: TextAlign.center,
+                style: TextStyle(color: scheme.onInverseSurface),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 Future<String> qfPasskeyReauthToken(

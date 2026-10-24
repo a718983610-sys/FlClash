@@ -320,14 +320,9 @@ class QfSessionController extends ChangeNotifier {
       guestExhausted = prefs.getBool(_kGuestExhaustedLocal) ?? false;
     }
     if (storedMode == 'user' && _refreshToken != null) {
+      // The cached session opens the app at once; validation runs behind it.
       mode = QfMode.user;
-      await _refreshIfNeeded(force: true);
-      if (_accessToken != null) {
-        await _loadAccountState();
-      } else {
-        await _clearUserSession();
-        mode = QfMode.entry;
-      }
+      unawaited(_validateStoredUserSession());
     } else if (storedMode == 'guest' &&
         _guestToken == null &&
         (prefs.getInt(_kGuestOfflineSince) ?? 0) > 0) {
@@ -342,9 +337,25 @@ class QfSessionController extends ChangeNotifier {
       }
     } else if (storedMode == 'guest' && _guestToken != null) {
       mode = QfMode.guest;
-      await refreshGuestUsage();
+      unawaited(refreshGuestUsage());
     } else {
       mode = QfMode.entry;
+    }
+    await _syncGuestBlockedCore();
+    notifyListeners();
+  }
+
+  Future<void> _validateStoredUserSession() async {
+    final startRefreshToken = _refreshToken;
+    await _refreshIfNeeded(force: true);
+    if (_accessToken != null) {
+      await _loadAccountState();
+    } else if (_refreshToken == startRefreshToken) {
+      // Same token as at start: nobody signed in again, safe to drop it.
+      await _clearUserSession();
+      mode = QfMode.entry;
+    } else {
+      return;
     }
     await _syncGuestBlockedCore();
     notifyListeners();
