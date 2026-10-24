@@ -1,5 +1,4 @@
 import 'dart:math' as math;
-import 'package:fl_clash/qf/qf_info.dart';
 
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/models/models.dart';
@@ -209,7 +208,6 @@ class NetworkSpeedCard extends ConsumerWidget {
           DashboardCardHeader(
             glyph: AppGlyphs.speed,
             title: context.appLocalizations.networkSpeed,
-            leading: const [QfInfoButton(topic: 'trafficStats')],
           ),
           const SizedBox(height: 12),
           Row(

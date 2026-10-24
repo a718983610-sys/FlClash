@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/enum/enum.dart';
-import 'package:fl_clash/qf/qf_info.dart';
 import 'package:fl_clash/qf/qf_pages2.dart';
 import 'package:fl_clash/qf/qf_providers.dart';
 import 'package:fl_clash/providers/providers.dart';
@@ -133,7 +132,6 @@ class AboutView extends ConsumerWidget {
                 leading: const _LinkBadge(glyph: AppGlyphs.sync),
                 title: const Text('检查更新'),
                 subtitle: const Text('应用内检查并下载新版本'),
-                trailing: const QfInfoButton(topic: 'checkUpdate'),
                 onTap: isLoading
                     ? null
                     : () {

@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'package:fl_clash/qf/qf_info.dart';
 
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/core/controller.dart';
@@ -133,7 +132,6 @@ class _ConnectionsViewState extends ConsumerState<ConnectionsView>
       onKeywordsUpdate: _listController.updateKeywords,
       searchState: AppBarSearchState(onSearch: _listController.search),
       iconActions: _buildActions(),
-      actions: const [QfInfoButton(topic: 'connections')],
       body: ValueListenableBuilder<TrackerInfosState>(
         valueListenable: _listController,
         builder: (context, state, _) {

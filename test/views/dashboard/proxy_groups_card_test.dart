@@ -2,7 +2,6 @@ import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/providers.dart';
-import 'package:fl_clash/qf/qf_info.dart';
 import 'package:fl_clash/state.dart';
 import 'package:fl_clash/views/dashboard/layout.dart';
 import 'package:fl_clash/views/dashboard/widgets/card.dart';
@@ -187,15 +186,11 @@ void main() {
     expect(count, findsOneWidget);
     final title = tester.getRect(find.text('Proxy group'));
     expect(tester.getCenter(count).dy, moreOrLessEquals(title.center.dy));
-    // The QF info button sits between the title and the count chip, each
-    // separated by the header row's 8 dp spacing.
-    final info = find.byType(QfInfoButton);
-    expect(info, findsOneWidget);
-    expect(tester.getCenter(info).dy, moreOrLessEquals(title.center.dy));
-    expect(tester.getRect(info).left, moreOrLessEquals(title.right + 8));
+    // The count chip follows the title directly, separated by the header
+    // row's 8 dp spacing.
     expect(
       tester.getRect(count).left,
-      moreOrLessEquals(tester.getRect(info).right + 8),
+      moreOrLessEquals(title.right + 8),
     );
     for (var index = 0; index < 6; index++) {
       expect(name('G$index'), findsWidgets);

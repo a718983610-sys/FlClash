@@ -42,6 +42,8 @@ mixin CoreInterface {
 
   Future<Map<String, dynamic>> getProfileOutbounds(String path);
 
+  Future<LoadReport> getLoadReport();
+
   Future<String> buildProfile(SetupBase base);
 
   Future<String> dumpRuleSet(String path);
@@ -329,6 +331,20 @@ abstract class CoreHandlerInterface with CoreInterface {
       );
     }
     return result;
+  }
+
+  @override
+  Future<LoadReport> getLoadReport() async {
+    final result = await _invokeMethod<Map<String, dynamic>>(
+      method: CoreMethod.getLoadReport,
+    );
+    if (result == null) {
+      throw const CoreMethodException(
+        code: 'empty_result',
+        message: 'Core returned no load report',
+      );
+    }
+    return LoadReport.fromJson(result);
   }
 
   @override

@@ -107,6 +107,11 @@ func loadConfigWithBase(base *SetupBase, configPath string) (*config.Config, err
 	if err := document.Decode(raw); err != nil {
 		return nil, err
 	}
+	report := sanitizeRawConfig(raw)
+	setLoadReport(report)
+	if !usableAfterSanitize(report, raw) {
+		return nil, errNoUsableOutbounds
+	}
 	if err := writeConfigDocument(configPath, document); err != nil {
 		return nil, err
 	}

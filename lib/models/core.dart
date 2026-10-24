@@ -43,6 +43,32 @@ abstract class ProfileBase with _$ProfileBase {
 }
 
 @freezed
+abstract class LoadSkip with _$LoadSkip {
+  const factory LoadSkip({
+    @Default('') String kind,
+    @Default('') String name,
+    @Default('') String reason,
+  }) = _LoadSkip;
+
+  factory LoadSkip.fromJson(Map<String, dynamic> json) =>
+      _$LoadSkipFromJson(json);
+}
+
+@freezed
+abstract class LoadReport with _$LoadReport {
+  const factory LoadReport({
+    @Default([]) List<LoadSkip> skipped,
+    @Default(0) int total,
+    @Default(0) int proxies,
+    @Default(0) int groups,
+    @Default(0) int rules,
+  }) = _LoadReport;
+
+  factory LoadReport.fromJson(Map<String, dynamic> json) =>
+      _$LoadReportFromJson(json);
+}
+
+@freezed
 abstract class UpdateParams with _$UpdateParams {
   const factory UpdateParams({
     @JsonKey(toJson: _tunCoreJson) required Tun tun,

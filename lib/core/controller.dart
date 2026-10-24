@@ -308,6 +308,10 @@ class CoreController {
     return readSpilledText(await _interface.buildProfile(base));
   }
 
+  Future<LoadReport> getLoadReport() async {
+    return _interface.getLoadReport();
+  }
+
   Future<({ProfileBase base, String path})> getProfileBase(int id) async {
     final path = await appPath.getProfilePath(id.toString());
     final base = await _interface.getProfileBase(path);

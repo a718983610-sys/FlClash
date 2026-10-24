@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'package:fl_clash/qf/qf_info.dart';
 
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/enum/enum.dart';
@@ -118,7 +117,6 @@ class _LogsViewState extends ConsumerState<LogsView>
     final appLocalizations = context.appLocalizations;
     return CommonScaffold(
       iconActions: _buildActions(),
-      actions: const [QfInfoButton(topic: 'logs')],
       onKeywordsUpdate: _listController.updateKeywords,
       searchState: AppBarSearchState(onSearch: _listController.search),
       title: appLocalizations.logs,

@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'package:fl_clash/qf/qf_info.dart';
 import 'package:fl_clash/qf/qf_providers.dart';
 import 'package:fl_clash/qf/qf_vault.dart';
 
@@ -117,7 +116,6 @@ class _ProfilesViewState extends ConsumerState<ProfilesView> {
           iconActions: picker ? const [] : _buildActions(state.profiles),
           foldPrimaryAction: true,
           actions: [
-            const QfInfoButton(topic: 'profile'),
             QfVaultEntry(
               session: ProviderScope.containerOf(
                 context,

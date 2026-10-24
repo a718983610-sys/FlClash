@@ -1,5 +1,4 @@
 import 'package:fl_clash/common/common.dart';
-import 'package:fl_clash/qf/qf_info.dart';
 
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/providers/providers.dart';
@@ -102,11 +101,6 @@ class _ProxiesViewState extends ConsumerState<ProxiesView> {
       resizeToAvoidBottomInset: false,
       primaryAction: primaryAction,
       searchActions: [?primaryAction],
-      actions: const [
-        QfInfoButton(topic: 'node'),
-        QfInfoButton(topic: 'proxyGroup'),
-        QfInfoButton(topic: 'speedTest'),
-      ],
       iconActions: [
         if (_isTab && !picker)
           IconButtonData(

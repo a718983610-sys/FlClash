@@ -19,6 +19,7 @@ enum CoreMethod {
   getConfig,
   getProfileBase,
   getProfileOutbounds,
+  getLoadReport,
   buildProfile,
   dumpRuleSet,
   compileRuleSet,

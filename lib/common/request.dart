@@ -46,7 +46,13 @@ class Request {
     return _clashDio
         .getUri<T>(
           target.uri,
-          options: Options(responseType: responseType, headers: target.headers),
+          options: Options(
+            responseType: responseType,
+            // Subscription panels pick the response format by User-Agent;
+            // send the Clash-flavoured one explicitly instead of relying on
+            // the proxy lookup having stamped it onto the client in time.
+            headers: {...target.headers, 'User-Agent': globalState.ua},
+          ),
           cancelToken: cancelToken,
         )
         .timeout(

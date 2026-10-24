@@ -7,7 +7,6 @@ import 'package:fl_clash/views/dashboard/layout.dart';
 import 'package:fl_clash/views/dashboard/style.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
-import 'package:fl_clash/qf/qf_info.dart';
 
 import 'card.dart';
 
@@ -41,11 +40,6 @@ class OutboundModeCard extends ConsumerWidget {
           DashboardCardHeader(
             glyph: AppGlyphs.split,
             title: context.appLocalizations.outboundMode,
-            leading: const [
-              QfInfoButton(topic: 'ruleMode'),
-              QfInfoButton(topic: 'globalMode'),
-              QfInfoButton(topic: 'directMode'),
-            ],
           ),
           const SizedBox(height: 12),
           DashboardConnectedGroup(

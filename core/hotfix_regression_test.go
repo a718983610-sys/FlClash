@@ -14,10 +14,13 @@ import (
 // apply and leave the previously applied config untouched. It must never
 // be swapped for the built-in default, which has no proxies: with the VPN
 // up, that default captures every packet with nowhere to route it.
+// Since 1.0.3's tolerant load, individual unusable entries no longer fail
+// the load (see tolerant_test.go); what still fails is a config that is
+// not a config at all, or one with nothing usable left in it.
 func TestApplyConfigFailureKeepsPreviousConfig(t *testing.T) {
 	broken := map[string]string{
-		"group referencing a missing proxy": "proxies:\n  - {name: a, type: ss, server: 127.0.0.1, port: 8388, cipher: aes-256-gcm, password: x}\nproxy-groups:\n  - {name: g, type: select, proxies: [missing-node]}\nrules:\n  - MATCH,g\n",
-		"not yaml at all":                   "{{{\n",
+		"no usable entries": "proxies:\n  - {name: a, type: nosuchtype, server: 127.0.0.1, port: 8388}\nrules:\n  - MATCH,a\n",
+		"not yaml at all":   "{{{\n",
 	}
 	for name, content := range broken {
 		t.Run(name, func(t *testing.T) {

@@ -869,6 +869,17 @@ class SetupAction extends _$SetupAction {
     if (setupFailed || profileFailed) {
       return _SetupTaskResult.failed;
     }
+    if (!silence) {
+      await globalState.safeRun(() async {
+        final report = await _core.getLoadReport();
+        if (report.total > 0) {
+          dialogs.showNotifier(
+            '已自动跳过 ${report.total} 个无法使用的条目，其余节点与规则正常加载。',
+            level: MessageLevel.warning,
+          );
+        }
+      });
+    }
     return _SetupTaskResult.completed;
   }
 }
