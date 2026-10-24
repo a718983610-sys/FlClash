@@ -40,9 +40,46 @@ class QfUpdateCheck {
   );
 }
 
+/// Cooperative cancellation for an in-flight update download. The panel
+/// owns one per attempt session; cancelling force-closes the HTTP client,
+/// which errors the response stream and unwinds the transfer at once.
+class QfDownloadControl {
+  bool _cancelled = false;
+  void Function()? _onCancel;
+
+  bool get isCancelled => _cancelled;
+
+  void cancel() {
+    if (_cancelled) return;
+    _cancelled = true;
+    _onCancel?.call();
+  }
+
+  void _bind(void Function() onCancel) {
+    _onCancel = onCancel;
+    if (_cancelled) onCancel();
+  }
+
+  void _unbind() {
+    _onCancel = null;
+  }
+}
+
 class QfUpdateService {
   static String? platformKeyOverride;
   static Future<QfReleaseManifest?> Function()? manifestFetcherForTest;
+
+  // Download guardrails (1.1.1): every stage of the transfer is bounded so
+  // a stalled connection surfaces as a retryable Chinese error instead of
+  // hanging forever inside a dialog the user cannot leave. Fields (not
+  // consts) so tests can shrink them.
+  static Duration connectTimeout = const Duration(seconds: 15);
+  static Duration responseTimeout = const Duration(seconds: 30);
+  static Duration stallTimeout = const Duration(seconds: 30);
+  static Duration overallTimeout = const Duration(minutes: 15);
+  static Duration retryDelay = const Duration(seconds: 2);
+  static int maxAutoRetries = 1;
+  static Duration installTimeout = const Duration(seconds: 30);
 
   static String get platformKey =>
       platformKeyOverride ??
@@ -190,6 +227,9 @@ class QfUpdateService {
   static Future<File> download(
     String url, {
     required void Function(double progress) onProgress,
+    void Function(int received, int total)? onBytes,
+    void Function()? onAutoRetry,
+    QfDownloadControl? control,
     String? expectedSha256,
     int? expectedSizeBytes,
   }) async {
@@ -198,27 +238,36 @@ class QfUpdateService {
         ? 'qfclash-update'
         : Uri.parse(url).pathSegments.last;
     final file = File('${dir.path}/$fileName');
-    final client = await QfHttpClient.create(uri: Uri.parse(url));
-    try {
-      final request = await client.getUrl(Uri.parse(url));
-      request.headers.set('User-Agent', 'QFClash');
-      final response = await request.close();
-      if (response.statusCode < 200 || response.statusCode >= 300) {
-        throw const QfApiException(0, 'DOWNLOAD', '下载失败，请稍后重试');
+    var attempt = 0;
+    while (true) {
+      if (control?.isCancelled == true) {
+        throw const QfApiException(0, 'CANCELLED', '已取消下载');
       }
-      final total = response.contentLength;
-      var received = 0;
-      final sink = file.openWrite();
-      await for (final chunk in response) {
-        sink.add(chunk);
-        received += chunk.length;
-        if (total > 0) onProgress(received / total);
+      try {
+        await _downloadAttempt(
+          url,
+          file,
+          onProgress: onProgress,
+          onBytes: onBytes,
+          control: control,
+        );
+        break;
+      } catch (e) {
+        if (control?.isCancelled == true) {
+          await _deleteQuietly(file);
+          throw const QfApiException(0, 'CANCELLED', '已取消下载');
+        }
+        final retryable =
+            e is QfApiException &&
+            (e.code == 'TIMEOUT' || e.status == 0 || e.status >= 500);
+        if (!retryable || attempt >= maxAutoRetries) rethrow;
+        attempt++;
+        onAutoRetry?.call();
+        await Future<void>.delayed(retryDelay);
+        // The next attempt builds a fresh client, so the proxy decision
+        // (core running? which port?) is re-resolved at retry time
+        // instead of reusing the possibly stale boot-time verdict.
       }
-      await sink.flush();
-      await sink.close();
-      onProgress(1);
-    } finally {
-      client.close(force: true);
     }
     var sha = (expectedSha256 ?? '').trim().toLowerCase();
     var size = expectedSizeBytes;
@@ -230,6 +279,88 @@ class QfUpdateService {
     }
     await _verifyDownloadedFile(file, sha256: sha, sizeBytes: size);
     return file;
+  }
+
+  static Future<void> _downloadAttempt(
+    String url,
+    File file, {
+    required void Function(double progress) onProgress,
+    void Function(int received, int total)? onBytes,
+    QfDownloadControl? control,
+  }) async {
+    final client = await QfHttpClient.create(uri: Uri.parse(url));
+    var overallTimedOut = false;
+    final overallTimer = Timer(overallTimeout, () {
+      overallTimedOut = true;
+      client.close(force: true);
+    });
+    control?._bind(() => client.close(force: true));
+    try {
+      client.connectionTimeout = connectTimeout;
+      final request = await client
+          .getUrl(Uri.parse(url))
+          .timeout(
+            responseTimeout,
+            onTimeout: () => throw const QfApiException(
+              0,
+              'TIMEOUT',
+              '连接下载服务器超时，请检查网络后重试',
+            ),
+          );
+      request.headers.set('User-Agent', 'QFClash');
+      final response = await request
+          .close()
+          .timeout(
+            responseTimeout,
+            onTimeout: () => throw const QfApiException(
+              0,
+              'TIMEOUT',
+              '连接下载服务器超时，请检查网络后重试',
+            ),
+          );
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw QfApiException(
+          response.statusCode,
+          'DOWNLOAD',
+          '下载失败，请稍后重试',
+        );
+      }
+      final total = response.contentLength;
+      var received = 0;
+      onBytes?.call(0, total);
+      final sink = file.openWrite();
+      try {
+        await for (final chunk in response.timeout(stallTimeout)) {
+          if (control?.isCancelled == true) {
+            throw const QfApiException(0, 'CANCELLED', '已取消下载');
+          }
+          sink.add(chunk);
+          received += chunk.length;
+          onBytes?.call(received, total);
+          if (total > 0) onProgress(received / total);
+        }
+      } finally {
+        await sink.flush();
+        await sink.close();
+      }
+      onProgress(1);
+    } catch (e) {
+      if (control?.isCancelled == true) {
+        throw const QfApiException(0, 'CANCELLED', '已取消下载');
+      }
+      if (overallTimedOut) {
+        throw const QfApiException(0, 'TIMEOUT', '下载超时，请检查网络后重试');
+      }
+      if (e is QfApiException) rethrow;
+      if (e is TimeoutException) {
+        throw const QfApiException(0, 'TIMEOUT', '下载超时，请检查网络后重试');
+      }
+      throw const QfApiException(0, 'NETWORK', '下载失败，请检查网络后重试');
+    } finally {
+      overallTimer.cancel();
+      control?._unbind();
+      client.close(force: true);
+    }
   }
 
   static Future<void> _verifyDownloadedFile(
@@ -310,9 +441,12 @@ class QfUpdateService {
         if (!file.path.toLowerCase().endsWith('.apk')) {
           return QfInstallOutcome.failed;
         }
+        // A native side that never answers must not hang the update page;
+        // a timeout reads as a plain failure and the UI offers the
+        // official-site fallback instead of spinning forever.
         final result = await _invokeAppChannel('installApk', {
           'path': file.path,
-        });
+        }).timeout(installTimeout, onTimeout: () => null);
         return switch (result) {
           'launched' => QfInstallOutcome.launched,
           'needs_permission' => QfInstallOutcome.needsPermission,

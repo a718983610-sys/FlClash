@@ -48,9 +48,13 @@ class QfUpdateFlow {
         if (accepted == true && context.mounted) {
           await showDialog<void>(
             context: context,
-            barrierDismissible: false,
-            builder: (_) =>
-                AlertDialog(content: QfUpdateDownloadPanel(result: check)),
+            barrierDismissible: true,
+            builder: (dialogContext) => AlertDialog(
+              content: QfUpdateDownloadPanel(
+                result: check,
+                onClose: () => Navigator.of(dialogContext).pop(),
+              ),
+            ),
           );
         }
       case QfUpdateDecision.force:
@@ -1257,11 +1261,18 @@ class _QfBlockingPageState extends State<QfBlockingPage> {
 
 class QfUpdateDownloadPanel extends StatefulWidget {
   final QfUpdateCheck result;
+  final VoidCallback? onClose;
 
-  const QfUpdateDownloadPanel({super.key, required this.result});
+  const QfUpdateDownloadPanel({super.key, required this.result, this.onClose});
 
   @override
   State<QfUpdateDownloadPanel> createState() => _QfUpdateDownloadPanelState();
+}
+
+String qfFormatBytes(int bytes) {
+  if (bytes < 1024) return '$bytes B';
+  if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+  return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
 }
 
 class _QfUpdateDownloadPanelState extends State<QfUpdateDownloadPanel>
@@ -1271,6 +1282,10 @@ class _QfUpdateDownloadPanelState extends State<QfUpdateDownloadPanel>
   bool _downloading = false;
   bool _needsPermission = false;
   bool _installLaunched = false;
+  bool _failedOnce = false;
+  int _receivedBytes = 0;
+  int _totalBytes = -1;
+  QfDownloadControl? _control;
   File? _downloadedFile;
 
   @override
@@ -1281,6 +1296,7 @@ class _QfUpdateDownloadPanelState extends State<QfUpdateDownloadPanel>
 
   @override
   void dispose() {
+    _control?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -1303,15 +1319,33 @@ class _QfUpdateDownloadPanelState extends State<QfUpdateDownloadPanel>
       setState(() => _status = '下载地址暂不可用，请稍后再试');
       return;
     }
+    final control = QfDownloadControl();
+    _control = control;
     setState(() {
       _downloading = true;
+      _failedOnce = false;
+      _receivedBytes = 0;
+      _totalBytes = -1;
+      _progress = null;
       _status = '正在下载';
     });
     try {
       final file = await QfUpdateService.download(
         url,
+        control: control,
         onProgress: (value) {
           if (mounted) setState(() => _progress = value);
+        },
+        onBytes: (received, total) {
+          if (mounted) {
+            setState(() {
+              _receivedBytes = received;
+              _totalBytes = total;
+            });
+          }
+        },
+        onAutoRetry: () {
+          if (mounted) setState(() => _status = '网络不稳定，正在自动重试……');
         },
         expectedSha256: widget.result.sha256,
         expectedSizeBytes: widget.result.sizeBytes,
@@ -1320,12 +1354,27 @@ class _QfUpdateDownloadPanelState extends State<QfUpdateDownloadPanel>
       await _install(file);
     } catch (e) {
       if (mounted) {
+        final cancelled = e is QfApiException && e.code == 'CANCELLED';
         setState(() {
-          _status = e is QfApiException ? e.message : '下载失败，请检查网络后重试';
+          _status = cancelled
+              ? '已取消下载'
+              : e is QfApiException
+              ? e.message
+              : '下载失败，请检查网络后重试';
+          _failedOnce = !cancelled;
           _downloading = false;
+          _progress = null;
         });
       }
     }
+  }
+
+  String get _progressText {
+    final received = qfFormatBytes(_receivedBytes);
+    if (_totalBytes > 0) {
+      return '已下载 $received / ${qfFormatBytes(_totalBytes)}';
+    }
+    return '已下载 $received';
   }
 
   Future<void> _install(File file) async {
@@ -1371,6 +1420,10 @@ class _QfUpdateDownloadPanelState extends State<QfUpdateDownloadPanel>
         ],
         if (_downloading || _progress != null)
           LinearProgressIndicator(value: _progress),
+        if (_downloading) ...[
+          const SizedBox(height: 8),
+          Text(_progressText, textAlign: TextAlign.center),
+        ],
         if (_status != null) ...[
           const SizedBox(height: 8),
           Text(_status!, textAlign: TextAlign.center),
@@ -1384,14 +1437,34 @@ class _QfUpdateDownloadPanelState extends State<QfUpdateDownloadPanel>
           ),
           const SizedBox(height: 8),
         ],
-        FilledButton(
-          onPressed: _downloading
-              ? null
-              : canRetryInstall
-              ? () => unawaited(_install(_downloadedFile!))
-              : _start,
-          child: Text(canRetryInstall ? '已开启，继续安装' : '立即更新'),
-        ),
+        if (_downloading)
+          OutlinedButton(
+            onPressed: () => _control?.cancel(),
+            child: const Text('取消下载'),
+          )
+        else
+          FilledButton(
+            onPressed: canRetryInstall
+                ? () => unawaited(_install(_downloadedFile!))
+                : _start,
+            child: Text(
+              canRetryInstall
+                  ? '已开启，继续安装'
+                  : _failedOnce
+                  ? '重新下载'
+                  : '立即更新',
+            ),
+          ),
+        if (widget.onClose != null) ...[
+          const SizedBox(height: 8),
+          TextButton(
+            onPressed: () {
+              _control?.cancel();
+              widget.onClose!.call();
+            },
+            child: const Text('关闭'),
+          ),
+        ],
       ],
     );
   }

@@ -405,9 +405,13 @@ class _QfSessionGateState extends ConsumerState<QfSessionGate> {
       if (accepted == true && mounted) {
         await showDialog<void>(
           context: context,
-          barrierDismissible: false,
-          builder: (_) =>
-              AlertDialog(content: QfUpdateDownloadPanel(result: check)),
+          barrierDismissible: true,
+          builder: (dialogContext) => AlertDialog(
+            content: QfUpdateDownloadPanel(
+              result: check,
+              onClose: () => Navigator.of(dialogContext).pop(),
+            ),
+          ),
         );
       }
     } catch (_) {
