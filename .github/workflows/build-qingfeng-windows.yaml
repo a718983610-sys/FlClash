@@ -92,5 +92,3 @@ jobs:
           $createArgs = @($tag, '--title', "QFClash Windows版 v$version", '--notes', "QFClash Windows 版：QFClash-Windows-v$version.exe 是安装包（推荐，含后台服务）；QFClash-Windows-v$version.zip 是便携版（解压即用）。安卓版请到标签 android-v 开头的发布里下载，不要下错。", $exeNew, $zipNew)
           if ($pre) { $createArgs += '--prerelease' }
           gh release create @createArgs
-
-# mirror index trigger 2026-10-24 (to be reverted)
