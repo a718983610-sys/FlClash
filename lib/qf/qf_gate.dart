@@ -125,23 +125,30 @@ class _QfSessionGateState extends ConsumerState<QfSessionGate> {
       QfRuntime.appVersion = (await PackageInfo.fromPlatform()).version;
     } catch (_) {}
     await session.init(envEmulator: emulator);
+    await QfEndpoints.loadPersisted();
     if (!mounted) return;
     setState(() => _booted = true);
     unawaited(_bootBackground(session));
   }
 
+  void _applyManifest(QfSessionController session, QfReleaseManifest manifest) {
+    session.applyServerBaseUrl(manifest.serverBaseUrl);
+    session.applyServerBaseUrlFallback(manifest.serverBaseUrlFallback);
+    qfApplyGoogleRuntime(manifest);
+  }
+
   Future<void> _bootBackground(QfSessionController session) async {
+    try {
+      final cached = await QfManifestService.loadCached();
+      if (cached != null) _applyManifest(session, cached);
+    } catch (_) {}
     try {
       final manifest = await QfManifestService.fetchRemote().timeout(
         _manifestTimeout,
         onTimeout: () => null,
       );
       if (manifest != null) {
-        session.applyServerBaseUrl(manifest.serverBaseUrl);
-        QfRuntime.googleClientId = manifest.googleClientIdFor(
-          QfUpdateService.platformKey,
-        );
-        QfRuntime.googleWebClientId = manifest.googleClientId;
+        _applyManifest(session, manifest);
         if (session.isGuest) {
           unawaited(session.refreshGuestUsage());
         }
@@ -220,7 +227,7 @@ class _QfSessionGateState extends ConsumerState<QfSessionGate> {
     if (!mounted || !_booted) return;
     final check = await QfUpdateService.check(QfRuntime.appVersion);
     if (!mounted || check.manifest == null) return;
-    _session.applyServerBaseUrl(check.manifest!.serverBaseUrl);
+    _applyManifest(_session, check.manifest!);
     final previous = _check?.decision ?? QfUpdateDecision.none;
     if (check.decision == previous) return;
     setState(() => _check = check);

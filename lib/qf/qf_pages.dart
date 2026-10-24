@@ -21,6 +21,7 @@ import 'qf_recovery.dart';
 import 'qf_session.dart';
 import 'qf_social.dart';
 import 'qf_update.dart';
+import 'qf_version.dart';
 
 OverlayEntry? _qfToastEntry;
 OverlayState? _qfToastOverlay;
@@ -598,15 +599,37 @@ class QfLoginForm extends StatefulWidget {
   State<QfLoginForm> createState() => _QfLoginFormState();
 }
 
-Future<bool> qfRefreshGoogleRuntime() async {
-  if (QfGoogleAuth.isConfigured) return true;
+enum QfGoogleConfigState { ready, networkFailed, unconfigured }
+
+void qfApplyGoogleRuntime(QfReleaseManifest manifest) {
+  final platformId = manifest.googleClientIdFor(QfUpdateService.platformKey);
+  if (platformId.isNotEmpty) QfRuntime.googleClientId = platformId;
+  if (manifest.googleClientId.isNotEmpty) {
+    QfRuntime.googleWebClientId = manifest.googleClientId;
+  }
+  QfEndpoints.applyManifest(manifest);
+}
+
+/// Cached manifest first, remote second: Google sign-in must not depend
+/// on reaching GitHub from a cold start on a network where that fetch
+/// routinely fails.
+Future<QfGoogleConfigState> qfRefreshGoogleRuntime() async {
+  if (QfGoogleAuth.isConfigured) return QfGoogleConfigState.ready;
+  final cached = await QfManifestService.loadCached();
+  if (cached != null) {
+    qfApplyGoogleRuntime(cached);
+    if (QfGoogleAuth.isConfigured) return QfGoogleConfigState.ready;
+  }
   final manifest = await QfManifestService.fetchRemote();
-  if (manifest == null) return QfGoogleAuth.isConfigured;
-  QfRuntime.googleClientId = manifest.googleClientIdFor(
-    QfUpdateService.platformKey,
-  );
-  QfRuntime.googleWebClientId = manifest.googleClientId;
-  return QfGoogleAuth.isConfigured;
+  if (manifest == null) {
+    return QfGoogleAuth.isConfigured
+        ? QfGoogleConfigState.ready
+        : QfGoogleConfigState.networkFailed;
+  }
+  qfApplyGoogleRuntime(manifest);
+  return QfGoogleAuth.isConfigured
+      ? QfGoogleConfigState.ready
+      : QfGoogleConfigState.unconfigured;
 }
 
 class _QfLoginFormState extends State<QfLoginForm> {
@@ -816,12 +839,14 @@ class _QfLoginFormState extends State<QfLoginForm> {
 
   Future<void> _googleLogin() async {
     if (!QfGoogleAuth.isConfigured) {
-      final ready = await qfRefreshGoogleRuntime();
-      if (!ready) {
-        throw const QfApiException(
+      final configState = await qfRefreshGoogleRuntime();
+      if (configState != QfGoogleConfigState.ready) {
+        throw QfApiException(
           0,
           'NOT_CONFIGURED',
-          QfCopy.googleNotConfiguredHint,
+          configState == QfGoogleConfigState.networkFailed
+              ? QfCopy.googleConfigNetworkHint
+              : QfCopy.googleNotConfiguredHint,
         );
       }
       if (mounted) setState(() {});

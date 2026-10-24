@@ -336,7 +336,9 @@ void main() {
   });
 
   group('unavailable login methods must explain themselves', () {
-    testWidgets('google button explains when not configured', (tester) async {
+    testWidgets('google button explains when config fetch fails', (tester) async {
+      QfManifestService.fetcherForTest = () async => null;
+      addTearDown(() => QfManifestService.fetcherForTest = null);
       tester.view.physicalSize = const Size(1080, 2600);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.reset);
@@ -355,7 +357,7 @@ void main() {
       await tester.tap(button);
       await tester.pump();
       await tester.pump(const Duration(seconds: 1));
-      expect(find.text(QfCopy.googleNotConfiguredHint), findsOneWidget);
+      expect(find.text(QfCopy.googleConfigNetworkHint), findsOneWidget);
     });
 
     testWidgets('passkey login surfaces the network reason', (tester) async {

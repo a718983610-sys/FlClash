@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:crypto/crypto.dart';
+import 'package:flutter/foundation.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -23,11 +24,33 @@ class QfGoogleAuthException implements Exception {
 class QfGoogleAuth {
   static bool _androidInitialized = false;
 
+  // Runtime values come from the release manifest when one has been
+  // fetched; the built-in public client IDs keep sign-in configured on a
+  // cold start where no manifest has ever landed.
+  static String get _webClientId {
+    final runtime = QfRuntime.googleWebClientId;
+    return runtime.isNotEmpty ? runtime : QfConfig.builtinGoogleWebClientId;
+  }
+
+  static String get _platformClientId {
+    final runtime = QfRuntime.googleClientId;
+    if (runtime.isNotEmpty) return runtime;
+    return Platform.isWindows
+        ? QfConfig.builtinGoogleWindowsClientId
+        : QfConfig.builtinGoogleAndroidClientId;
+  }
+
   static bool get isConfigured {
-    if (Platform.isAndroid) return QfRuntime.googleWebClientId.isNotEmpty;
-    if (Platform.isWindows) return QfRuntime.googleClientId.isNotEmpty;
+    if (Platform.isAndroid) return _webClientId.isNotEmpty;
+    if (Platform.isWindows) return _platformClientId.isNotEmpty;
     return false;
   }
+
+  @visibleForTesting
+  static String get webClientIdForTest => _webClientId;
+
+  @visibleForTesting
+  static String get platformClientIdForTest => _platformClientId;
 
   static Future<String> fetchIdToken() async {
     if (Platform.isAndroid) return _androidIdToken();
@@ -36,9 +59,9 @@ class QfGoogleAuth {
   }
 
   static Future<String> _androidIdToken() async {
-    final serverClientId = QfRuntime.googleWebClientId;
+    final serverClientId = _webClientId;
     if (serverClientId.isEmpty) {
-      throw const QfGoogleAuthException('谷歌登录尚未完成配置，请改用邮箱或账户 ID 登录。');
+      throw const QfGoogleAuthException(QfCopy.googleNotConfiguredHint);
     }
     final signIn = GoogleSignIn.instance;
     if (!_androidInitialized) {
@@ -64,9 +87,9 @@ class QfGoogleAuth {
   // Google's desktop flow takes no client secret when PKCE is used: the
   // token endpoint lists client_secret as optional for installed apps.
   static Future<String> _windowsIdToken() async {
-    final clientId = QfRuntime.googleClientId;
+    final clientId = _platformClientId;
     if (clientId.isEmpty) {
-      throw const QfGoogleAuthException('谷歌登录尚未完成配置，请改用邮箱或账户 ID 登录。');
+      throw const QfGoogleAuthException(QfCopy.googleNotConfiguredHint);
     }
     final verifier = _randomToken(32);
     final challenge = _base64Url(sha256.convert(utf8.encode(verifier)).bytes);
