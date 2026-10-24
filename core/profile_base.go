@@ -12,10 +12,28 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/metacubex/mihomo/common/convert"
 	"github.com/metacubex/mihomo/component/age"
 	"github.com/metacubex/mihomo/config"
 	"go.yaml.in/yaml/v3"
 )
+
+// A profile file that is not YAML at all (a share-link list) is converted
+// in memory only: the stored file is never rewritten, so a real config's
+// groups and rules can never be dropped by a fallback.
+func unmarshalProfileBytes(buf []byte) (*config.RawConfig, error) {
+	raw, err := unmarshalRawConfig(buf)
+	if err == nil {
+		return raw, nil
+	}
+	proxies, convErr := convert.ConvertsV2Ray(buf)
+	if convErr != nil || len(proxies) == 0 {
+		return nil, err
+	}
+	raw = config.DefaultRawConfig()
+	raw.Proxy = proxies
+	return raw, nil
+}
 
 // What makes a profile large stays in the Core; the overlay the host sends
 // back replaces every other section.
@@ -28,7 +46,7 @@ func handleGetProfileBase(path string) (*ProfileBase, error) {
 		return nil, err
 	}
 	digest := sha256.Sum256(buf)
-	raw, err := unmarshalRawConfig(buf)
+	raw, err := unmarshalProfileBytes(buf)
 	if err != nil {
 		return nil, err
 	}
@@ -55,7 +73,7 @@ func handleGetProfileOutbounds(path string) (*ProfileOutbounds, error) {
 	if err != nil {
 		return nil, err
 	}
-	raw, err := unmarshalRawConfig(buf)
+	raw, err := unmarshalProfileBytes(buf)
 	if err != nil {
 		return nil, err
 	}

@@ -318,3 +318,38 @@ func TestEncodeConfigMappingKeepsEveryKeyAfterAnOpenEndedScalar(t *testing.T) {
 		t.Errorf("decoded %d rules, want all %d in order", len(decoded.Rules), len(rules))
 	}
 }
+
+func TestProfileBaseReadsShareLinkListInMemory(t *testing.T) {
+	content := "ss://YWVzLTI1Ni1nY206cGFzc3dvcmQ@192.0.2.1:8388#node-a\n" +
+		"trojan://password@192.0.2.2:443#node-b\n"
+	path := writeBaseProfile(t, content)
+
+	base, err := handleGetProfileBase(path)
+	if err != nil {
+		t.Fatalf("handleGetProfileBase: %v", err)
+	}
+	if base.Proxies != 2 {
+		t.Errorf("base.Proxies = %d, want 2 converted links", base.Proxies)
+	}
+	outbounds, err := handleGetProfileOutbounds(path)
+	if err != nil {
+		t.Fatalf("handleGetProfileOutbounds: %v", err)
+	}
+	if len(outbounds.Proxies) != 2 {
+		t.Fatalf("outbounds.Proxies = %d, want 2", len(outbounds.Proxies))
+	}
+	stored, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if string(stored) != content {
+		t.Errorf("stored file changed: %q", stored)
+	}
+}
+
+func TestProfileBaseRejectsUndecodableFile(t *testing.T) {
+	path := writeBaseProfile(t, "this is neither yaml config nor links {{{")
+	if _, err := handleGetProfileBase(path); err == nil {
+		t.Fatal("handleGetProfileBase accepted an undecodable file")
+	}
+}

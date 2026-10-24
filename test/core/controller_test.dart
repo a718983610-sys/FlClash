@@ -150,6 +150,29 @@ void main() {
         verifyNever(() => mock.decryptConfig(any(), any()));
         expect(File(path).readAsStringSync(), 'proxies: []');
       });
+
+      test('accepts a share-link list without rewriting the file', () async {
+        const content = 'ss://YWVzLTI1Ni1nY206cGFzcw@192.0.2.1:8388#node';
+        File(path).writeAsStringSync(content);
+        when(() => mock.validateConfig(path)).thenAnswer((_) async => 'bad');
+        when(() => mock.convertProxies(path)).thenAnswer(
+          (_) async => [
+            {'name': 'node', 'type': 'ss'},
+          ],
+        );
+
+        expect(await controller.validateProfile(path), '');
+        expect(File(path).readAsStringSync(), content);
+      });
+
+      test('reports the decoder error when nothing converts', () async {
+        File(path).writeAsStringSync('not a config');
+        when(() => mock.validateConfig(path)).thenAnswer((_) async => 'bad');
+        when(() => mock.convertProxies(path)).thenAnswer((_) async => const []);
+
+        expect(await controller.validateProfile(path), 'bad');
+        expect(File(path).readAsStringSync(), 'not a config');
+      });
     });
 
     test('updateConfig delegates to interface', () async {

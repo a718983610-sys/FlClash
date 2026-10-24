@@ -96,8 +96,11 @@ class CoreController {
     return res;
   }
 
-  /// An age-encrypted config is rewritten in place into its plaintext, and a
-  /// share-link list into a config of its proxies.
+  /// An age-encrypted config is rewritten in place into its plaintext.
+  /// Any other file is stored exactly as delivered: when the strict
+  /// decoder rejects it but it still reads as a share-link list, loading
+  /// converts it in memory, so the stored file is never rewritten into a
+  /// proxies-only shadow that would drop its groups and rules.
   Future<String> validateProfile(
     String path, [
     String ageSecretKey = '',
@@ -121,11 +124,7 @@ class CoreController {
     } on Exception {
       return message;
     }
-    if (proxies.isEmpty) {
-      return message;
-    }
-    await file.safeWriteAsString(await encodeYamlTask({'proxies': proxies}));
-    return validateConfig(path);
+    return proxies.isEmpty ? message : '';
   }
 
   Future<List<String>> validateProxies(List<Map<String, dynamic>> proxies) {
