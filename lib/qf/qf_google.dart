@@ -198,7 +198,10 @@ class QfGoogleAuth {
       final response = await request.close().timeout(
         const Duration(seconds: 20),
       );
-      final text = await response.transform(utf8.decoder).join();
+      final text = await response
+          .timeout(const Duration(seconds: 20))
+          .transform(utf8.decoder)
+          .join();
       Map<String, dynamic> data = {};
       try {
         final decoded = jsonDecode(text);

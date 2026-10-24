@@ -152,7 +152,12 @@ class QfHttp {
     Map<String, String>? headers,
   }) async {
     QfApiException? lastNetworkError;
+    // Overall cap for the whole rotation: each attempt is bounded on its
+    // own (connect, headers, body stall), and the rotation as a whole
+    // must not stretch account requests without limit either (C-01).
+    final deadline = DateTime.now().add(const Duration(seconds: 90));
     for (final candidate in QfEndpoints.rotationFor(url)) {
+      if (DateTime.now().isAfter(deadline)) break;
       QfProxySource? force;
       while (true) {
         try {
@@ -214,15 +219,39 @@ class QfHttp {
       final response = await request.close().timeout(
         const Duration(seconds: 20),
       );
-      final text = await response.transform(utf8.decoder).join();
+      // The body read needs its own stall timeout: headers can arrive
+      // promptly while the body trickles or never finishes, and an
+      // unbounded read hangs every account request forever (C-01).
+      final text = await response
+          .timeout(const Duration(seconds: 20))
+          .transform(utf8.decoder)
+          .join();
       Map<String, dynamic> data = {};
-      if (text.isNotEmpty) {
+      var malformed = text.isEmpty;
+      if (!malformed) {
         try {
           final decoded = jsonDecode(text);
-          if (decoded is Map) data = Map<String, dynamic>.from(decoded);
+          if (decoded is Map) {
+            data = Map<String, dynamic>.from(decoded);
+          } else {
+            malformed = true;
+          }
         } catch (_) {
-          data = {};
+          malformed = true;
         }
+      }
+      if (malformed &&
+          response.statusCode >= 200 &&
+          response.statusCode < 300) {
+        // A 2xx we cannot parse (captive portal, interception page, empty
+        // body) is not a success: treating it as one fed empty maps into
+        // callers that read missing fields as defaults - empty tokens,
+        // zero balances (C-02).
+        throw const QfApiException(
+          0,
+          'BAD_RESPONSE',
+          '服务器返回了无法识别的内容，请稍后重试。',
+        );
       }
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw QfApiException(

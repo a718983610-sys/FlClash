@@ -692,7 +692,9 @@ class QfSessionController extends ChangeNotifier {
           return null;
         }
         final builder = BytesBuilder(copy: false);
-        await for (final chunk in response) {
+        await for (final chunk in response.timeout(
+          const Duration(seconds: 30),
+        )) {
           builder.add(chunk);
         }
         return builder.takeBytes();
@@ -751,7 +753,10 @@ class QfSessionController extends ChangeNotifier {
         final response = await request.close().timeout(
           const Duration(seconds: 60),
         );
-        final text = await response.transform(utf8.decoder).join();
+        final text = await response
+            .timeout(const Duration(seconds: 20))
+            .transform(utf8.decoder)
+            .join();
         Map<String, dynamic> data = {};
         if (text.isNotEmpty) {
           try {
@@ -810,7 +815,23 @@ class QfSessionController extends ChangeNotifier {
     throw const QfApiException(0, 'NETWORK', '网络连接失败，请检查网络后重试');
   }
 
-  Future<bool> _refreshIfNeeded({bool force = false}) async {
+  Future<bool>? _refreshFlight;
+
+  /// Token refresh, single-flighted (C-04): concurrent authed() calls
+  /// that all decide to refresh share one in-flight request. Without
+  /// this, parallel refreshes rotate the same refresh token against
+  /// each other and every caller ends up holding a dead token.
+  Future<bool> _refreshIfNeeded({bool force = false}) {
+    final flight = _refreshFlight;
+    if (flight != null) return flight;
+    final future = _refreshTokens(force: force);
+    _refreshFlight = future;
+    return future.whenComplete(() {
+      if (identical(_refreshFlight, future)) _refreshFlight = null;
+    });
+  }
+
+  Future<bool> _refreshTokens({bool force = false}) async {
     if (_refreshToken == null) return false;
     final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
     if (!force && _accessToken != null && _accessExpiresAt > now + 60) {
@@ -822,8 +843,16 @@ class QfSessionController extends ChangeNotifier {
         '$serverBaseUrl/auth/refresh',
         body: {'refreshToken': _refreshToken},
       );
-      _accessToken = (data['accessToken'] ?? '').toString();
-      _refreshToken = (data['refreshToken'] ?? '').toString();
+      final newAccessToken = (data['accessToken'] ?? '').toString();
+      final newRefreshToken = (data['refreshToken'] ?? '').toString();
+      if (newAccessToken.isEmpty || newRefreshToken.isEmpty) {
+        // A refresh response without tokens is a failure, not a
+        // successful rotation to empty credentials (C-04): keep the
+        // current tokens so the session is not silently destroyed.
+        return false;
+      }
+      _accessToken = newAccessToken;
+      _refreshToken = newRefreshToken;
       _accessExpiresAt = (data['accessExpiresAt'] as num?)?.toInt() ?? 0;
       _heartbeatKey = (data['heartbeatKey'] ?? _heartbeatKey ?? '').toString();
       if (rememberDevice) {
@@ -1361,19 +1390,23 @@ class QfSessionController extends ChangeNotifier {
       final total = trafficTotalFn?.call() ?? 0;
       var delta = total - _lastTrafficTotal;
       if (delta < 0) delta = total;
-      _lastTrafficTotal = total;
+      // _lastTrafficTotal is only committed after a successful send
+      // (both branches below): a failed heartbeat must re-report the
+      // same traffic delta next round instead of losing it (C-05).
       final clientTs = DateTime.now().millisecondsSinceEpoch ~/ 1000;
       final envFlags = _envEmulator ? 1 : 0;
       final rooted = await _detectRooted();
       final multiOpen = await _detectMultiOpen();
       if (mode == QfMode.user && _heartbeatKey != null) {
         final prefs = await SharedPreferences.getInstance();
-        _pointsSeq += 1;
-        await prefs.setInt(_kPointsSeq, _pointsSeq);
+        // Same rule as the guest path: the sequence is only committed
+        // after a successful response, so a failed send retries with
+        // the same seq and the same traffic delta (C-05).
+        final nextSeq = _pointsSeq + 1;
         final identity = await QfDeviceIdentity.resolve();
         final sig = qfHeartbeatSignature(
           key: _heartbeatKey!,
-          seq: _pointsSeq,
+          seq: nextSeq,
           clientTs: clientTs,
           trafficBytes: delta,
           envFlags: envFlags,
@@ -1383,7 +1416,7 @@ class QfSessionController extends ChangeNotifier {
           '/points/heartbeat',
           body: {
             'deviceHash': identity.deviceHash,
-            'seq': _pointsSeq,
+            'seq': nextSeq,
             'clientTs': clientTs,
             'trafficBytes': delta,
             'env': {
@@ -1394,6 +1427,9 @@ class QfSessionController extends ChangeNotifier {
             'sig': sig,
           },
         );
+        _pointsSeq = nextSeq;
+        _lastTrafficTotal = total;
+        await prefs.setInt(_kPointsSeq, _pointsSeq);
         if (data['accepted'] == false && data['reason'] == 'seq_out_of_order') {
           _pointsSeq = (data['serverSeq'] as num?)?.toInt() ?? _pointsSeq;
           await prefs.setInt(_kPointsSeq, _pointsSeq);
@@ -1446,6 +1482,7 @@ class QfSessionController extends ChangeNotifier {
           },
         );
         _guestSeq = nextSeq;
+        _lastTrafficTotal = total;
         await prefs.setInt(_kGuestSeq, _guestSeq);
         if (pendingAccrued > 0 && data['accepted'] != false) {
           await prefs.setInt(_kGuestOfflineAccruedSec, 0);
@@ -1461,6 +1498,16 @@ class QfSessionController extends ChangeNotifier {
     } finally {
       _beating = false;
     }
+  }
+
+  /// Re-reads the account state (deletion status, announcement
+  /// rights, points snapshot) and notifies listeners, so a page that
+  /// just changed that state - e.g. cancelling a pending account
+  /// deletion (C-19) - reflects it immediately instead of showing the
+  /// stale status until the next full reload.
+  Future<void> refreshAccountState() async {
+    await _loadAccountState();
+    notifyListeners();
   }
 
   Future<void> refreshPoints() async {
@@ -1489,25 +1536,44 @@ class QfSessionController extends ChangeNotifier {
     return authed('GET', '/redeem/products');
   }
 
+  String? _redeemPendingKey;
+  int? _redeemPendingProductId;
+
+  /// The idempotency key belongs to one order intent, not to one HTTP
+  /// attempt (C-06): a create that timed out (but may have succeeded
+  /// server-side) is retried with the SAME key so the server dedupes
+  /// it. The key is only replaced after a create actually succeeds, or
+  /// when the user switches to a different product.
+  String _redeemKeyFor(int productId) {
+    if (_redeemPendingKey == null || _redeemPendingProductId != productId) {
+      _redeemPendingKey =
+          'qf-${DateTime.now().microsecondsSinceEpoch}-$productId';
+      _redeemPendingProductId = productId;
+    }
+    return _redeemPendingKey!;
+  }
+
   Future<Map<String, dynamic>> redeemCreate(
     int productId, {
     String? payoutMethod,
     String? payoutAddress,
     String? payoutEmail,
   }) async {
-    return authed(
+    final result = await authed(
       'POST',
       '/redeem/orders',
       body: {
         'productId': productId,
-        'idempotencyKey':
-            'qf-${DateTime.now().millisecondsSinceEpoch}-$productId',
+        'idempotencyKey': _redeemKeyFor(productId),
         if (payoutMethod != null) 'payoutMethod': payoutMethod,
         if (payoutAddress != null) 'payoutAddress': payoutAddress,
         if (payoutEmail != null) 'payoutEmail': payoutEmail,
       },
       headers: await QfProofHeaders.collect(),
     );
+    _redeemPendingKey = null;
+    _redeemPendingProductId = null;
+    return result;
   }
 
   Future<void> redeemCodeRequest(int orderId) async {

@@ -1702,6 +1702,7 @@ class QfMinePage extends StatelessWidget {
                             '/security/delete-account/cancel',
                             body: {},
                           );
+                          await session.refreshAccountState();
                           await session.refreshPoints();
                           if (context.mounted) {
                             qfToast(context, '注销已经撤销，账号恢复正常');
