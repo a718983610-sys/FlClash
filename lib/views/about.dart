@@ -85,17 +85,10 @@ class AboutView extends ConsumerWidget {
           generateSection(
             title: appLocalizations.more,
             items: [
-              _buildLinkItem(
-                glyph: AppGlyphs.code,
-                title: appLocalizations.project,
-                url: 'https://github.com/$repository',
-                label: 'github.com/$repository',
-              ),
-              _buildLinkItem(
-                glyph: AppGlyphs.cpu,
-                title: appLocalizations.core,
-                url: 'https://github.com/chen08209/Clash.Meta/tree/FlClash',
-                label: 'github.com/chen08209/Clash.Meta',
+              const ListItem(
+                leading: _LinkBadge(glyph: AppGlyphs.code),
+                title: Text('源代码获取'),
+                subtitle: Text('本软件基于开源项目，源代码可通过官网联系邮箱索取。'),
               ),
               _buildLinkItem(
                 glyph: AppGlyphs.send,

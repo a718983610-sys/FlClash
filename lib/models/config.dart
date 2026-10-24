@@ -109,17 +109,19 @@ final List<HotKeyAction> defaultHotKeyActions = system.isWindows
         _defaultHotKeyAction(HotAction.delayTest, PhysicalKeyboardKey.keyD),
       ];
 
+/// 首页默认卡片顺序（整洁版）：连接状态 → 我的订阅 → 模式与开关 →
+/// 流量 → 状态信息。订阅管理与分组选择已由「我的订阅」节点树承接，
+/// profiles / proxyGroups 不再默认上首页，仍可在编辑首页里自行添加。
 const List<DashboardWidget> defaultDashboardWidgets = [
   DashboardWidget.currentOutbound,
-  DashboardWidget.networkSpeed,
+  DashboardWidget.subscriptionTree,
   DashboardWidget.outboundMode,
   DashboardWidget.vpnButton,
   DashboardWidget.networkTakeover,
+  DashboardWidget.networkSpeed,
+  DashboardWidget.connectionStats,
   DashboardWidget.intranetIp,
   DashboardWidget.serviceStatus,
-  DashboardWidget.profiles,
-  DashboardWidget.proxyGroups,
-  DashboardWidget.connectionStats,
 ];
 
 const _legacyDefaultDashboardWidgets = {
@@ -160,11 +162,21 @@ List<DashboardWidget> dashboardWidgetsFromJson(
   }
   final byName = DashboardWidget.values.asNameMap();
   if (dashboardWidgets.contains(DashboardWidget.currentOutbound.name)) {
-    return dashboardWidgets
+    final widgets = dashboardWidgets
         .map((e) => _legacyDashboardWidgets[e] ?? byName[e])
         .nonNulls
         .toSet()
         .toList();
+    // The subscription tree arrived after stored lists were written; it
+    // belongs directly under the connection card, so slot it in there
+    // until the user rearranges the dashboard themselves.
+    if (!widgets.contains(DashboardWidget.subscriptionTree)) {
+      widgets.insert(
+        widgets.indexOf(DashboardWidget.currentOutbound) + 1,
+        DashboardWidget.subscriptionTree,
+      );
+    }
+    return widgets;
   }
   final names = {
     for (final name in dashboardWidgets)

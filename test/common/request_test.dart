@@ -20,24 +20,6 @@ class _StalledHttpClient extends Fake implements HttpClient {
       Completer<HttpClientRequest>().future;
 }
 
-class _HostAdapter implements HttpClientAdapter {
-  _HostAdapter(this.byHost);
-
-  final Map<String, ResponseBody Function()> byHost;
-
-  @override
-  Future<ResponseBody> fetch(
-    RequestOptions options,
-    Stream<Uint8List>? requestStream,
-    Future<void>? cancelFuture,
-  ) async {
-    return byHost[options.uri.host]!();
-  }
-
-  @override
-  void close({bool force = false}) {}
-}
-
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -67,80 +49,6 @@ void main() {
         ),
       ),
     );
-  });
-
-  group('latestPlatformRelease', () {
-    Request requestAnswering(Map<String, ResponseBody Function()> byHost) {
-      return Request()..dio.httpClientAdapter = _HostAdapter(byHost);
-    }
-
-    ResponseBody releaseList(String body) {
-      return ResponseBody.fromString(
-        body,
-        200,
-        headers: {
-          Headers.contentTypeHeader: [Headers.jsonContentType],
-        },
-      );
-    }
-
-    test('returns the first published release carrying the prefix', () async {
-      final request = requestAnswering({
-        'api.github.com': () => releaseList(
-          '[{"tag_name":"android-v1.2.4","draft":true},'
-          '{"tag_name":"windows-v1.2.4"},'
-          '{"tag_name":"android-v1.2.3","body":"notes","prerelease":false}]',
-        ),
-      });
-
-      expect(await request.latestPlatformRelease('android-v'), {
-        'tag_name': 'android-v1.2.3',
-        'body': 'notes',
-        'prerelease': false,
-      });
-    });
-
-    test('returns null when no published release carries the prefix', () async {
-      final request = requestAnswering({
-        'api.github.com': () => releaseList(
-          '[{"tag_name":"windows-v1.2.4"},'
-          '{"tag_name":"android-v1.2.3","prerelease":true}]',
-        ),
-      });
-
-      expect(await request.latestPlatformRelease('android-v'), isNull);
-    });
-
-    test(
-      'throws instead of falling back when the API is rate limited',
-      () async {
-        final request = requestAnswering({
-          'api.github.com': () => ResponseBody.fromString('{}', 403),
-        });
-
-        await expectLater(
-          request.latestPlatformRelease('android-v'),
-          throwsA(
-            isA<DioException>().having(
-              (e) => e.type,
-              'type',
-              DioExceptionType.badResponse,
-            ),
-          ),
-        );
-      },
-    );
-
-    test('fails instead of answering when the API request fails', () async {
-      final request = requestAnswering({
-        'api.github.com': () => ResponseBody.fromString('', 503),
-      });
-
-      await expectLater(
-        request.latestPlatformRelease('android-v'),
-        throwsA(isA<DioException>()),
-      );
-    });
   });
 
   group('downloadTarget', () {

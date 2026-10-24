@@ -753,7 +753,9 @@ void main() {
       session.boardsError = null;
       await tester.tap(find.text('重试'));
       await tester.pumpAndSettle();
-      expect(find.text('综合讨论'), findsOneWidget);
+      // Board names also appear as tags on post cards, so the recovered
+      // board name legitimately shows up more than once.
+      expect(find.text('综合讨论'), findsWidgets);
       expect(find.text(QfCopy.forumLoadFailed), findsNothing);
     });
 
