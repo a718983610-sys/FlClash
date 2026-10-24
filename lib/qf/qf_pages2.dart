@@ -1344,11 +1344,114 @@ class QfMinorUpdateDialog extends StatelessWidget {
   }
 }
 
+enum QfBanAppealView { goAppeal, pendingOnly, rejectedAgain, exhausted, hidden }
+
+QfBanAppealView qfBanAppealViewFor({
+  required bool loaded,
+  required String? status,
+  required int? remaining,
+}) {
+  switch (status) {
+    case 'pending':
+      return QfBanAppealView.pendingOnly;
+    case 'approved':
+      return QfBanAppealView.hidden;
+    case 'rejected':
+      return (remaining != null && remaining <= 0)
+          ? QfBanAppealView.exhausted
+          : QfBanAppealView.rejectedAgain;
+  }
+  if (loaded && remaining != null && remaining <= 0) {
+    return QfBanAppealView.exhausted;
+  }
+  return QfBanAppealView.goAppeal;
+}
+
+class QfBanAppealEntry extends StatefulWidget {
+  const QfBanAppealEntry({
+    super.key,
+    required this.session,
+    required this.identifier,
+    required this.credential,
+    required this.onAppeal,
+  });
+
+  final QfSessionController session;
+  final String identifier;
+  final String? credential;
+  final VoidCallback onAppeal;
+
+  @override
+  State<QfBanAppealEntry> createState() => _QfBanAppealEntryState();
+}
+
+class _QfBanAppealEntryState extends State<QfBanAppealEntry> {
+  QfBanAppealView _view = QfBanAppealView.goAppeal;
+
+  @override
+  void initState() {
+    super.initState();
+    final cred = widget.credential;
+    if (cred != null && cred.isNotEmpty && widget.identifier.isNotEmpty) {
+      _queryStatus(cred);
+    }
+  }
+
+  Future<void> _queryStatus(String cred) async {
+    try {
+      final body = <String, dynamic>{'identifier': widget.identifier};
+      body['password'] = cred;
+      final data = await QfHttp.send(
+        'POST',
+        '${widget.session.serverBaseUrl}/appeals/status',
+        body: body,
+      );
+      final parsed = qfParseAppealStatus(data);
+      if (!mounted) return;
+      setState(() {
+        _view = qfBanAppealViewFor(
+          loaded: true,
+          status: parsed.hasAppeal ? parsed.status : null,
+          remaining: parsed.remaining,
+        );
+      });
+    } catch (_) {}
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_view == QfBanAppealView.hidden) return const SizedBox.shrink();
+    final linkStyle = TextStyle(color: Theme.of(context).colorScheme.primary);
+    Widget link(String text) => InkWell(
+      onTap: widget.onAppeal,
+      child: Text(text, style: linkStyle),
+    );
+    final content = switch (_view) {
+      QfBanAppealView.goAppeal => link('去申诉 >>>>'),
+      QfBanAppealView.pendingOnly => Text(
+        '申诉状态：${QfCopy.appealStatusPending}',
+      ),
+      QfBanAppealView.rejectedAgain => Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Text('申诉状态：已驳回'),
+          const SizedBox(width: 8),
+          link('再次申请 >>>>'),
+        ],
+      ),
+      QfBanAppealView.exhausted => const Text('申诉次数已用完，无法再次申诉。'),
+      QfBanAppealView.hidden => const SizedBox.shrink(),
+    };
+    return Padding(padding: const EdgeInsets.only(top: 12), child: content);
+  }
+}
+
 Future<void> qfShowBanDialog(
   BuildContext context, {
   required QfSessionController session,
   required Map<String, dynamic> data,
   String account = '',
+  String? credential,
 }) async {
   final reason = (data['reason'] ?? '').toString();
   await showDialog<void>(
@@ -1366,24 +1469,26 @@ Future<void> qfShowBanDialog(
                 padding: const EdgeInsets.only(top: 8),
                 child: Text('封禁原因：$reason'),
               ),
+            QfBanAppealEntry(
+              session: session,
+              identifier: account,
+              credential: credential,
+              onAppeal: () {
+                Navigator.of(dialogContext).pop();
+                Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => QfAppealPage(
+                      serverBaseUrl: session.serverBaseUrl,
+                      initialAccount: account,
+                      permanent: data['permanent'] == true,
+                    ),
+                  ),
+                );
+              },
+            ),
           ],
         ),
         actions: [
-          TextButton(
-            onPressed: () {
-              Navigator.of(dialogContext).pop();
-              Navigator.of(context).push(
-                MaterialPageRoute<void>(
-                  builder: (_) => QfAppealPage(
-                    serverBaseUrl: session.serverBaseUrl,
-                    initialAccount: account,
-                    permanent: data['permanent'] == true,
-                  ),
-                ),
-              );
-            },
-            child: const Text('申诉'),
-          ),
           FilledButton(
             onPressed: () => Navigator.of(dialogContext).pop(),
             child: const Text('我知道了'),

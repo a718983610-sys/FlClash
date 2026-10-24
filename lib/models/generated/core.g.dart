@@ -54,6 +54,39 @@ Map<String, dynamic> _$ProfileBaseToJson(_ProfileBase instance) =>
       'rules': instance.rules,
     };
 
+_LoadSkip _$LoadSkipFromJson(Map<String, dynamic> json) => _LoadSkip(
+  kind: json['kind'] as String? ?? '',
+  name: json['name'] as String? ?? '',
+  reason: json['reason'] as String? ?? '',
+);
+
+Map<String, dynamic> _$LoadSkipToJson(_LoadSkip instance) => <String, dynamic>{
+  'kind': instance.kind,
+  'name': instance.name,
+  'reason': instance.reason,
+};
+
+_LoadReport _$LoadReportFromJson(Map<String, dynamic> json) => _LoadReport(
+  skipped:
+      (json['skipped'] as List<dynamic>?)
+          ?.map((e) => LoadSkip.fromJson(e as Map<String, dynamic>))
+          .toList() ??
+      const [],
+  total: (json['total'] as num?)?.toInt() ?? 0,
+  proxies: (json['proxies'] as num?)?.toInt() ?? 0,
+  groups: (json['groups'] as num?)?.toInt() ?? 0,
+  rules: (json['rules'] as num?)?.toInt() ?? 0,
+);
+
+Map<String, dynamic> _$LoadReportToJson(_LoadReport instance) =>
+    <String, dynamic>{
+      'skipped': instance.skipped,
+      'total': instance.total,
+      'proxies': instance.proxies,
+      'groups': instance.groups,
+      'rules': instance.rules,
+    };
+
 _UpdateParams _$UpdateParamsFromJson(Map<String, dynamic> json) =>
     _UpdateParams(
       tun: Tun.fromJson(json['tun'] as Map<String, dynamic>),

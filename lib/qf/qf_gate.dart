@@ -312,24 +312,26 @@ class _QfSessionGateState extends ConsumerState<QfSessionGate> {
                     padding: const EdgeInsets.only(top: 8),
                     child: Text('封禁原因：$reason'),
                   ),
+                QfBanAppealEntry(
+                  session: session,
+                  identifier: account,
+                  credential: null,
+                  onAppeal: () {
+                    Navigator.of(dialogContext).pop();
+                    Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => QfAppealPage(
+                          serverBaseUrl: session.serverBaseUrl,
+                          initialAccount: account,
+                          permanent: notice.contains('永久封禁'),
+                        ),
+                      ),
+                    );
+                  },
+                ),
               ],
             ),
             actions: [
-              TextButton(
-                onPressed: () {
-                  Navigator.of(dialogContext).pop();
-                  Navigator.of(context).push(
-                    MaterialPageRoute<void>(
-                      builder: (_) => QfAppealPage(
-                        serverBaseUrl: session.serverBaseUrl,
-                        initialAccount: account,
-                        permanent: notice.contains('永久封禁'),
-                      ),
-                    ),
-                  );
-                },
-                child: const Text('申诉'),
-              ),
               FilledButton(
                 onPressed: () => Navigator.of(dialogContext).pop(),
                 child: const Text('我知道了'),

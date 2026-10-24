@@ -893,6 +893,570 @@ as int,
 
 
 /// @nodoc
+mixin _$LoadSkip {
+
+ String get kind; String get name; String get reason;
+/// Create a copy of LoadSkip
+/// with the given fields replaced by the non-null parameter values.
+@JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+$LoadSkipCopyWith<LoadSkip> get copyWith => _$LoadSkipCopyWithImpl<LoadSkip>(this as LoadSkip, _$identity);
+
+  /// Serializes this LoadSkip to a JSON map.
+  Map<String, dynamic> toJson();
+
+
+@override
+bool operator ==(Object other) {
+  final _this = this as LoadSkip;
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is LoadSkip&&(identical(other.kind, _this.kind) || other.kind == _this.kind)&&(identical(other.name, _this.name) || other.name == _this.name)&&(identical(other.reason, _this.reason) || other.reason == _this.reason));
+}
+
+@JsonKey(includeFromJson: false, includeToJson: false)
+@override
+int get hashCode {
+  final _this = this as LoadSkip;
+  return Object.hash(runtimeType,_this.kind,_this.name,_this.reason);
+}
+
+@override
+String toString() {
+  final _this = this as LoadSkip;
+  return 'LoadSkip(kind: ${_this.kind}, name: ${_this.name}, reason: ${_this.reason})';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class $LoadSkipCopyWith<$Res>  {
+  factory $LoadSkipCopyWith(LoadSkip value, $Res Function(LoadSkip) _then) = _$LoadSkipCopyWithImpl;
+@useResult
+$Res call({
+ String kind, String name, String reason
+});
+
+
+
+
+}
+/// @nodoc
+class _$LoadSkipCopyWithImpl<$Res>
+    implements $LoadSkipCopyWith<$Res> {
+  _$LoadSkipCopyWithImpl(this._self, this._then);
+
+  final LoadSkip _self;
+  final $Res Function(LoadSkip) _then;
+
+/// Create a copy of LoadSkip
+/// with the given fields replaced by the non-null parameter values.
+@pragma('vm:prefer-inline') @override $Res call({Object? kind = null,Object? name = null,Object? reason = null,}) {
+  return _then(LoadSkip(
+kind: null == kind ? _self.kind : kind // ignore: cast_nullable_to_non_nullable
+as String,name: null == name ? _self.name : name // ignore: cast_nullable_to_non_nullable
+as String,reason: null == reason ? _self.reason : reason // ignore: cast_nullable_to_non_nullable
+as String,
+  ));
+}
+
+}
+
+
+/// Adds pattern-matching-related methods to [LoadSkip].
+extension LoadSkipPatterns on LoadSkip {
+/// A variant of `map` that fallback to returning `orElse`.
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case final Subclass value:
+///     return ...;
+///   case _:
+///     return orElse();
+/// }
+/// ```
+
+@optionalTypeArgs TResult maybeMap<TResult extends Object?>(TResult Function( _LoadSkip value)?  $default,{required TResult orElse(),}){
+final _that = this;
+switch (_that) {
+case _LoadSkip() when $default != null:
+return $default(_that);case _:
+  return orElse();
+
+}
+}
+/// A `switch`-like method, using callbacks.
+///
+/// Callbacks receives the raw object, upcasted.
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case final Subclass value:
+///     return ...;
+///   case final Subclass2 value:
+///     return ...;
+/// }
+/// ```
+
+@optionalTypeArgs TResult map<TResult extends Object?>(TResult Function( _LoadSkip value)  $default,){
+final _that = this;
+switch (_that) {
+case _LoadSkip():
+return $default(_that);case _:
+  throw StateError('Unexpected subclass');
+
+}
+}
+/// A variant of `map` that fallback to returning `null`.
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case final Subclass value:
+///     return ...;
+///   case _:
+///     return null;
+/// }
+/// ```
+
+@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>(TResult? Function( _LoadSkip value)?  $default,){
+final _that = this;
+switch (_that) {
+case _LoadSkip() when $default != null:
+return $default(_that);case _:
+  return null;
+
+}
+}
+/// A variant of `when` that fallback to an `orElse` callback.
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case Subclass(:final field):
+///     return ...;
+///   case _:
+///     return orElse();
+/// }
+/// ```
+
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( String kind,  String name,  String reason)?  $default,{required TResult orElse(),}) {final _that = this;
+switch (_that) {
+case _LoadSkip() when $default != null:
+return $default(_that.kind,_that.name,_that.reason);case _:
+  return orElse();
+
+}
+}
+/// A `switch`-like method, using callbacks.
+///
+/// As opposed to `map`, this offers destructuring.
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case Subclass(:final field):
+///     return ...;
+///   case Subclass2(:final field2):
+///     return ...;
+/// }
+/// ```
+
+@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( String kind,  String name,  String reason)  $default,) {final _that = this;
+switch (_that) {
+case _LoadSkip():
+return $default(_that.kind,_that.name,_that.reason);case _:
+  throw StateError('Unexpected subclass');
+
+}
+}
+/// A variant of `when` that fallback to returning `null`
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case Subclass(:final field):
+///     return ...;
+///   case _:
+///     return null;
+/// }
+/// ```
+
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( String kind,  String name,  String reason)?  $default,) {final _that = this;
+switch (_that) {
+case _LoadSkip() when $default != null:
+return $default(_that.kind,_that.name,_that.reason);case _:
+  return null;
+
+}
+}
+
+}
+
+/// @nodoc
+@JsonSerializable()
+
+class _LoadSkip implements LoadSkip {
+  const _LoadSkip({this.kind = '', this.name = '', this.reason = ''});
+  factory _LoadSkip.fromJson(Map<String, dynamic> json) => _$LoadSkipFromJson(json);
+
+@override@JsonKey() final  String kind;
+@override@JsonKey() final  String name;
+@override@JsonKey() final  String reason;
+
+/// Create a copy of LoadSkip
+/// with the given fields replaced by the non-null parameter values.
+@override @JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+_$LoadSkipCopyWith<_LoadSkip> get copyWith => __$LoadSkipCopyWithImpl<_LoadSkip>(this, _$identity);
+
+@override
+Map<String, dynamic> toJson() {
+  return _$LoadSkipToJson(this, );
+}
+
+@override
+bool operator ==(Object other) {
+    return identical(this, other) || (other.runtimeType == runtimeType&&other is _LoadSkip&&(identical(other.kind, kind) || other.kind == kind)&&(identical(other.name, name) || other.name == name)&&(identical(other.reason, reason) || other.reason == reason));
+}
+
+@JsonKey(includeFromJson: false, includeToJson: false)
+@override
+int get hashCode {
+    return Object.hash(runtimeType,kind,name,reason);
+}
+
+@override
+String toString() {
+    return 'LoadSkip(kind: $kind, name: $name, reason: $reason)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class _$LoadSkipCopyWith<$Res> implements $LoadSkipCopyWith<$Res> {
+  factory _$LoadSkipCopyWith(_LoadSkip value, $Res Function(_LoadSkip) _then) = __$LoadSkipCopyWithImpl;
+@override @useResult
+$Res call({
+ String kind, String name, String reason
+});
+
+
+
+
+}
+/// @nodoc
+class __$LoadSkipCopyWithImpl<$Res>
+    implements _$LoadSkipCopyWith<$Res> {
+  __$LoadSkipCopyWithImpl(this._self, this._then);
+
+  final _LoadSkip _self;
+  final $Res Function(_LoadSkip) _then;
+
+/// Create a copy of LoadSkip
+/// with the given fields replaced by the non-null parameter values.
+@override @pragma('vm:prefer-inline') $Res call({Object? kind = null,Object? name = null,Object? reason = null,}) {
+  return _then(_LoadSkip(
+kind: null == kind ? _self.kind : kind // ignore: cast_nullable_to_non_nullable
+as String,name: null == name ? _self.name : name // ignore: cast_nullable_to_non_nullable
+as String,reason: null == reason ? _self.reason : reason // ignore: cast_nullable_to_non_nullable
+as String,
+  ));
+}
+
+
+}
+
+
+/// @nodoc
+mixin _$LoadReport {
+
+ List<LoadSkip> get skipped; int get total; int get proxies; int get groups; int get rules;
+/// Create a copy of LoadReport
+/// with the given fields replaced by the non-null parameter values.
+@JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+$LoadReportCopyWith<LoadReport> get copyWith => _$LoadReportCopyWithImpl<LoadReport>(this as LoadReport, _$identity);
+
+  /// Serializes this LoadReport to a JSON map.
+  Map<String, dynamic> toJson();
+
+
+@override
+bool operator ==(Object other) {
+  final _this = this as LoadReport;
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is LoadReport&&const DeepCollectionEquality().equals(other.skipped, _this.skipped)&&(identical(other.total, _this.total) || other.total == _this.total)&&(identical(other.proxies, _this.proxies) || other.proxies == _this.proxies)&&(identical(other.groups, _this.groups) || other.groups == _this.groups)&&(identical(other.rules, _this.rules) || other.rules == _this.rules));
+}
+
+@JsonKey(includeFromJson: false, includeToJson: false)
+@override
+int get hashCode {
+  final _this = this as LoadReport;
+  return Object.hash(runtimeType,const DeepCollectionEquality().hash(_this.skipped),_this.total,_this.proxies,_this.groups,_this.rules);
+}
+
+@override
+String toString() {
+  final _this = this as LoadReport;
+  return 'LoadReport(skipped: ${_this.skipped}, total: ${_this.total}, proxies: ${_this.proxies}, groups: ${_this.groups}, rules: ${_this.rules})';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class $LoadReportCopyWith<$Res>  {
+  factory $LoadReportCopyWith(LoadReport value, $Res Function(LoadReport) _then) = _$LoadReportCopyWithImpl;
+@useResult
+$Res call({
+ List<LoadSkip> skipped, int total, int proxies, int groups, int rules
+});
+
+
+
+
+}
+/// @nodoc
+class _$LoadReportCopyWithImpl<$Res>
+    implements $LoadReportCopyWith<$Res> {
+  _$LoadReportCopyWithImpl(this._self, this._then);
+
+  final LoadReport _self;
+  final $Res Function(LoadReport) _then;
+
+/// Create a copy of LoadReport
+/// with the given fields replaced by the non-null parameter values.
+@pragma('vm:prefer-inline') @override $Res call({Object? skipped = null,Object? total = null,Object? proxies = null,Object? groups = null,Object? rules = null,}) {
+  return _then(LoadReport(
+skipped: null == skipped ? _self.skipped : skipped // ignore: cast_nullable_to_non_nullable
+as List<LoadSkip>,total: null == total ? _self.total : total // ignore: cast_nullable_to_non_nullable
+as int,proxies: null == proxies ? _self.proxies : proxies // ignore: cast_nullable_to_non_nullable
+as int,groups: null == groups ? _self.groups : groups // ignore: cast_nullable_to_non_nullable
+as int,rules: null == rules ? _self.rules : rules // ignore: cast_nullable_to_non_nullable
+as int,
+  ));
+}
+
+}
+
+
+/// Adds pattern-matching-related methods to [LoadReport].
+extension LoadReportPatterns on LoadReport {
+/// A variant of `map` that fallback to returning `orElse`.
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case final Subclass value:
+///     return ...;
+///   case _:
+///     return orElse();
+/// }
+/// ```
+
+@optionalTypeArgs TResult maybeMap<TResult extends Object?>(TResult Function( _LoadReport value)?  $default,{required TResult orElse(),}){
+final _that = this;
+switch (_that) {
+case _LoadReport() when $default != null:
+return $default(_that);case _:
+  return orElse();
+
+}
+}
+/// A `switch`-like method, using callbacks.
+///
+/// Callbacks receives the raw object, upcasted.
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case final Subclass value:
+///     return ...;
+///   case final Subclass2 value:
+///     return ...;
+/// }
+/// ```
+
+@optionalTypeArgs TResult map<TResult extends Object?>(TResult Function( _LoadReport value)  $default,){
+final _that = this;
+switch (_that) {
+case _LoadReport():
+return $default(_that);case _:
+  throw StateError('Unexpected subclass');
+
+}
+}
+/// A variant of `map` that fallback to returning `null`.
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case final Subclass value:
+///     return ...;
+///   case _:
+///     return null;
+/// }
+/// ```
+
+@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>(TResult? Function( _LoadReport value)?  $default,){
+final _that = this;
+switch (_that) {
+case _LoadReport() when $default != null:
+return $default(_that);case _:
+  return null;
+
+}
+}
+/// A variant of `when` that fallback to an `orElse` callback.
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case Subclass(:final field):
+///     return ...;
+///   case _:
+///     return orElse();
+/// }
+/// ```
+
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( List<LoadSkip> skipped,  int total,  int proxies,  int groups,  int rules)?  $default,{required TResult orElse(),}) {final _that = this;
+switch (_that) {
+case _LoadReport() when $default != null:
+return $default(_that.skipped,_that.total,_that.proxies,_that.groups,_that.rules);case _:
+  return orElse();
+
+}
+}
+/// A `switch`-like method, using callbacks.
+///
+/// As opposed to `map`, this offers destructuring.
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case Subclass(:final field):
+///     return ...;
+///   case Subclass2(:final field2):
+///     return ...;
+/// }
+/// ```
+
+@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( List<LoadSkip> skipped,  int total,  int proxies,  int groups,  int rules)  $default,) {final _that = this;
+switch (_that) {
+case _LoadReport():
+return $default(_that.skipped,_that.total,_that.proxies,_that.groups,_that.rules);case _:
+  throw StateError('Unexpected subclass');
+
+}
+}
+/// A variant of `when` that fallback to returning `null`
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case Subclass(:final field):
+///     return ...;
+///   case _:
+///     return null;
+/// }
+/// ```
+
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( List<LoadSkip> skipped,  int total,  int proxies,  int groups,  int rules)?  $default,) {final _that = this;
+switch (_that) {
+case _LoadReport() when $default != null:
+return $default(_that.skipped,_that.total,_that.proxies,_that.groups,_that.rules);case _:
+  return null;
+
+}
+}
+
+}
+
+/// @nodoc
+@JsonSerializable()
+
+class _LoadReport implements LoadReport {
+  const _LoadReport({ List<LoadSkip> skipped = const [], this.total = 0, this.proxies = 0, this.groups = 0, this.rules = 0}): _skipped = skipped;
+  factory _LoadReport.fromJson(Map<String, dynamic> json) => _$LoadReportFromJson(json);
+
+ final  List<LoadSkip> _skipped;
+@override@JsonKey() List<LoadSkip> get skipped {
+  if (_skipped is EqualUnmodifiableListView) return _skipped;
+  // ignore: implicit_dynamic_type
+  return EqualUnmodifiableListView(_skipped);
+}
+
+@override@JsonKey() final  int total;
+@override@JsonKey() final  int proxies;
+@override@JsonKey() final  int groups;
+@override@JsonKey() final  int rules;
+
+/// Create a copy of LoadReport
+/// with the given fields replaced by the non-null parameter values.
+@override @JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+_$LoadReportCopyWith<_LoadReport> get copyWith => __$LoadReportCopyWithImpl<_LoadReport>(this, _$identity);
+
+@override
+Map<String, dynamic> toJson() {
+  return _$LoadReportToJson(this, );
+}
+
+@override
+bool operator ==(Object other) {
+    return identical(this, other) || (other.runtimeType == runtimeType&&other is _LoadReport&&const DeepCollectionEquality().equals(other.skipped, _skipped)&&(identical(other.total, total) || other.total == total)&&(identical(other.proxies, proxies) || other.proxies == proxies)&&(identical(other.groups, groups) || other.groups == groups)&&(identical(other.rules, rules) || other.rules == rules));
+}
+
+@JsonKey(includeFromJson: false, includeToJson: false)
+@override
+int get hashCode {
+    return Object.hash(runtimeType,const DeepCollectionEquality().hash(_skipped),total,proxies,groups,rules);
+}
+
+@override
+String toString() {
+    return 'LoadReport(skipped: $skipped, total: $total, proxies: $proxies, groups: $groups, rules: $rules)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class _$LoadReportCopyWith<$Res> implements $LoadReportCopyWith<$Res> {
+  factory _$LoadReportCopyWith(_LoadReport value, $Res Function(_LoadReport) _then) = __$LoadReportCopyWithImpl;
+@override @useResult
+$Res call({
+ List<LoadSkip> skipped, int total, int proxies, int groups, int rules
+});
+
+
+
+
+}
+/// @nodoc
+class __$LoadReportCopyWithImpl<$Res>
+    implements _$LoadReportCopyWith<$Res> {
+  __$LoadReportCopyWithImpl(this._self, this._then);
+
+  final _LoadReport _self;
+  final $Res Function(_LoadReport) _then;
+
+/// Create a copy of LoadReport
+/// with the given fields replaced by the non-null parameter values.
+@override @pragma('vm:prefer-inline') $Res call({Object? skipped = null,Object? total = null,Object? proxies = null,Object? groups = null,Object? rules = null,}) {
+  return _then(_LoadReport(
+skipped: null == skipped ? _self._skipped : skipped // ignore: cast_nullable_to_non_nullable
+as List<LoadSkip>,total: null == total ? _self.total : total // ignore: cast_nullable_to_non_nullable
+as int,proxies: null == proxies ? _self.proxies : proxies // ignore: cast_nullable_to_non_nullable
+as int,groups: null == groups ? _self.groups : groups // ignore: cast_nullable_to_non_nullable
+as int,rules: null == rules ? _self.rules : rules // ignore: cast_nullable_to_non_nullable
+as int,
+  ));
+}
+
+
+}
+
+
+/// @nodoc
 mixin _$UpdateParams {
 
 @JsonKey(toJson: _tunCoreJson) Tun get tun;@JsonKey(name: 'mixed-port') int get mixedPort;@JsonKey(name: 'allow-lan') bool get allowLan;@JsonKey(name: 'find-process-mode') FindProcessMode get findProcessMode; Mode get mode;@JsonKey(name: 'log-level') LogLevel get logLevel; bool get ipv6;@JsonKey(name: 'tcp-concurrent') bool get tcpConcurrent;@JsonKey(name: 'external-controller') ExternalControllerStatus get externalController; String get secret;@JsonKey(name: 'unified-delay') bool get unifiedDelay; List<String> get authentication;@JsonKey(name: 'geo-auto-update') bool get geoAutoUpdate;@JsonKey(name: 'geo-update-interval') int get geoUpdateInterval;@JsonKey(name: 'geox-url') Map<String, String> get geoXUrl;@JsonKey(name: 'skip-cert-verify') bool get skipCertVerify;

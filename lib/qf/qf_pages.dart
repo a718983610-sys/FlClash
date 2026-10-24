@@ -620,6 +620,7 @@ class _QfLoginFormState extends State<QfLoginForm> {
           }
         } else if (e.code == 'ACCOUNT_BANNED') {
           final reason = (e.data['reason'] ?? '').toString();
+          final cred = _password.text;
           await showDialog<void>(
             context: context,
             builder: (dialogContext) {
@@ -635,24 +636,26 @@ class _QfLoginFormState extends State<QfLoginForm> {
                         padding: const EdgeInsets.only(top: 8),
                         child: Text('封禁原因：$reason'),
                       ),
+                    QfBanAppealEntry(
+                      session: widget.session,
+                      identifier: _email.text.trim(),
+                      credential: cred,
+                      onAppeal: () {
+                        Navigator.of(dialogContext).pop();
+                        Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (_) => QfAppealPage(
+                              serverBaseUrl: widget.session.serverBaseUrl,
+                              initialAccount: _email.text.trim(),
+                              permanent: e.data['permanent'] == true,
+                            ),
+                          ),
+                        );
+                      },
+                    ),
                   ],
                 ),
                 actions: [
-                  TextButton(
-                    onPressed: () {
-                      Navigator.of(dialogContext).pop();
-                      Navigator.of(context).push(
-                        MaterialPageRoute<void>(
-                          builder: (_) => QfAppealPage(
-                            serverBaseUrl: widget.session.serverBaseUrl,
-                            initialAccount: _email.text.trim(),
-                            permanent: e.data['permanent'] == true,
-                          ),
-                        ),
-                      );
-                    },
-                    child: const Text('申诉'),
-                  ),
                   FilledButton(
                     onPressed: () => Navigator.of(dialogContext).pop(),
                     child: const Text('我知道了'),
@@ -724,12 +727,22 @@ class _QfLoginFormState extends State<QfLoginForm> {
       await widget.session.googleLogin(idToken, remember: _remember);
       if (!mounted) return;
       if (widget.session.googleCompletionPending) {
-        final message = await showDialog<String>(
+        final outcome = await showDialog<QfCompletionOutcome>(
           context: context,
           builder: (_) => QfGoogleCompletionDialog(session: widget.session),
         );
-        if (message != null && message.isNotEmpty && mounted) {
-          qfToast(context, message);
+        if (outcome != null && mounted) {
+          if (outcome.banData != null) {
+            await qfShowBanDialog(
+              context,
+              session: widget.session,
+              data: outcome.banData!,
+              account: widget.session.googleCompletionEmail ?? '',
+              credential: outcome.banCredential,
+            );
+          } else if (outcome.message.isNotEmpty) {
+            qfToast(context, outcome.message);
+          }
         }
       } else if (widget.session.stepUpPending) {
         setState(() {});
@@ -1189,6 +1202,18 @@ class _QfRegisterFormState extends State<QfRegisterForm> {
   }
 }
 
+class QfCompletionOutcome {
+  const QfCompletionOutcome({
+    required this.message,
+    this.banData,
+    this.banCredential,
+  });
+
+  final String message;
+  final Map<String, dynamic>? banData;
+  final String? banCredential;
+}
+
 class QfGoogleCompletionDialog extends StatefulWidget {
   final QfSessionController session;
 
@@ -1266,11 +1291,18 @@ class _QfGoogleCompletionDialogState extends State<QfGoogleCompletionDialog> {
               data: e.data,
             );
           }
+        case 'ACCOUNT_BANNED':
+          Navigator.of(context).pop(
+            QfCompletionOutcome(
+              message: e.message,
+              banData: e.data,
+              banCredential: pw,
+            ),
+          );
         case 'GOOGLE_COMPLETION_INVALID':
         case 'GOOGLE_ALREADY_COMPLETED':
-        case 'ACCOUNT_BANNED':
         case 'DEVICE_BANNED':
-          Navigator.of(context).pop(e.message);
+          Navigator.of(context).pop(QfCompletionOutcome(message: e.message));
         case 'BAD_REQUEST':
           if (e.message.contains('密码')) {
             setState(() => _passwordError = qfAccountErrorMessage(e));
