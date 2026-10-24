@@ -27,7 +27,7 @@ String qfPasskeyFailureText(Object error) {
     if (code.contains('InvalidState')) {
       return '该通行密钥已存在或状态异常，请改用其他方式。';
     }
-    return '通行密钥验证未完成（$code），请重试或改用密码方式。';
+    return '通行密钥验证未完成，请重试或改用密码方式。';
   }
   return '通行密钥验证未完成，请重试或改用密码方式。';
 }

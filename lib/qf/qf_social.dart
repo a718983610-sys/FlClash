@@ -723,7 +723,7 @@ class _QfProfilePageState extends State<QfProfilePage> {
               TextField(
                 controller: controller,
                 obscureText: true,
-                decoration: const InputDecoration(labelText: '账号密码'),
+                decoration: const InputDecoration(labelText: '账户密码'),
               ),
             ],
           ),
@@ -764,13 +764,13 @@ class _QfProfilePageState extends State<QfProfilePage> {
                   TextField(
                     controller: first,
                     obscureText: true,
-                    decoration: const InputDecoration(labelText: '账号密码'),
+                    decoration: const InputDecoration(labelText: '账户密码'),
                   ),
                   const SizedBox(height: 8),
                   TextField(
                     controller: second,
                     obscureText: true,
-                    decoration: const InputDecoration(labelText: '再次输入账号密码'),
+                    decoration: const InputDecoration(labelText: '再次输入账户密码'),
                   ),
                   if (error.isNotEmpty) ...[
                     const SizedBox(height: 8),
@@ -791,7 +791,7 @@ class _QfProfilePageState extends State<QfProfilePage> {
                 FilledButton(
                   onPressed: () {
                     if (first.text.isEmpty) {
-                      setDialogState(() => error = '请输入账号密码');
+                      setDialogState(() => error = '请输入账户密码');
                       return;
                     }
                     if (first.text != second.text) {
@@ -826,7 +826,7 @@ class _QfProfilePageState extends State<QfProfilePage> {
           _hasKey = true;
           _hasBackup = true;
         });
-        qfToast(context, '聊天密钥已经加密备份，换设备时可用账号密码恢复');
+        qfToast(context, '聊天密钥已经加密备份，换设备时可用账户密码恢复');
       }
     } on QfApiException catch (e) {
       if (mounted) qfToast(context, e.message);
@@ -939,7 +939,7 @@ class _QfProfilePageState extends State<QfProfilePage> {
                 Text(
                   '聊天采用 Signal 协议端到端加密（X3DH 密钥协商＋双棘轮逐消息密钥，具备前向保密）：'
                   '服务器只转发密文，无法查看消息内容。私钥只保存在本机；'
-                  '加密备份由账号密码经 Argon2id 派生的密钥保护，服务器同样无法解密。',
+                  '加密备份由账户密码经 Argon2id 派生的密钥保护，服务器同样无法解密。',
                   style: AppTextStyle.caption1.of(context),
                 ),
                 const SizedBox(height: 24),

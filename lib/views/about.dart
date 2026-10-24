@@ -36,23 +36,6 @@ class AboutView extends ConsumerWidget {
     }, tag: LoadingTag.checkUpdate);
   }
 
-  Widget _buildLinkItem({
-    required Glyph glyph,
-    required String title,
-    required String url,
-    required String label,
-  }) {
-    return ListItem(
-      leading: _LinkBadge(glyph: glyph),
-      title: Text(title),
-      subtitle: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
-      trailing: const GlyphIcon(AppGlyphs.openExternal),
-      onTap: () {
-        dialogs.openUrl(url);
-      },
-    );
-  }
-
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final appLocalizations = context.appLocalizations;
@@ -88,12 +71,6 @@ class AboutView extends ConsumerWidget {
                 leading: _LinkBadge(glyph: AppGlyphs.code),
                 title: Text('源代码获取'),
                 subtitle: Text('本软件基于开源项目，源代码可通过官网联系邮箱索取。'),
-              ),
-              _buildLinkItem(
-                glyph: AppGlyphs.send,
-                title: 'Telegram',
-                url: 'https://t.me/FlClash',
-                label: 't.me/FlClash',
               ),
             ],
           ),

@@ -401,9 +401,11 @@ void main() {
         qfPasskeyFailureText(PlatformException(code: 'NotSupportedError')),
         contains('不支持通行密钥'),
       );
+      // Unknown codes fall back to the plain message: raw platform error
+      // codes are internal vocabulary and never reach user copy (1.1.1).
       expect(
         qfPasskeyFailureText(PlatformException(code: 'UnknownError')),
-        contains('UnknownError'),
+        '通行密钥验证未完成，请重试或改用密码方式。',
       );
     });
   });
