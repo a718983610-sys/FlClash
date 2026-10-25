@@ -21,6 +21,7 @@ import 'qf_providers.dart';
 import 'qf_recovery.dart';
 import 'qf_session.dart';
 import 'qf_signal.dart';
+import 'qf_vault.dart';
 import 'qf_support.dart';
 import 'qf_update.dart';
 import 'qf_update_notify.dart';
@@ -126,6 +127,12 @@ class _QfSessionGateState extends ConsumerState<QfSessionGate> {
     session.onGuestExhaustedFn = _stopCore;
     session.onForceDisconnectFn = _stopCore;
     session.onAuthenticatedFn = () => QfSignalManager.ensureInstalled(session);
+    session.onUserSessionClearedFn = () {
+      QfVaultService.clearUnlockedKeys();
+      QfChatHistoryVault.clearUnlockedKey();
+      QfSignalStore.bindUser(null);
+      QfSignalStore.resetCache();
+    };
     try {
       QfRuntime.appVersion = (await PackageInfo.fromPlatform()).version;
     } catch (_) {}

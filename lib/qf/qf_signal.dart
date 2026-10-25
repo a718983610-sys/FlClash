@@ -38,7 +38,24 @@ class QfSignalStore extends SignalProtocolStore {
         DateTime.now().difference(at) > const Duration(seconds: 60);
   }
 
-  static Future<String?> _secureRead() async {
+  static int? _boundUserId;
+
+  static int? get boundUserId => _boundUserId;
+
+  /// Scopes the identity store to one account (N-02): each account's
+  /// blob lives under its own storage key, so a second account signing
+  /// in on this device can never load the first account's identity.
+  /// Switching the binding drops the in-memory store with it.
+  static void bindUser(int? userId) {
+    if (_boundUserId == userId) return;
+    _boundUserId = userId;
+    _cached = null;
+  }
+
+  static String get _storageKey =>
+      _boundUserId == null ? _prefsKey : '$_prefsKey\_u$_boundUserId';
+
+  static Future<String?> _secureRead([String? key]) async {
     if (_pluginMissing) return null;
     if (_secureOk == false && !_secureRetryDue) {
       lastSecureReadFailed = true;
@@ -47,7 +64,7 @@ class QfSignalStore extends SignalProtocolStore {
     for (var attempt = 0; attempt < 2; attempt++) {
       try {
         final value = await _secure
-            .read(key: _prefsKey)
+            .read(key: key ?? _storageKey)
             .timeout(_secureTimeout);
         _secureOk = true;
         lastSecureReadFailed = false;
@@ -71,12 +88,12 @@ class QfSignalStore extends SignalProtocolStore {
     return null;
   }
 
-  static Future<bool> _secureWrite(String value) async {
+  static Future<bool> _secureWrite(String value, [String? key]) async {
     if (_pluginMissing) return false;
     if (_secureOk == false && !_secureRetryDue) return false;
     try {
       await _secure
-          .write(key: _prefsKey, value: value)
+          .write(key: key ?? _storageKey, value: value)
           .timeout(_secureTimeout);
       _secureOk = true;
       return true;
@@ -89,6 +106,13 @@ class QfSignalStore extends SignalProtocolStore {
       _secureFailedAt = DateTime.now();
       return false;
     }
+  }
+
+  static Future<void> _secureDelete(String key) async {
+    if (_pluginMissing) return;
+    try {
+      await _secure.delete(key: key).timeout(_secureTimeout);
+    } catch (_) {}
   }
 
   static int _blobSavedAt(String raw) {
@@ -119,20 +143,57 @@ class QfSignalStore extends SignalProtocolStore {
 
   static QfSignalStore? _cached;
 
+  /// Moves the device-global blob written by builds before per-account
+  /// keying into the bound account's slot, if that slot is still empty.
+  /// Adoption alone never publishes anything: QfSignalManager verifies
+  /// the identity against the account's server-side bundle before the
+  /// first publish, and discards the blob when it is not the account's.
+  static Future<String?> _adoptLegacyBlob(SharedPreferences prefs) async {
+    final secureRaw = await _secureRead(_prefsKey);
+    final legacyRaw = prefs.getString(_prefsKey);
+    String? resolved;
+    if (secureRaw != null && secureRaw.isNotEmpty) {
+      resolved = secureRaw;
+      if (legacyRaw != null && legacyRaw.isNotEmpty) {
+        resolved = newerBlob(secureRaw, legacyRaw);
+      }
+    } else {
+      resolved = legacyRaw;
+    }
+    if (resolved == null || resolved.isEmpty) return null;
+    if (await _secureWrite(resolved)) {
+      await _secureDelete(_prefsKey);
+    } else {
+      await prefs.setString(_storageKey, resolved);
+    }
+    await prefs.remove(_prefsKey);
+    return resolved;
+  }
+
+  /// Deletes the bound account's blob everywhere and drops the cache;
+  /// the next load() mints a fresh identity for that account.
+  static Future<void> resetBoundStore() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_storageKey);
+    await _secureDelete(_storageKey);
+    _cached = null;
+  }
+
   static Future<QfSignalStore> load() async {
     if (_cached != null) return _cached!;
     final prefs = await SharedPreferences.getInstance();
+    final key = _storageKey;
     final raw = await _secureRead();
-    final legacy = prefs.getString(_prefsKey);
+    final legacy = prefs.getString(key);
     String? resolved = raw;
     if (raw != null && legacy != null && legacy.isNotEmpty) {
       resolved = newerBlob(raw, legacy);
       if (resolved == legacy) {
         if (await _secureWrite(legacy)) {
-          await prefs.remove(_prefsKey);
+          await prefs.remove(key);
         }
       } else {
-        await prefs.remove(_prefsKey);
+        await prefs.remove(key);
       }
     } else if (resolved == null) {
       // Migrate the legacy plaintext copy (identity private key included)
@@ -141,11 +202,14 @@ class QfSignalStore extends SignalProtocolStore {
       if (legacy != null && legacy.isNotEmpty) {
         resolved = legacy;
         if (await _secureWrite(legacy)) {
-          await prefs.remove(_prefsKey);
+          await prefs.remove(key);
         }
       }
     } else {
-      await prefs.remove(_prefsKey);
+      await prefs.remove(key);
+    }
+    if ((resolved == null || resolved.isEmpty) && key != _prefsKey) {
+      resolved = await _adoptLegacyBlob(prefs);
     }
     if ((resolved == null || resolved.isEmpty) && lastSecureReadFailed) {
       // The secure store could not be read at all and there is no
@@ -185,14 +249,20 @@ class QfSignalStore extends SignalProtocolStore {
 
   /// Whether an identity blob exists locally, without loading or
   /// minting one; for surfaces that only report key presence (C-35).
-  static Future<bool> hasLocalIdentity() async {
+  /// Checks the bound account's slot plus the pre-keying global slot a
+  /// first load would adopt from.
+  static Future<bool> hasLocalIdentity({int? userId}) async {
+    if (userId != null) bindUser(userId);
     if (_cached != null) return true;
     try {
-      final raw = await _secureRead();
-      if (raw != null && raw.isNotEmpty) return true;
       final prefs = await SharedPreferences.getInstance();
-      final legacy = prefs.getString(_prefsKey);
-      return legacy != null && legacy.isNotEmpty;
+      for (final key in {_storageKey, _prefsKey}) {
+        final raw = await _secureRead(key);
+        if (raw != null && raw.isNotEmpty) return true;
+        final legacy = prefs.getString(key);
+        if (legacy != null && legacy.isNotEmpty) return true;
+      }
+      return false;
     } catch (_) {
       return false;
     }
@@ -204,14 +274,11 @@ class QfSignalStore extends SignalProtocolStore {
 
   static Future<void> replaceFromJson(Map<String, dynamic> data) async {
     final prefs = await SharedPreferences.getInstance();
-    final stamped = {
-      ...data,
-      'savedAt': DateTime.now().millisecondsSinceEpoch,
-    };
+    final stamped = {...data, 'savedAt': DateTime.now().millisecondsSinceEpoch};
     if (await _secureWrite(jsonEncode(stamped))) {
-      await prefs.remove(_prefsKey);
+      await prefs.remove(_storageKey);
     } else {
-      await prefs.setString(_prefsKey, jsonEncode(stamped));
+      await prefs.setString(_storageKey, jsonEncode(stamped));
     }
     resetCache();
   }
@@ -229,11 +296,11 @@ class QfSignalStore extends SignalProtocolStore {
   Future<void> persist() async {
     final prefs = await SharedPreferences.getInstance();
     if (await _secureWrite(jsonEncode(toJson()))) {
-      await prefs.remove(_prefsKey);
+      await prefs.remove(_storageKey);
     } else {
       // Secure storage unavailable: keep the blob in preferences rather
       // than losing the identity; load() migrates it on a later launch.
-      await prefs.setString(_prefsKey, jsonEncode(toJson()));
+      await prefs.setString(_storageKey, jsonEncode(toJson()));
     }
   }
 
@@ -493,8 +560,34 @@ class QfSignalManager {
     } catch (_) {}
   }
 
+  /// Ownership gate (N-02): when the server already holds a bundle for
+  /// this account whose identity differs from the local store's, the
+  /// local store is not this account's (a leftover or wrongly adopted
+  /// blob) and must never be published under this account. It is wiped
+  /// for the bound account and installation restarts from a fresh one.
+  /// A failed lookup (no bundle yet, dead network) proves nothing and
+  /// leaves the store untouched.
+  static Future<QfSignalStore> _verifyOwnership(
+    QfSessionController session,
+    QfSignalStore store,
+  ) async {
+    try {
+      final mine = await session.socialGetMyPrekeyBundle();
+      final remoteIdentity = (mine['identityKeyX25519'] ?? '').toString();
+      if (remoteIdentity.isEmpty || remoteIdentity == store.identityRawB64) {
+        return store;
+      }
+    } catch (_) {
+      return store;
+    }
+    await QfSignalStore.resetBoundStore();
+    return QfSignalStore.load();
+  }
+
   static Future<void> ensureInstalled(QfSessionController session) async {
-    final store = await QfSignalStore.load();
+    QfSignalStore.bindUser(session.userId);
+    var store = await QfSignalStore.load();
+    store = await _verifyOwnership(session, store);
     if (!await store.containsSignedPreKey(0)) {
       final signed = generateSignedPreKey(await store.getIdentityKeyPair(), 0);
       await store.storeSignedPreKey(0, signed);
@@ -526,7 +619,11 @@ class QfSignalManager {
       final mine = await session.socialGetMyPrekeyBundle();
       final remoteIdentity = (mine['identityKeyX25519'] ?? '').toString();
       if (remoteIdentity.isNotEmpty && remoteIdentity != store.identityRawB64) {
-        await session.socialPutPrekeyBundle(await _fullBundle(store));
+        // Ownership is adjudicated in ensureInstalled before anything
+        // is published; a mismatch surfacing here means the server-side
+        // bundle changed after that check, and re-publishing the local
+        // identity over it is exactly the cross-account publish N-02
+        // forbids. Leave it for the next ensureInstalled pass.
         return;
       }
       final count = (mine['oneTimePrekeyCount'] as num?)?.toInt() ?? 0;
@@ -550,6 +647,7 @@ class QfSignalManager {
     int userId,
   ) async {
     try {
+      QfSignalStore.bindUser(session.userId);
       final store = await QfSignalStore.load();
       if (await store.containsSession(_address(userId))) return true;
       return await _fetchBundle(session, userId) != null;
@@ -616,6 +714,7 @@ class QfSignalManager {
     int userId,
     String text,
   ) async {
+    QfSignalStore.bindUser(session.userId);
     final store = await QfSignalStore.load();
     final address = _address(userId);
     if (!await store.containsSession(address)) {
@@ -643,6 +742,7 @@ class QfSignalManager {
     int fromUserId,
     String ciphertextB64,
   ) async {
+    QfSignalStore.bindUser(session.userId);
     final store = await QfSignalStore.load();
     final cipher = SessionCipher.fromStore(store, _address(fromUserId));
     final packed = base64Decode(ciphertextB64);
@@ -659,6 +759,7 @@ class QfSignalManager {
     QfSessionController session,
     int peerUserId,
   ) async {
+    QfSignalStore.bindUser(session.userId);
     final store = await QfSignalStore.load();
     var remote = await store.getIdentity(_address(peerUserId));
     if (remote == null) {
@@ -760,7 +861,11 @@ class QfSignalManager {
     }
   }
 
-  static Future<Map<String, String>> buildBackup(String password) async {
+  static Future<Map<String, String>> buildBackup(
+    String password, {
+    int? userId,
+  }) async {
+    if (userId != null) QfSignalStore.bindUser(userId);
     final store = await QfSignalStore.load();
     return encryptBackupPlain(
       Uint8List.fromList(utf8.encode(jsonEncode(store.toJson()))),
@@ -770,8 +875,10 @@ class QfSignalManager {
 
   static Future<bool> restoreBackup(
     Map<String, dynamic> backup,
-    String password,
-  ) async {
+    String password, {
+    int? userId,
+  }) async {
+    if (userId != null) QfSignalStore.bindUser(userId);
     try {
       final plain = decryptBackupPlain(backup, password);
       final decoded = Map<String, dynamic>.from(
@@ -948,6 +1055,10 @@ class QfChatHistoryVault {
   static bool capacityExceeded = false;
 
   static bool get historyUnlocked => _historyKey != null;
+
+  static void clearUnlockedKey() {
+    _historyKey = null;
+  }
 
   static bool isNearCapacity(int entries, int bytes) {
     return entries >= 18000 || bytes >= (maxBytes * 0.9).floor();
@@ -1399,10 +1510,11 @@ class QfChatHistoryVault {
     if (key == null) throw const QfChatHistoryException(_decryptFailed);
     final totals = await knownTotals();
     final blocked = await _loadUploadBlocked();
-    final records = (await localRecords())
-        .where((record) => !blocked.contains(record.localId))
-        .toList()
-      ..sort((a, b) => a.ts.compareTo(b.ts));
+    final records =
+        (await localRecords())
+            .where((record) => !blocked.contains(record.localId))
+            .toList()
+          ..sort((a, b) => a.ts.compareTo(b.ts));
     final entries = records.map((r) => _encryptRecord(key, r)).toList();
     final data = await session.authed(
       'PUT',

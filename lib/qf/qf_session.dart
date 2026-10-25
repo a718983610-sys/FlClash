@@ -185,6 +185,12 @@ class QfSessionController extends ChangeNotifier {
   Future<void> Function()? onGuestExhaustedFn;
   Future<void> Function()? onForceDisconnectFn;
 
+  /// Wired by the gate: drops every in-memory unlocked key (vault and
+  /// chat archive) when the user session ends. Unlocked keys belong to
+  /// the signed-in account; leaving them behind lets the next account
+  /// on this device encrypt its data with the previous account's key.
+  void Function()? onUserSessionClearedFn;
+
   String? _completionToken;
   String? _completionEmail;
   String? _stepUpToken;
@@ -557,6 +563,9 @@ class QfSessionController extends ChangeNotifier {
   }
 
   Future<void> _clearUserSession() async {
+    try {
+      onUserSessionClearedFn?.call();
+    } catch (_) {}
     await _wipeStoredCredentials();
     final prefs = await SharedPreferences.getInstance();
     for (final key in [_kEmail, _kUsername, _kUserId, _kRemember]) {
@@ -1517,27 +1526,50 @@ class QfSessionController extends ChangeNotifier {
           trafficBytes: delta,
           envFlags: envFlags,
         );
-        final data = await authed(
-          'POST',
-          '/points/heartbeat',
-          body: {
-            'deviceHash': identity.deviceHash,
-            'seq': nextSeq,
-            'clientTs': clientTs,
-            'trafficBytes': delta,
-            'env': {
-              'emulator': _envEmulator,
-              'rooted': rooted,
-              'multiOpen': multiOpen,
+        final Map<String, dynamic> data;
+        try {
+          data = await authed(
+            'POST',
+            '/points/heartbeat',
+            body: {
+              'deviceHash': identity.deviceHash,
+              'seq': nextSeq,
+              'clientTs': clientTs,
+              'trafficBytes': delta,
+              'env': {
+                'emulator': _envEmulator,
+                'rooted': rooted,
+                'multiOpen': multiOpen,
+              },
+              'sig': sig,
             },
-            'sig': sig,
-          },
-        );
-        _pointsSeq = nextSeq;
-        _lastTrafficTotal = total;
-        await prefs.setInt(_kPointsSeq, _pointsSeq);
-        if (data['accepted'] == false && data['reason'] == 'seq_out_of_order') {
-          _pointsSeq = (data['serverSeq'] as num?)?.toInt() ?? _pointsSeq;
+          );
+        } on QfApiException catch (e) {
+          if (e.code == 'BAD_SIGNATURE' ||
+              e.code == 'DEVICE_MISMATCH' ||
+              e.code == 'DEVICE_NOT_REGISTERED') {
+            // The server no longer accepts this heartbeat key material,
+            // so resending the same signed beat can never succeed; drop
+            // the session so the next sign-in re-issues it (Q-a).
+            await _clearUserSession();
+            mode = QfMode.entry;
+            notifyListeners();
+          }
+          rethrow;
+        }
+        if (data['accepted'] == false) {
+          // Not committed server-side (the only such verdict is
+          // seq_out_of_order): resync the sequence, and leave the
+          // traffic baseline untouched so this beat's delta is
+          // re-reported by the next beat instead of vanishing (Q-a).
+          final serverSeq = (data['serverSeq'] as num?)?.toInt();
+          if (serverSeq != null) {
+            _pointsSeq = serverSeq;
+            await prefs.setInt(_kPointsSeq, _pointsSeq);
+          }
+        } else {
+          _pointsSeq = nextSeq;
+          _lastTrafficTotal = total;
           await prefs.setInt(_kPointsSeq, _pointsSeq);
         }
         final notice = data['notice'];
@@ -1567,36 +1599,58 @@ class QfSessionController extends ChangeNotifier {
         final pendingAccrued = prefs.getInt(_kGuestOfflineAccruedSec) ?? 0;
         final accruedSend = pendingAccrued.clamp(0, 7200);
         final reconcileId = prefs.getString(_kGuestReconcileId);
-        final data = await QfHttp.send(
-          'POST',
-          '$serverBaseUrl/guest/heartbeat',
-          bearer: _guestToken,
-          body: {
-            'seq': nextSeq,
-            'clientTs': clientTs,
-            'trafficBytes': delta,
-            'env': {
-              'emulator': _envEmulator,
-              'rooted': rooted,
-              'multiOpen': multiOpen,
+        final Map<String, dynamic> data;
+        try {
+          data = await QfHttp.send(
+            'POST',
+            '$serverBaseUrl/guest/heartbeat',
+            bearer: _guestToken,
+            body: {
+              'seq': nextSeq,
+              'clientTs': clientTs,
+              'trafficBytes': delta,
+              'env': {
+                'emulator': _envEmulator,
+                'rooted': rooted,
+                'multiOpen': multiOpen,
+              },
+              'sig': sig,
+              if (accruedSend > 0 && reconcileId != null)
+                'offlineAccruedSec': accruedSend,
+              if (accruedSend > 0 && reconcileId != null)
+                'reconcileId': reconcileId,
             },
-            'sig': sig,
-            if (accruedSend > 0 && reconcileId != null)
-              'offlineAccruedSec': accruedSend,
-            if (accruedSend > 0 && reconcileId != null)
-              'reconcileId': reconcileId,
-          },
-        );
-        _guestSeq = nextSeq;
-        _lastTrafficTotal = total;
-        await prefs.setInt(_kGuestSeq, _guestSeq);
+          );
+        } on QfApiException catch (e) {
+          if (e.code == 'BAD_SIGNATURE' ||
+              e.code == 'DEVICE_MISMATCH' ||
+              e.code == 'DEVICE_NOT_REGISTERED') {
+            // Same rule as the signed-in path: this guest key material
+            // is dead, so re-enter guest mode for a fresh one (Q-a).
+            try {
+              await enterGuest();
+            } catch (_) {
+              await exitGuestToEntry();
+            }
+          }
+          rethrow;
+        }
+        if (data['accepted'] == false) {
+          // Same not-committed rule as the signed-in path: resync the
+          // sequence and keep the traffic baseline for the next beat.
+          final serverSeq = (data['serverSeq'] as num?)?.toInt();
+          if (serverSeq != null) {
+            _guestSeq = serverSeq;
+            await prefs.setInt(_kGuestSeq, _guestSeq);
+          }
+        } else {
+          _guestSeq = nextSeq;
+          _lastTrafficTotal = total;
+          await prefs.setInt(_kGuestSeq, _guestSeq);
+        }
         if (pendingAccrued > 0 && data['accepted'] != false) {
           await prefs.setInt(_kGuestOfflineAccruedSec, 0);
           await prefs.remove(_kGuestReconcileId);
-        }
-        if (data['accepted'] == false && data['reason'] == 'seq_out_of_order') {
-          _guestSeq = (data['serverSeq'] as num?)?.toInt() ?? _guestSeq;
-          await prefs.setInt(_kGuestSeq, _guestSeq);
         }
         await _applyGuestUsage(data, notifyExhaustedTransition: true);
       }

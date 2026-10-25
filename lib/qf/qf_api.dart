@@ -144,6 +144,30 @@ class QfEndpoints {
 }
 
 class QfHttp {
+  /// Whether a network failure may be retried automatically. A retry
+  /// replays the request, so when a response is lost after the server
+  /// already processed a write, an unconditional retry submits it twice
+  /// (duplicate posts, camp creations, and burned appeal attempts).
+  /// Only idempotent methods and the POSTs whose client idempotency key
+  /// the server deduplicates on (chat msgId, redeem idempotencyKey)
+  /// qualify; every other write is attempted exactly once and its first
+  /// failure surfaces for a manual retry instead.
+  static bool isRetryable(String method, Map<String, dynamic>? body) {
+    switch (method.toUpperCase()) {
+      case 'GET':
+      case 'HEAD':
+      case 'PUT':
+      case 'DELETE':
+        return true;
+      case 'POST':
+        if (body == null) return false;
+        return (body['msgId'] ?? '').toString().isNotEmpty ||
+            (body['idempotencyKey'] ?? '').toString().isNotEmpty;
+      default:
+        return false;
+    }
+  }
+
   static Future<Map<String, dynamic>> send(
     String method,
     String url, {
@@ -156,7 +180,10 @@ class QfHttp {
     // own (connect, headers, body stall), and the rotation as a whole
     // must not stretch account requests without limit either (C-01).
     final deadline = DateTime.now().add(const Duration(seconds: 90));
-    for (final candidate in QfEndpoints.rotationFor(url)) {
+    final retryable = isRetryable(method, body);
+    final bases = QfEndpoints.rotationFor(url);
+    final candidates = retryable ? bases : bases.take(1);
+    for (final candidate in candidates) {
       if (DateTime.now().isAfter(deadline)) break;
       QfProxySource? force;
       while (true) {
@@ -174,7 +201,7 @@ class QfHttp {
         } on QfApiException catch (e) {
           if (!e.isNetworkFailure) rethrow;
           lastNetworkError = e;
-          if (force != null) break;
+          if (!retryable || force != null) break;
           // One cross-path retry per endpoint: a request that died on the
           // proxied path gets a direct attempt and vice versa, so a core
           // that is up but has no working outbound cannot blackhole
