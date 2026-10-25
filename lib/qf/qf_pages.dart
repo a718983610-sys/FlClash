@@ -1086,11 +1086,20 @@ class _QfResetPasswordDialogState extends State<QfResetPasswordDialog> {
 
   Future<void> _submit() async {
     setState(() {
+      _failureText = !_email.text.trim().contains('@')
+          ? '邮箱格式不正确'
+          : _code.text.trim().isEmpty
+          ? '请输入邮箱验证码'
+          : _password.text.length < 8
+          ? '新密码至少需要 8 位'
+          : null;
       _confirmError = _password.text != _confirm.text
           ? QfCopy.passwordMismatch
           : null;
     });
-    if (_confirmError != null) throw const _QfSendAborted();
+    if (_failureText != null || _confirmError != null) {
+      throw const _QfSendAborted();
+    }
     await widget.session.resetConfirm(
       emailInput: _email.text,
       code: _code.text,
@@ -1188,6 +1197,7 @@ class _QfRegisterFormState extends State<QfRegisterForm> {
   String? _codeError;
   String? _passwordError;
   String? _confirmError;
+  String? _formError;
   String? _ticket;
   String _ticketKey = '';
 
@@ -1220,6 +1230,7 @@ class _QfRegisterFormState extends State<QfRegisterForm> {
           ? QfCopy.passwordMismatch
           : null;
       _codeError = _code.text.trim().isEmpty ? '请输入邮箱验证码' : null;
+      _formError = null;
     });
     if (_idError != null ||
         _emailError != null ||
@@ -1256,6 +1267,13 @@ class _QfRegisterFormState extends State<QfRegisterForm> {
             e.message.contains('账户 ID') ||
             e.message.contains('账户ID')) {
           _idError = qfAccountErrorMessage(e);
+        } else if (e.message.contains('验证已经过期')) {
+          // The ticket itself is dead (expired or already consumed):
+          // drop it and send the user back to requesting a fresh code
+          // instead of retrying the same dead ticket forever (C-17).
+          _ticket = null;
+          _ticketKey = '';
+          _codeError = qfAccountErrorMessage(e);
         } else if (e.message.contains('验证码')) {
           _codeError = qfAccountErrorMessage(e);
           _ticket = null;
@@ -1264,7 +1282,10 @@ class _QfRegisterFormState extends State<QfRegisterForm> {
         } else if (e.message.contains('邮箱')) {
           _emailError = qfAccountErrorMessage(e);
         } else {
-          _codeError = qfAccountErrorMessage(e);
+          // Unknown errors belong to the form, not the code field;
+          // the ticket stays cached because the server only consumes
+          // it once every gate has passed (C-17).
+          _formError = qfAccountErrorMessage(e);
         }
       });
     }
@@ -1324,6 +1345,15 @@ class _QfRegisterFormState extends State<QfRegisterForm> {
             },
           ),
         ),
+        if (_formError != null) ...[
+          const SizedBox(height: 12),
+          Text(
+            _formError!,
+            style: AppTextStyle.caption1
+                .of(context)
+                .copyWith(color: Theme.of(context).colorScheme.error),
+          ),
+        ],
         const SizedBox(height: 16),
         QfActionButton(label: '注册并登录', busyLabel: '正在注册……', onAction: _submit),
       ],
@@ -1932,6 +1962,8 @@ class _QfPointsPageState extends State<QfPointsPage> {
   List<dynamic> _entries = const [];
   Map<String, dynamic>? _rules;
   bool _loading = true;
+  bool _entriesFailed = false;
+  bool _rulesFailed = false;
 
   @override
   void initState() {
@@ -1942,17 +1974,27 @@ class _QfPointsPageState extends State<QfPointsPage> {
   Future<void> _load() async {
     try {
       final entries = await widget.session.pointsLedger();
-      final rules = await widget.session.pointsRules();
       if (mounted) {
         setState(() {
           _entries = entries;
-          _rules = rules;
-          _loading = false;
+          _entriesFailed = false;
         });
       }
     } catch (_) {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) setState(() => _entriesFailed = true);
     }
+    try {
+      final rules = await widget.session.pointsRules();
+      if (mounted) {
+        setState(() {
+          _rules = rules;
+          _rulesFailed = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) setState(() => _rulesFailed = true);
+    }
+    if (mounted) setState(() => _loading = false);
     await widget.session.refreshPoints();
   }
 
@@ -1974,41 +2016,50 @@ class _QfPointsPageState extends State<QfPointsPage> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          '当前余额：${points?['balance'] ?? 0} 分',
+                          '当前余额：${points == null ? '—' : points['balance'] ?? 0} 分',
                           style: AppTextStyle.headline.of(context),
                         ),
                         const SizedBox(height: 8),
-                        Text(
-                          '累计获得 ${points?['totalEarned'] ?? 0} 分 · '
-                          '累计消费 ${points?['totalSpent'] ?? 0} 分 · '
-                          '今日已获得 ${points?['mintedToday'] ?? 0} 分',
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          '今日还可累计 ${qfPointsDailyRemaining(dailyCap: (points?['dailyCap'] as num?)?.toInt() ?? (params?['dailyCapPoints'] as num?)?.toInt() ?? 8, mintedToday: (points?['mintedToday'] as num?)?.toInt() ?? 0)} 分',
-                        ),
-                        const SizedBox(height: 8),
-                        LinearProgressIndicator(
-                          value: points == null
-                              ? 0
-                              : ((points['pendingMinutes'] as num? ?? 0) /
-                                        (points['minutesPerPoint'] as num? ??
-                                            180))
-                                    .clamp(0, 1)
-                                    .toDouble(),
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          '本轮进度：已累计 ${points?['pendingMinutes'] ?? 0} 分钟，'
-                          '距离下 1 分还差 ${points?['minutesToNextPoint'] ?? 0} 分钟',
-                        ),
+                        if (points == null)
+                          const Text('余额信息暂时无法加载，请稍后重试。')
+                        else ...[
+                          Text(
+                            '累计获得 ${points['totalEarned'] ?? 0} 分 · '
+                            '累计消费 ${points['totalSpent'] ?? 0} 分 · '
+                            '今日已获得 ${points['mintedToday'] ?? 0} 分',
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            '今日还可累计 ${qfPointsDailyRemaining(dailyCap: (points['dailyCap'] as num?)?.toInt() ?? (params?['dailyCapPoints'] as num?)?.toInt() ?? 8, mintedToday: (points['mintedToday'] as num?)?.toInt() ?? 0)} 分',
+                          ),
+                          const SizedBox(height: 8),
+                          LinearProgressIndicator(
+                            value: ((points['pendingMinutes'] as num? ?? 0) /
+                                    (points['minutesPerPoint'] as num? ?? 180))
+                                .clamp(0, 1)
+                                .toDouble(),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            '本轮进度：已累计 ${points['pendingMinutes'] ?? 0} 分钟，'
+                            '距离下 1 分还差 ${points['minutesToNextPoint'] ?? 0} 分钟',
+                          ),
+                        ],
                       ],
                     ),
                   ),
                 ),
                 const SizedBox(height: 16),
                 Text('积分明细', style: AppTextStyle.headline.of(context)),
-                if (_entries.isEmpty)
+                if (_entriesFailed)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    child: TextButton(
+                      onPressed: _load,
+                      child: const Text('积分明细加载失败，点击重试'),
+                    ),
+                  )
+                else if (_entries.isEmpty)
                   const Padding(
                     padding: EdgeInsets.symmetric(vertical: 12),
                     child: Text('暂无积分记录'),
@@ -2030,13 +2081,21 @@ class _QfPointsPageState extends State<QfPointsPage> {
                 const SizedBox(height: 16),
                 Text('积分规则', style: AppTextStyle.headline.of(context)),
                 const SizedBox(height: 8),
-                Text(
-                  '连接有效使用才计时：每累计 ${params?['minutesPerPoint'] ?? 180} 分钟得 1 分，'
-                  '未满部分不清零；每日最多 ${params?['dailyCapPoints'] ?? 8} 分（账号与设备双限）。'
-                  '计时以服务器为准；模拟器、改机、多开环境与长时间零流量不计分。'
-                  '作弊将面临清分、封号与封设备处置。如有疑问或需要申诉，'
-                  '请发送邮件至 ${_rules?['appealEmail'] ?? QfConfig.contactEmail}。',
-                ),
+                if (_rulesFailed)
+                  TextButton(
+                    onPressed: _load,
+                    child: const Text('积分规则加载失败，点击重试'),
+                  )
+                else if (_rules == null)
+                  const Text('积分规则暂时无法加载。')
+                else
+                  Text(
+                    '连接有效使用才计时：每累计 ${params?['minutesPerPoint'] ?? 180} 分钟得 1 分，'
+                    '未满部分不清零；每日最多 ${params?['dailyCapPoints'] ?? 8} 分（账号与设备双限）。'
+                    '计时以服务器为准；模拟器、改机、多开环境与长时间零流量不计分。'
+                    '作弊将面临清分、封号与封设备处置。如有疑问或需要申诉，'
+                    '请发送邮件至 ${_rules?['appealEmail'] ?? QfConfig.contactEmail}。',
+                  ),
               ],
             ),
     );
@@ -2142,11 +2201,18 @@ class QfRedeemPage extends StatefulWidget {
   State<QfRedeemPage> createState() => _QfRedeemPageState();
 }
 
+/// Safe id extraction for order/product rows: a missing or non-numeric
+/// id must surface as a visible data error, never a silent dead
+/// button via a throwing cast (C-22).
+int? qfRowId(Map<dynamic, dynamic> row) => (row['id'] as num?)?.toInt();
+
 class _QfRedeemPageState extends State<QfRedeemPage> {
   List<dynamic> _products = const [];
   List<dynamic> _orders = const [];
-  int _balance = 0;
+  int? _balance;
   bool _loading = true;
+  bool _productsFailed = false;
+  bool _ordersFailed = false;
 
   @override
   void initState() {
@@ -2157,19 +2223,29 @@ class _QfRedeemPageState extends State<QfRedeemPage> {
   Future<void> _load() async {
     try {
       final data = await widget.session.redeemProducts();
-      final orders = await widget.session.myOrders();
       if (mounted) {
         setState(() {
           final products = data['products'];
           _products = products is List ? products : const [];
-          _balance = (data['balance'] as num?)?.toInt() ?? 0;
-          _orders = orders;
-          _loading = false;
+          _balance = (data['balance'] as num?)?.toInt();
+          _productsFailed = false;
         });
       }
     } catch (_) {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) setState(() => _productsFailed = true);
     }
+    try {
+      final orders = await widget.session.myOrders();
+      if (mounted) {
+        setState(() {
+          _orders = orders;
+          _ordersFailed = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) setState(() => _ordersFailed = true);
+    }
+    if (mounted) setState(() => _loading = false);
   }
 
   Future<void> _redeem(Map<dynamic, dynamic> product) async {
@@ -2178,7 +2254,7 @@ class _QfRedeemPageState extends State<QfRedeemPage> {
       builder: (_) => _QfRedeemDialog(
         session: widget.session,
         product: product,
-        balance: _balance,
+        balance: _balance ?? 0,
       ),
     );
     if (!mounted) return;
@@ -2210,8 +2286,13 @@ class _QfRedeemPageState extends State<QfRedeemPage> {
       },
     );
     if (confirmed != true) return;
+    final orderId = qfRowId(order);
+    if (orderId == null) {
+      if (mounted) qfToast(context, '数据异常，请刷新后重试。');
+      return;
+    }
     try {
-      await widget.session.redeemCancelOrder((order['id'] as num).toInt());
+      await widget.session.redeemCancelOrder(orderId);
       if (mounted) qfToast(context, QfCopy.orderCancelledDone);
       await _load();
       await widget.session.refreshPoints();
@@ -2221,39 +2302,24 @@ class _QfRedeemPageState extends State<QfRedeemPage> {
   }
 
   Future<void> _changeOrderAddress(Map<dynamic, dynamic> order) async {
-    final controller = TextEditingController(
-      text: (order['payoutAddress'] ?? '').toString(),
-    );
     final address = await showDialog<String>(
       context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          title: const Text(QfCopy.orderChangeAddress),
-          content: TextField(
-            controller: controller,
-            decoration: const InputDecoration(labelText: 'USDT（TRC20）收款地址'),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              onPressed: () =>
-                  Navigator.of(dialogContext).pop(controller.text.trim()),
-              child: const Text('保存'),
-            ),
-          ],
-        );
-      },
+      builder: (_) => _QfChangeAddressDialog(
+        initial: (order['payoutAddress'] ?? '').toString(),
+      ),
     );
-    controller.dispose();
-    if (address == null || address.isEmpty) return;
+    if (address == null) return;
+    if (address.isEmpty) {
+      if (mounted) qfToast(context, '收款地址不能为空，修改已取消。');
+      return;
+    }
+    final orderId = qfRowId(order);
+    if (orderId == null) {
+      if (mounted) qfToast(context, '数据异常，请刷新后重试。');
+      return;
+    }
     try {
-      await widget.session.redeemChangePayoutAddress(
-        (order['id'] as num).toInt(),
-        address,
-      );
+      await widget.session.redeemChangePayoutAddress(orderId, address);
       if (mounted) qfToast(context, QfCopy.orderChangeAddressDone);
       await _load();
     } on QfApiException catch (e) {
@@ -2262,11 +2328,16 @@ class _QfRedeemPageState extends State<QfRedeemPage> {
   }
 
   Future<void> _showReveal(Map<dynamic, dynamic> order) async {
+    final orderId = qfRowId(order);
+    if (orderId == null) {
+      if (mounted) qfToast(context, '数据异常，请刷新后重试。');
+      return;
+    }
     await showDialog<void>(
       context: context,
       builder: (_) => _QfRevealCodeDialog(
         session: widget.session,
-        orderId: (order['id'] as num).toInt(),
+        orderId: orderId,
       ),
     );
     await _load();
@@ -2304,8 +2375,13 @@ class _QfRedeemPageState extends State<QfRedeemPage> {
           : ListView(
               padding: const EdgeInsets.all(16),
               children: [
-                Text('当前积分：$_balance 分'),
+                Text('当前积分：${_balance ?? '—'} 分'),
                 const SizedBox(height: 12),
+                if (_productsFailed)
+                  TextButton(
+                    onPressed: _load,
+                    child: const Text('商品加载失败，点击重试'),
+                  ),
                 for (final raw in _products)
                   if (raw is Map)
                     Card(
@@ -2321,15 +2397,15 @@ class _QfRedeemPageState extends State<QfRedeemPage> {
                         trailing: FilledButton(
                           onPressed:
                               qfStockSoldOut(raw) ||
-                                  _balance <
+                                  (_balance ?? 0) <
                                       ((raw['pricePoints'] as num?)?.toInt() ??
                                           0)
                               ? null
                               : () => _redeem(raw),
                           child: Text(
-                            _balance <
+                            (_balance ?? 0) <
                                     ((raw['pricePoints'] as num?)?.toInt() ?? 0)
-                                ? '还差 ${((raw['pricePoints'] as num?)?.toInt() ?? 0) - _balance} 分'
+                                ? '还差 ${((raw['pricePoints'] as num?)?.toInt() ?? 0) - (_balance ?? 0)} 分'
                                 : '兑换',
                           ),
                         ),
@@ -2337,7 +2413,15 @@ class _QfRedeemPageState extends State<QfRedeemPage> {
                     ),
                 const SizedBox(height: 16),
                 Text('我的兑换', style: AppTextStyle.headline.of(context)),
-                if (_orders.isEmpty)
+                if (_ordersFailed)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    child: TextButton(
+                      onPressed: _load,
+                      child: const Text('兑换记录加载失败，点击重试'),
+                    ),
+                  )
+                else if (_orders.isEmpty)
                   const Padding(
                     padding: EdgeInsets.symmetric(vertical: 12),
                     child: Text('暂无兑换记录'),
@@ -2353,7 +2437,7 @@ class _QfRedeemPageState extends State<QfRedeemPage> {
                             '${_orderStatusLabel(raw)}'
                             '${raw['payoutAddress'] != null ? '\n收款地址：${raw['payoutAddress']}' : ''}'
                             '${raw['payoutEmail'] != null ? '\n通知邮箱：${raw['payoutEmail']}' : ''}'
-                            '${raw['paidAt'] != null ? '\n打款时间：${DateTime.fromMillisecondsSinceEpoch(((raw['paidAt'] as num) * 1000).toInt())}' : ''}'
+                            '${raw['paidAt'] != null ? '\n打款时间：${DateTime.fromMillisecondsSinceEpoch((((raw['paidAt'] as num?) ?? 0) * 1000).toInt())}' : ''}'
                             '${raw['paidTx'] != null && raw['paidTx'].toString().isNotEmpty ? '\n打款交易号：${raw['paidTx']}' : ''}'
                             '${raw['reviewReason'] != null ? '\n驳回原因：${raw['reviewReason']}' : ''}',
                           ),
@@ -2389,6 +2473,52 @@ class _QfRedeemPageState extends State<QfRedeemPage> {
                     ),
               ],
             ),
+    );
+  }
+}
+
+/// Address editor that owns its controller for its whole lifetime:
+/// disposing a controller the caller created while the dialog is
+/// still leaving the tree is a use-after-dispose hazard (C-Q3), and
+/// an emptied field must be distinguishable from a cancel (C-23).
+class _QfChangeAddressDialog extends StatefulWidget {
+  final String initial;
+
+  const _QfChangeAddressDialog({required this.initial});
+
+  @override
+  State<_QfChangeAddressDialog> createState() => _QfChangeAddressDialogState();
+}
+
+class _QfChangeAddressDialogState extends State<_QfChangeAddressDialog> {
+  late final TextEditingController _controller = TextEditingController(
+    text: widget.initial,
+  );
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text(QfCopy.orderChangeAddress),
+      content: TextField(
+        controller: _controller,
+        decoration: const InputDecoration(labelText: 'USDT（TRC20）收款地址'),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.of(context).pop(_controller.text.trim()),
+          child: const Text('保存'),
+        ),
+      ],
     );
   }
 }
@@ -2454,9 +2584,14 @@ class _QfRedeemDialogState extends State<_QfRedeemDialog> {
 
   Future<void> _confirm() async {
     if (!_validate()) return;
+    final productId = qfRowId(widget.product);
+    if (productId == null) {
+      if (mounted) qfToast(context, '数据异常，请刷新后重试。');
+      return;
+    }
     try {
       await widget.session.redeemCreate(
-        (widget.product['id'] as num).toInt(),
+        productId,
         payoutMethod: _needsPayout ? _method : null,
         payoutAddress: _needsPayout && _method == 'usdt'
             ? _address.text.trim()
@@ -2635,6 +2770,10 @@ class _QfRevealCodeDialogState extends State<_QfRevealCodeDialog> {
         );
       }
       if (!mounted) return;
+      if (code.isEmpty) {
+        qfToast(context, '兑换码获取失败，请稍后重试。');
+        return;
+      }
       setState(() => _revealedCode = code);
       _maskTimer = Timer(const Duration(seconds: 60), () {
         if (mounted) Navigator.of(context).pop();
@@ -2699,7 +2838,7 @@ class _QfRevealCodeDialogState extends State<_QfRevealCodeDialog> {
                 ],
               ),
             ] else ...[
-              const Text('您的兑换码（离开本窗口后将重新遮罩）：'),
+              const Text('您的兑换码（本窗口将在 60 秒后自动关闭）：'),
               const SizedBox(height: 8),
               SelectableText(
                 _revealedCode!,
