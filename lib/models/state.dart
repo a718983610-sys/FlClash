@@ -232,6 +232,16 @@ abstract class MakeRealProfileState with _$MakeRealProfileState {
     @Default({}) Map<String, dynamic> injectedRuleProviders,
     String? matchTarget,
     @Default(false) bool safeMode,
+
+    /// The group the host wraps a base-carried profile in when the file
+    /// declares proxies but no group of its own; empty when the profile
+    /// carries its own groups or none are needed.
+    @Default({}) Map<String, dynamic> synthesizedGroup,
+
+    /// Whether [synthesizedGroup] may also become the target of a MATCH
+    /// rule: only when the profile declares no rules and the user added
+    /// none, so existing routing is never preempted.
+    @Default(false) bool synthesizedGroupNeedsMatch,
   }) = _MakeRealProfileState;
 }
 

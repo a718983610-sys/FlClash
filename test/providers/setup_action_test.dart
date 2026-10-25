@@ -1375,6 +1375,98 @@ void main() {
       expect(globalState.lastConfigCounts, (groups: 0, proxies: 0, rules: 0));
     });
 
+    Future<({YamlMap overlay, bool applied})> applyBareProfile({
+      required int baseRules,
+      bool outboundsFail = false,
+    }) async {
+      final profile = Profile.normal(label: 'p');
+      final core = _MockCoreHandlerInterface();
+      when(() => core.getProfileBase(any())).thenAnswer(
+        (_) async => ProfileBase(
+          config: const {},
+          digest: 'd',
+          proxies: 2,
+          proxyGroups: 0,
+          rules: baseRules,
+        ),
+      );
+      if (outboundsFail) {
+        when(
+          () => core.getProfileOutbounds(any()),
+        ).thenThrow(Exception('unreadable'));
+      } else {
+        when(() => core.getProfileOutbounds(any())).thenAnswer(
+          (_) async => {
+            'proxies': [
+              {'name': 'n1', 'type': 'ss'},
+              {'name': 'n2', 'type': 'ss'},
+            ],
+            'proxy-groups': <dynamic>[],
+          },
+        );
+      }
+      final pushed = <SetupParams>[];
+      when(() => core.setupConfig(any())).thenAnswer((invocation) async {
+        pushed.add(invocation.positionalArguments.single as SetupParams);
+        return '';
+      });
+      final scoped = ProviderContainer(
+        overrides: [
+          profilesProvider.overrideWith(() => TestProfiles([profile])),
+          currentProfileIdProvider.overrideWithBuild((_, _) => profile.id),
+          setupStateProvider.overrideWith(
+            (_, profileId) =>
+                nullProfileSetupState.copyWith(profileId: profileId),
+          ),
+          coreHandlerProvider.overrideWithValue(CoreController.scoped(core)),
+          setupActionProvider.overrideWith(SetupAction.new),
+        ],
+      );
+      addTearDown(scoped.dispose);
+      addTearDown(() => globalState.lastConfigCounts = null);
+      final applied = await scoped
+          .read(setupActionProvider.notifier)
+          .applyProfile(force: true);
+      return (
+        overlay: loadYaml(pushed.single.base!.overlay) as YamlMap,
+        applied: applied,
+      );
+    }
+
+    test('a bare base profile is wrapped in a synthesized group with a '
+        'MATCH rule', () async {
+      final (:overlay, :applied) = await applyBareProfile(baseRules: 0);
+      expect(applied, isTrue);
+      final groups = overlay['proxy-groups'] as YamlList;
+      expect(groups, hasLength(1));
+      final group = groups.single as YamlMap;
+      expect(group['name'], '节点选择');
+      expect(group['type'], 'select');
+      expect(group['proxies'], ['n1', 'n2', 'DIRECT']);
+      expect(overlay['rules'], ['MATCH,节点选择']);
+      expect(globalState.lastConfigCounts, (groups: 1, proxies: 2, rules: 1));
+    });
+
+    test('a bare base profile with its own rules gets the group but no '
+        'MATCH', () async {
+      final (:overlay, :applied) = await applyBareProfile(baseRules: 3);
+      expect(applied, isTrue);
+      expect(overlay['proxy-groups'], hasLength(1));
+      expect(overlay['rules'], isEmpty);
+      expect(globalState.lastConfigCounts, (groups: 1, proxies: 2, rules: 3));
+    });
+
+    test('a bare base profile still applies when its outbounds cannot be '
+        'read back', () async {
+      final (:overlay, :applied) = await applyBareProfile(
+        baseRules: 0,
+        outboundsFail: true,
+      );
+      expect(applied, isTrue);
+      expect(overlay['proxy-groups'], isNull);
+      expect(overlay['rules'], isEmpty);
+    });
+
     test('the preview shows the config the Core merges', () async {
       final profile = Profile.normal(label: 'p');
       final core = _MockCoreHandlerInterface();

@@ -586,6 +586,29 @@ class SetupAction extends _$SetupAction {
       proxyGroups: proxyGroups,
       rules: rules,
     );
+    var synthesizedGroup = const <String, dynamic>{};
+    var synthesizedGroupNeedsMatch = false;
+    if (profileBase != null &&
+        profileBase.base.proxies > 0 &&
+        profileBase.base.proxyGroups == 0) {
+      try {
+        final outbounds = await _core.getProfileOutbounds(profileId);
+        final declared = outbounds['proxies'];
+        final names = <String>[
+          if (declared is List)
+            for (final proxy in declared)
+              if (proxy is Map && proxy['name'] is String)
+                proxy['name'] as String,
+        ];
+        if (names.isNotEmpty) {
+          synthesizedGroup = bareProfileGroup(names);
+          synthesizedGroupNeedsMatch =
+              profileBase.base.rules == 0 && setupState.addedRules.isEmpty;
+        }
+      } catch (_) {
+        // Best effort: keep applying bare if the read-back fails.
+      }
+    }
     final res = await makeRealProfileTask(
       MakeRealProfileState(
         rules: rules,
@@ -609,6 +632,8 @@ class SetupAction extends _$SetupAction {
             ? setupState.matchTarget
             : lastMatchTarget(profileBase.base.matchRules),
         safeMode: ref.read(safeModeProvider),
+        synthesizedGroup: synthesizedGroup,
+        synthesizedGroupNeedsMatch: synthesizedGroupNeedsMatch,
       ),
     );
     if (profileBase == null) {

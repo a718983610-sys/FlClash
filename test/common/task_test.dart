@@ -229,6 +229,122 @@ void main() {
     },
   );
 
+  MakeRealProfileState bareState(
+    Map<String, dynamic> rawConfig, {
+    Map<String, dynamic> synthesizedGroup = const {},
+    bool synthesizedGroupNeedsMatch = false,
+  }) {
+    return MakeRealProfileState(
+      profilesPath: '/profiles',
+      profileId: 7,
+      rawConfig: rawConfig,
+      realPatchConfig: const PatchClashConfig(),
+      appendSystemDns: false,
+      proxyGroups: const [],
+      rules: const [],
+      addedRules: const [],
+      defaultUA: 'FlClash-Test',
+      synthesizedGroup: synthesizedGroup,
+      synthesizedGroupNeedsMatch: synthesizedGroupNeedsMatch,
+    );
+  }
+
+  test('makeRealProfileTask wraps a bare profile in a synthesized group '
+      'with a MATCH rule', () async {
+    final result = await makeRealProfileTask(
+      bareState({
+        'proxies': [
+          {'name': 'n1', 'type': 'ss'},
+          {'name': 'n2', 'type': 'ss'},
+        ],
+      }),
+    );
+    final config = loadYaml(result.yaml) as YamlMap;
+    final groups = config['proxy-groups'] as YamlList;
+    expect(groups, hasLength(1));
+    final group = groups.single as YamlMap;
+    expect(group['name'], '节点选择');
+    expect(group['type'], 'select');
+    expect(group['proxies'], ['n1', 'n2', 'DIRECT']);
+    expect(config['rules'], ['MATCH,节点选择']);
+    expect(result.counts, (groups: 1, proxies: 2, rules: 1));
+  });
+
+  test(
+    'makeRealProfileTask adds no MATCH over a bare profile\'s own rules',
+    () async {
+      final result = await makeRealProfileTask(
+        bareState({
+          'proxies': [
+            {'name': 'n1', 'type': 'ss'},
+          ],
+          'rules': ['DOMAIN,existing.example,DIRECT'],
+        }),
+      );
+      final config = loadYaml(result.yaml) as YamlMap;
+      expect(config['proxy-groups'], hasLength(1));
+      expect(config['rules'], ['DOMAIN,existing.example,DIRECT']);
+    },
+  );
+
+  test('makeRealProfileTask leaves a grouped profile untouched', () async {
+    final result = await makeRealProfileTask(
+      bareState({
+        'proxies': [
+          {'name': 'n1', 'type': 'ss'},
+        ],
+        'proxy-groups': [
+          {
+            'name': 'g',
+            'type': 'select',
+            'proxies': ['n1'],
+          },
+        ],
+      }),
+    );
+    final config = loadYaml(result.yaml) as YamlMap;
+    final groups = config['proxy-groups'] as YamlList;
+    expect(groups, hasLength(1));
+    expect((groups.single as YamlMap)['name'], 'g');
+    expect(config['rules'], isEmpty);
+  });
+
+  test('makeRealProfileTask applies a carried synthesized group for a '
+      'base-carried profile', () async {
+    final result = await makeRealProfileTask(
+      bareState(
+        const {},
+        synthesizedGroup: {
+          'name': '节点选择',
+          'type': 'select',
+          'proxies': ['n1', 'DIRECT'],
+        },
+        synthesizedGroupNeedsMatch: true,
+      ),
+    );
+    final config = loadYaml(result.yaml) as YamlMap;
+    expect(config['proxy-groups'], hasLength(1));
+    expect(config['rules'], ['MATCH,节点选择']);
+    expect(result.counts, (groups: 1, proxies: 0, rules: 1));
+  });
+
+  test('makeRealProfileTask withholds the MATCH when the carried group '
+      'must not preempt profile rules', () async {
+    final result = await makeRealProfileTask(
+      bareState(
+        const {},
+        synthesizedGroup: {
+          'name': '节点选择',
+          'type': 'select',
+          'proxies': ['n1', 'DIRECT'],
+        },
+      ),
+    );
+    final config = loadYaml(result.yaml) as YamlMap;
+    expect(config['proxy-groups'], hasLength(1));
+    expect(config['rules'], isEmpty);
+  });
+
   test('lastMatchTarget reads the last MATCH rule that names a target', () {
     expect(
       lastMatchTarget(['MATCH,A', 'DOMAIN,x.test,B', 'match,C', 'MATCH,']),

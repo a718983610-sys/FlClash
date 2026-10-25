@@ -108,6 +108,41 @@ String? lastMatchTarget(List<String> rules) {
   return null;
 }
 
+// The wrap for a profile that declares proxies but no group of its own.
+Map<String, dynamic> bareProfileGroup(List<String> proxyNames) {
+  final name = proxyNames.contains('节点选择') ? '节点选择组' : '节点选择';
+  return {
+    'name': name,
+    'type': 'select',
+    'proxies': [...proxyNames, 'DIRECT'],
+  };
+}
+
+Map<String, dynamic>? _synthesizedGroupFor(
+  MakeRealProfileState data,
+  Map<dynamic, dynamic> rawConfig,
+) {
+  if (data.synthesizedGroup.isNotEmpty) {
+    return data.synthesizedGroup;
+  }
+  final groups = rawConfig['proxy-groups'];
+  if (groups is List && groups.isNotEmpty) {
+    return null;
+  }
+  final proxies = rawConfig['proxies'];
+  if (proxies is! List || proxies.isEmpty) {
+    return null;
+  }
+  final names = <String>[
+    for (final proxy in proxies)
+      if (proxy is Map && proxy['name'] is String) proxy['name'] as String,
+  ];
+  if (names.isEmpty) {
+    return null;
+  }
+  return bareProfileGroup(names);
+}
+
 Future<RealProfile> makeRealProfileTask(MakeRealProfileState data) async {
   return compute<MakeRealProfileState, RealProfile>(_makeRealProfileTask, data);
 }
@@ -371,6 +406,16 @@ Future<RealProfile> _makeRealProfileTask(MakeRealProfileState data) async {
     rawConfig['proxy-groups'] = data.proxyGroups
         .map((item) => item.definition)
         .toList();
+  }
+  final synthesizedGroup = _synthesizedGroupFor(data, rawConfig);
+  if (synthesizedGroup != null) {
+    rawConfig['proxy-groups'] = [synthesizedGroup];
+    final mayMatch = data.synthesizedGroup.isNotEmpty
+        ? data.synthesizedGroupNeedsMatch
+        : true;
+    if (rules.isEmpty && mayMatch) {
+      rules = ['MATCH,${synthesizedGroup['name']}'];
+    }
   }
   rawConfig['rules'] = rules;
   final yaml = await _encodeYaml(Map<String, dynamic>.from(rawConfig));
