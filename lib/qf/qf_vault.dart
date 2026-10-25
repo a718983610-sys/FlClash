@@ -589,10 +589,7 @@ class QfVaultService {
 
   static Future<void> noteLocalSettingsChanged() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt(
-      _kLocalSettingsUpdatedAt,
-      await _anchoredNowSecs(),
-    );
+    await prefs.setInt(_kLocalSettingsUpdatedAt, await _anchoredNowSecs());
     await prefs.setBool(_kSettingsDirty, true);
   }
 
@@ -877,8 +874,7 @@ class _QfVaultEntryState extends ConsumerState<QfVaultEntry>
 
   void _flushPendingUpload() {
     final pending =
-        (_debounceTimer?.isActive ?? false) ||
-        (_retryTimer?.isActive ?? false);
+        (_debounceTimer?.isActive ?? false) || (_retryTimer?.isActive ?? false);
     if (!pending || _uploading) return;
     _debounceTimer?.cancel();
     _retryTimer?.cancel();
@@ -1495,6 +1491,7 @@ class _QfRestoreDialogState extends ConsumerState<_QfRestoreDialog> {
           .toSet();
       var added = 0;
       var skipped = 0;
+      final addedProfiles = <Profile>[];
       final restored = payload['profiles'];
       if (restored is List) {
         for (final raw in restored) {
@@ -1510,15 +1507,36 @@ class _QfRestoreDialogState extends ConsumerState<_QfRestoreDialog> {
             }
             ref.read(profilesProvider.notifier).put(profile);
             existingUrls.add(profile.url);
+            addedProfiles.add(profile);
             added += 1;
           } catch (_) {
             skipped += 1;
           }
         }
       }
+      // A restored row is only metadata until its config file is
+      // downloaded; reporting success before that made restored
+      // subscriptions look restored while holding no nodes at all (N-04).
+      var downloadFailed = 0;
+      for (final profile in addedProfiles) {
+        try {
+          await ref
+              .read(profilesActionProvider.notifier)
+              .updateProfile(profile);
+        } catch (_) {
+          downloadFailed += 1;
+        }
+      }
       if (!mounted) return;
       Navigator.of(context).pop(_password.text);
-      qfToast(context, '恢复完成：新增 $added 个订阅配置，$skipped 个已存在或无法识别并跳过。');
+      if (downloadFailed == 0) {
+        qfToast(context, '恢复完成：新增 $added 个订阅配置并已下载配置文件，$skipped 个已存在或无法识别并跳过。');
+      } else {
+        qfToast(
+          context,
+          '已新增 $added 个订阅配置，其中 $downloadFailed 个配置文件下载失败，请在订阅列表中逐个点「立即更新」重试；$skipped 个已存在或无法识别并跳过。',
+        );
+      }
     } on QfVaultException catch (e) {
       if (mounted) {
         setState(() => _busy = false);

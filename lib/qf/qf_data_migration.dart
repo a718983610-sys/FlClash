@@ -11,6 +11,12 @@ import 'package:path_provider/path_provider.dart';
 
 const String qfLegacyMarkerName = '.qf_legacy_migrated';
 
+/// Written into the current directory once a staged copy is complete
+/// and the move-in has begun; its presence (with or without the
+/// staging directory) means an interrupted migration must resume
+/// instead of the directory being judged "already has data".
+const String qfLegacyPendingName = '.qf_legacy_migration_pending';
+
 const Set<String> qfAppDataMarkers = {
   'config.yaml',
   'database.sqlite',
@@ -88,31 +94,77 @@ Future<void> _copyDirectory(Directory from, Directory to) async {
   }
 }
 
+Future<void> _deleteTree(Directory dir) async {
+  try {
+    if (await dir.exists()) await dir.delete(recursive: true);
+  } catch (_) {}
+}
+
 /// Core routine with an injectable current directory (tests use temp dirs).
 /// Never throws: a failed migration must not block startup.
+///
+/// The copy goes to a sibling staging directory first and is moved in
+/// only once complete, with a pending marker recording that a move is
+/// underway. Copying straight into the live directory (the old shape)
+/// meant a half-finished copy already counted as "current has data",
+/// so the migration was judged done-or-blocked forever and the rest
+/// of the legacy data never arrived (N-09).
 Future<bool> qfMigrateLegacyDataDir(Directory current) async {
+  final staging = Directory('${current.path}.qf-legacy-staging');
+  final marker = File(p.join(current.path, qfLegacyMarkerName));
+  final pending = File(p.join(current.path, qfLegacyPendingName));
   try {
-    final marker = File(p.join(current.path, qfLegacyMarkerName));
-    final markerExists = await marker.exists();
-    final newHasData = await _dirHasAppData(current);
-    Directory? legacy;
-    var legacyHasData = false;
-    for (final candidate in await _legacyCandidates(current)) {
-      if (await _dirHasAppData(candidate)) {
-        legacy = candidate;
-        legacyHasData = true;
-        break;
-      }
-    }
-    if (!qfShouldMigrate(
-      markerExists: markerExists,
-      newHasData: newHasData,
-      oldHasData: legacyHasData,
-    )) {
+    if (await marker.exists()) {
+      await _deleteTree(staging);
+      if (await pending.exists()) await pending.delete();
       return false;
     }
-    await _copyDirectory(legacy!, current);
-    await marker.writeAsString('migrated from ${legacy.path}');
+    final stagingExists = await staging.exists();
+    final pendingExists = await pending.exists();
+    if (stagingExists && !pendingExists) {
+      // Staging without a pending marker is an abandoned partial copy;
+      // the move-in never started, so discard and recopy from scratch.
+      await _deleteTree(staging);
+    }
+    // Staged work on disk means an earlier launch completed the copy
+    // (or the whole move) but died before writing the done marker.
+    final hasStagedWork = await staging.exists() || pendingExists;
+    if (!hasStagedWork) {
+      Directory? legacy;
+      var legacyHasData = false;
+      for (final candidate in await _legacyCandidates(current)) {
+        if (await _dirHasAppData(candidate)) {
+          legacy = candidate;
+          legacyHasData = true;
+          break;
+        }
+      }
+      if (!qfShouldMigrate(
+        markerExists: false,
+        newHasData: await _dirHasAppData(current),
+        oldHasData: legacyHasData,
+      )) {
+        return false;
+      }
+      await _copyDirectory(legacy!, staging);
+      await current.create(recursive: true);
+      await pending.writeAsString('staged from ${legacy.path}');
+    }
+    if (await staging.exists()) {
+      await current.create(recursive: true);
+      await for (final entity in staging.list(followLinks: false)) {
+        final target = p.join(current.path, p.basename(entity.path));
+        if (await Directory(target).exists()) {
+          await Directory(target).delete(recursive: true);
+        } else if (await File(target).exists()) {
+          await File(target).delete();
+        }
+        await entity.rename(target);
+      }
+      await _deleteTree(staging);
+    }
+    await marker.writeAsString('migrated');
+    if (await pending.exists()) await pending.delete();
     return true;
   } catch (_) {
     return false;

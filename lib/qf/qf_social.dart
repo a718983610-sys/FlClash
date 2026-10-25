@@ -660,7 +660,9 @@ class _QfProfilePageState extends State<QfProfilePage> {
     unawaited(_refreshHistoryStatus());
     // Local key presence is a local fact: probe it passively instead
     // of assuming a key exists whenever any profile call succeeds (C-35).
-    final hasLocalKey = await QfSignalStore.hasLocalIdentity();
+    final hasLocalKey = await QfSignalStore.hasLocalIdentity(
+      userId: widget.session.userId,
+    );
     try {
       final profile = await widget.session.socialGetProfile();
       final nickname = (profile['nickname'] ?? '').toString();
@@ -851,7 +853,10 @@ class _QfProfilePageState extends State<QfProfilePage> {
     if (password == null || password.isEmpty) return;
     try {
       await QfSignalManager.ensureInstalled(widget.session);
-      final backup = await QfSignalManager.buildBackup(password);
+      final backup = await QfSignalManager.buildBackup(
+        password,
+        userId: widget.session.userId,
+      );
       final transport = base64Encode(utf8.encode(jsonEncode(backup)));
       await widget.session.socialPutKeyBackup(transport);
       if (mounted) {
@@ -888,7 +893,11 @@ class _QfProfilePageState extends State<QfProfilePage> {
         if (mounted) qfToast(context, '恢复失败：备份数据已损坏');
         return;
       }
-      final ok = await QfSignalManager.restoreBackup(backup, password);
+      final ok = await QfSignalManager.restoreBackup(
+        backup,
+        password,
+        userId: widget.session.userId,
+      );
       if (ok) {
         try {
           final store = await QfSignalStore.load();
@@ -1245,8 +1254,10 @@ class _QfFriendsPageState extends State<QfFriendsPage> {
   Timer? _pollTimer;
   bool _loading = true;
   bool _supportDeskVisible = false;
+  bool _requestsStale = false;
   String? _error;
   int _loadGen = 0;
+  int _searchGen = 0;
 
   @override
   void initState() {
@@ -1271,13 +1282,18 @@ class _QfFriendsPageState extends State<QfFriendsPage> {
       final data = await widget.session.socialFriends();
       List<dynamic> incoming = const [];
       List<dynamic> outgoing = const [];
+      var requestsFailed = false;
       try {
         final requests = await widget.session.socialFriendRequests();
         final inRaw = requests['incoming'];
         final outRaw = requests['outgoing'];
         incoming = inRaw is List ? inRaw : const [];
         outgoing = outRaw is List ? outRaw : const [];
-      } catch (_) {}
+      } catch (_) {
+        // A failed requests fetch must not blank the pending lists the
+        // user is looking at: keep the previous ones and say so (N-06).
+        requestsFailed = true;
+      }
       final deskVisible = await qfSupportDeskVisible(widget.session);
       var unread = _unread;
       try {
@@ -1291,8 +1307,11 @@ class _QfFriendsPageState extends State<QfFriendsPage> {
             loggedIn: widget.session.isLoggedIn,
           );
           _supportDeskVisible = deskVisible;
-          _incoming = incoming;
-          _outgoing = outgoing;
+          if (!requestsFailed) {
+            _incoming = incoming;
+            _outgoing = outgoing;
+          }
+          _requestsStale = requestsFailed;
           _unread = unread;
           _loading = false;
           _error = null;
@@ -1318,11 +1337,15 @@ class _QfFriendsPageState extends State<QfFriendsPage> {
   Future<void> _doSearch() async {
     final query = _search.text.trim();
     if (query.isEmpty) return;
+    // Searches race each other when the user retypes quickly; only the
+    // newest query may land, or a slow stale answer overwrites the
+    // results of the query actually on screen (N-07).
+    final gen = ++_searchGen;
     try {
       final results = await widget.session.socialFriendSearch(query);
-      if (mounted) setState(() => _results = results);
+      if (mounted && gen == _searchGen) setState(() => _results = results);
     } on QfApiException catch (e) {
-      if (mounted) qfToast(context, e.message);
+      if (mounted && gen == _searchGen) qfToast(context, e.message);
     }
   }
 
@@ -1402,8 +1425,11 @@ class _QfFriendsPageState extends State<QfFriendsPage> {
   }
 
   Future<void> _confirmDelete(Map<dynamic, dynamic> raw) async {
-    final userId = (raw['userId'] as num?)?.toInt();
-    if (userId == null) return;
+    final userId = qfIdValue(raw['userId']);
+    if (userId == null) {
+      if (mounted) qfToast(context, '好友数据异常，暂时无法删除。');
+      return;
+    }
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) {
@@ -1428,8 +1454,11 @@ class _QfFriendsPageState extends State<QfFriendsPage> {
   }
 
   Future<void> _rejectRequest(Map<dynamic, dynamic> raw) async {
-    final requestId = (raw['id'] as num?)?.toInt();
-    if (requestId == null) return;
+    final requestId = qfIdValue(raw['id']);
+    if (requestId == null) {
+      if (mounted) qfToast(context, '申请数据异常，暂时无法处理。');
+      return;
+    }
     final choice = await showDialog<String>(
       context: context,
       builder: (dialogContext) {
@@ -1539,6 +1568,11 @@ class _QfFriendsPageState extends State<QfFriendsPage> {
                     padding: const EdgeInsets.only(bottom: 12),
                     child: Text('好友服务暂时不可用：$_error'),
                   ),
+                if (_requestsStale)
+                  const Padding(
+                    padding: EdgeInsets.only(bottom: 12),
+                    child: Text('好友申请刷新失败，当前显示的是上次加载的列表。'),
+                  ),
                 Row(
                   children: [
                     Expanded(
@@ -1558,12 +1592,19 @@ class _QfFriendsPageState extends State<QfFriendsPage> {
                     _userTile(
                       raw,
                       trailing: TextButton(
-                        onPressed: () => _act(
-                          () => widget.session.socialFriendRequest(
-                            (raw['userId'] as num).toInt(),
-                          ),
-                          '好友申请已经发送',
-                        ),
+                        onPressed: () {
+                          final userId = qfIdValue(raw['userId']);
+                          if (userId == null) {
+                            qfToast(context, '用户数据异常，暂时无法添加。');
+                            return;
+                          }
+                          unawaited(
+                            _act(
+                              () => widget.session.socialFriendRequest(userId),
+                              '好友申请已经发送',
+                            ),
+                          );
+                        },
                         child: const Text('添加'),
                       ),
                     ),
@@ -1578,12 +1619,21 @@ class _QfFriendsPageState extends State<QfFriendsPage> {
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             TextButton(
-                              onPressed: () => _act(
-                                () => widget.session.socialFriendAccept(
-                                  (raw['id'] as num).toInt(),
-                                ),
-                                '已添加为好友',
-                              ),
+                              onPressed: () {
+                                final requestId = qfIdValue(raw['id']);
+                                if (requestId == null) {
+                                  qfToast(context, '申请数据异常，暂时无法处理。');
+                                  return;
+                                }
+                                unawaited(
+                                  _act(
+                                    () => widget.session.socialFriendAccept(
+                                      requestId,
+                                    ),
+                                    '已添加为好友',
+                                  ),
+                                );
+                              },
                               child: const Text('同意'),
                             ),
                             TextButton(
@@ -1624,7 +1674,7 @@ class _QfFriendsPageState extends State<QfFriendsPage> {
                   if (raw is Map && !qfSupportIsBotEntry(raw))
                     _userTile(
                       raw,
-                      unread: _unread[(raw['userId'] as num?)?.toInt()] ?? 0,
+                      unread: _unread[qfIdValue(raw['userId'])] ?? 0,
                       subtitle: raw['username'] != null
                           ? '账户 ID：${raw['username']} · 点击进入聊天'
                           : '点击进入聊天',
@@ -1776,16 +1826,18 @@ class QfFriendProfilePage extends StatelessWidget {
     required this.friend,
   });
 
-  int get _peerId => (friend['userId'] as num).toInt();
+  int? get _peerId => qfIdValue(friend['userId']);
 
   Future<void> _verifyByScan(BuildContext context) async {
+    final peerId = _peerId;
+    if (peerId == null) return;
     final scanned = await Navigator.of(context).push<String>(
       MaterialPageRoute<String>(builder: (_) => const QfScanPage()),
     );
     if (scanned == null || !context.mounted) return;
     final fingerprint = await QfSignalManager.safetyFingerprint(
       session,
-      _peerId,
+      peerId,
     );
     if (fingerprint == null || !context.mounted) {
       if (context.mounted) qfToast(context, '暂时无法生成安全码');
@@ -1807,6 +1859,13 @@ class QfFriendProfilePage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final nickname = (friend['nickname'] ?? '').toString();
+    final peerId = _peerId;
+    if (peerId == null) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('好友资料')),
+        body: const Center(child: Text('好友数据异常，暂时无法查看资料。')),
+      );
+    }
     return Scaffold(
       appBar: AppBar(title: const Text('好友资料')),
       body: ListView(
@@ -1817,7 +1876,7 @@ class QfFriendProfilePage extends StatelessWidget {
               children: [
                 QfAvatarImage(
                   session: session,
-                  userId: _peerId,
+                  userId: peerId,
                   name: nickname,
                   hasAvatar: friend['hasAvatar'] == true,
                   avatarUpdatedAt: friend['avatarUpdatedAt'],
@@ -1844,7 +1903,7 @@ class QfFriendProfilePage extends StatelessWidget {
           ),
           const SizedBox(height: 12),
           FutureBuilder(
-            future: QfSignalManager.safetyFingerprint(session, _peerId),
+            future: QfSignalManager.safetyFingerprint(session, peerId),
             builder: (context, snapshot) {
               final fingerprint = snapshot.data;
               if (fingerprint == null) {
@@ -1928,7 +1987,11 @@ class _QfChatPageState extends State<QfChatPage> {
   List<dynamic> _recoveryRequests = const [];
   bool _recoveryBusy = false;
 
-  int get _peerId => (widget.friend['userId'] as num).toInt();
+  int? get _peerIdOrNull => qfIdValue(widget.friend['userId']);
+
+  /// Only read after the null gates in initState/build; a row without a
+  /// usable id renders the page unavailable instead of crashing (N-08).
+  int get _peerId => _peerIdOrNull!;
 
   String get _peerName => (widget.friend['nickname'] ?? '').toString();
 
@@ -1939,6 +2002,10 @@ class _QfChatPageState extends State<QfChatPage> {
   @override
   void initState() {
     super.initState();
+    if (_peerIdOrNull == null) {
+      _loading = false;
+      return;
+    }
     unawaited(QfSignalManager.ensureInstalledQuietly(widget.session));
     _load();
     unawaited(_syncHistoryOnOpen());
@@ -2331,6 +2398,13 @@ class _QfChatPageState extends State<QfChatPage> {
     }
     final picked = await FilePicker.pickFile();
     if (picked == null) return;
+    // Judge the size from the picker's metadata first: reading a huge
+    // file fully into memory just to reject it can OOM low-end devices.
+    final knownSize = picked.lengthSync() ?? await picked.length();
+    if (knownSize > qfAttachmentMaxBytes) {
+      if (mounted) qfToast(context, qfAttachmentTooLargeMessage);
+      return;
+    }
     final Uint8List bytes;
     try {
       bytes = await picked.readAsBytes();
@@ -2754,6 +2828,12 @@ class _QfChatPageState extends State<QfChatPage> {
 
   @override
   Widget build(BuildContext context) {
+    if (_peerIdOrNull == null) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('聊天')),
+        body: const Center(child: Text('聊天对象数据异常，暂时无法打开会话。')),
+      );
+    }
     return Scaffold(
       appBar: AppBar(
         title: Row(

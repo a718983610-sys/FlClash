@@ -768,7 +768,7 @@ class _QfCampAvatarState extends State<QfCampAvatar> {
       _bytes = cached;
       return;
     }
-    final campId = (widget.camp['id'] as num?)?.toInt();
+    final campId = qfIdValue(widget.camp['id']);
     if (campId == null) return;
     final bytes = await widget.session.forumCampAvatarBytes(campId);
     if (bytes != null && bytes.isNotEmpty) {
@@ -1421,12 +1421,15 @@ class _QfForumPageState extends State<QfForumPage>
   }
 
   void _openCamp(Map<dynamic, dynamic> camp) {
+    final campId = qfIdValue(camp['id']);
+    if (campId == null) {
+      qfToast(context, '营地数据异常，暂时无法打开。');
+      return;
+    }
     Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => QfForumCampPage(
-          session: widget.session,
-          campId: (camp['id'] as num).toInt(),
-        ),
+        builder: (_) =>
+            QfForumCampPage(session: widget.session, campId: campId),
       ),
     );
   }
@@ -1466,6 +1469,8 @@ class _QfForumPageState extends State<QfForumPage>
       itemBuilder: (context, index) {
         final raw = list[index];
         if (raw is! Map) return const SizedBox.shrink();
+        final postId = qfIdValue(raw['id']);
+        if (postId == null) return _postTile(raw);
         return Column(
           children: [
             _postTile(raw),
@@ -1476,7 +1481,7 @@ class _QfForumPageState extends State<QfForumPage>
                 post: raw,
                 application: qfForumRewardApplicationFor(
                   _rewardApplications,
-                  (raw['id'] as num).toInt(),
+                  postId,
                 ),
               ),
             ),
@@ -1783,9 +1788,9 @@ class _QfComposePostPageState extends State<_QfComposePostPage> {
             items: [
               const DropdownMenuItem<int?>(value: null, child: Text('不选择营地')),
               for (final raw in _camps)
-                if (raw is Map)
+                if (raw is Map && qfIdValue(raw['id']) != null)
                   DropdownMenuItem<int?>(
-                    value: (raw['id'] as num).toInt(),
+                    value: qfIdValue(raw['id']),
                     child: Text((raw['name'] ?? '').toString()),
                   ),
             ],
@@ -2341,6 +2346,13 @@ class _QfCampFormPageState extends State<QfCampFormPage> {
       qfToast(context, QfCopy.campFormRequired);
       return;
     }
+    final editCampId = widget.camp == null
+        ? null
+        : qfIdValue(widget.camp!['id']);
+    if ((widget.isEdit || widget.resubmit) && editCampId == null) {
+      qfToast(context, '营地数据异常，暂时无法提交。');
+      return;
+    }
     setState(() {
       _busy = true;
       _outcome = null;
@@ -2348,7 +2360,7 @@ class _QfCampFormPageState extends State<QfCampFormPage> {
     try {
       if (widget.resubmit) {
         final result = await widget.session.forumEditCamp(
-          (widget.camp!['id'] as num).toInt(),
+          editCampId!,
           name: name,
           description: description,
         );
@@ -2363,7 +2375,7 @@ class _QfCampFormPageState extends State<QfCampFormPage> {
       }
       if (widget.isEdit) {
         await widget.session.forumEditCamp(
-          (widget.camp!['id'] as num).toInt(),
+          editCampId!,
           name: name,
           description: description,
         );
@@ -2545,8 +2557,13 @@ class _QfMyCampsPageState extends State<QfMyCampsPage> {
       },
     );
     if (confirmed != true) return;
+    final campId = qfIdValue(camp['id']);
+    if (campId == null) {
+      if (mounted) qfToast(context, '营地数据异常，暂时无法删除。');
+      return;
+    }
     try {
-      await widget.session.forumDeleteCamp((camp['id'] as num).toInt());
+      await widget.session.forumDeleteCamp(campId);
       if (mounted) qfToast(context, QfCopy.campDeleted);
       await _load();
     } on QfApiException catch (e) {
@@ -2610,11 +2627,16 @@ class _QfMyCampsPageState extends State<QfMyCampsPage> {
                   onTap: status == 'closed'
                       ? null
                       : () {
+                          final campId = qfIdValue(raw['id']);
+                          if (campId == null) {
+                            qfToast(context, '营地数据异常，暂时无法打开。');
+                            return;
+                          }
                           Navigator.of(context).push(
                             MaterialPageRoute<void>(
                               builder: (_) => QfForumCampPage(
                                 session: widget.session,
-                                campId: (raw['id'] as num).toInt(),
+                                campId: campId,
                               ),
                             ),
                           );
@@ -2674,8 +2696,7 @@ class _QfForumCampListPageState extends State<QfForumCampListPage> {
       await qfForumGuideLogin(context, widget.session);
       return;
     }
-    final rawId = camp['id'];
-    final campId = rawId is num ? rawId.toInt() : int.tryParse('$rawId');
+    final campId = qfIdValue(camp['id']);
     if (campId == null || !_joiningCampIds.add(campId)) return;
     final wasJoined = camp['joined'] == true;
     final joined = !wasJoined;
@@ -2768,27 +2789,30 @@ class _QfForumCampListPageState extends State<QfForumCampListPage> {
                   ),
                   trailing: joined
                       ? OutlinedButton(
-                          onPressed: _joiningCampIds.contains(
-                            (raw['id'] as num?)?.toInt(),
-                          )
+                          onPressed:
+                              _joiningCampIds.contains(qfIdValue(raw['id']))
                               ? null
                               : () => _toggleJoin(raw),
                           child: const Text('已加入'),
                         )
                       : FilledButton(
-                          onPressed: _joiningCampIds.contains(
-                            (raw['id'] as num?)?.toInt(),
-                          )
+                          onPressed:
+                              _joiningCampIds.contains(qfIdValue(raw['id']))
                               ? null
                               : () => _toggleJoin(raw),
                           child: const Text('加入营地'),
                         ),
                   onTap: () {
+                    final campId = qfIdValue(raw['id']);
+                    if (campId == null) {
+                      qfToast(context, '营地数据异常，暂时无法打开。');
+                      return;
+                    }
                     Navigator.of(context).push(
                       MaterialPageRoute<void>(
                         builder: (_) => QfForumCampPage(
                           session: widget.session,
-                          campId: (raw['id'] as num).toInt(),
+                          campId: campId,
                         ),
                       ),
                     );

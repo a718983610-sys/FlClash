@@ -2274,9 +2274,16 @@ class QfRedeemPage extends StatefulWidget {
 /// id must surface as a visible data error, never a silent dead
 /// button via a throwing cast (C-22).
 int? qfRowId(Map<dynamic, dynamic> row) {
-  final raw = row['id'];
+  return qfIdValue(row['id']);
+}
+
+/// Safe id value for any row field: numeric values convert, numeric
+/// strings parse, and anything else (missing, null, dirty payloads)
+/// yields null instead of throwing a cast mid-build (N-08).
+int? qfIdValue(dynamic raw) {
   if (raw is num) return raw.toInt();
-  return int.tryParse('$raw');
+  if (raw is String) return int.tryParse(raw.trim());
+  return null;
 }
 
 class _QfRedeemPageState extends State<QfRedeemPage> {
