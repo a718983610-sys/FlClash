@@ -195,7 +195,9 @@ class ProfilesAction extends _$ProfilesAction {
         return;
       }
       final newProfile = latest.copyWith(
-        label: latest.label.takeFirstValid([updated.label]),
+        label: latest.hasFallbackLabel
+            ? updated.label.takeFirstValid([latest.label])
+            : latest.label,
         subscriptionInfo: updated.subscriptionInfo,
         lastUpdateDate: updated.lastUpdateDate,
       );

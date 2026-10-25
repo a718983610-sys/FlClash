@@ -142,6 +142,11 @@ extension ProfileExtension on Profile {
 
   String get defaultLabel => url.webUri?.host ?? id.toString();
 
+  /// True while the label is only the automatic fallback (unset, or the
+  /// URL host), not a name the user or a server actually chose.
+  bool get hasFallbackLabel =>
+      label.trim().isEmpty || label.trim() == defaultLabel;
+
   String get fileName => '$id.yaml';
 
   String get exportFileName {
@@ -193,10 +198,12 @@ extension ProfileExtension on Profile {
       throw MessageException(issue);
     }
     return copyWith(
-      label: label.takeFirstValid([
-        qfImportLabel(disposition: disposition, profileTitle: profileTitle),
-        defaultLabel,
-      ]),
+      label: hasFallbackLabel
+          ? qfImportLabel(
+              disposition: disposition,
+              profileTitle: profileTitle,
+            ).takeFirstValid([label, defaultLabel])
+          : label,
       subscriptionInfo: SubscriptionInfo.formHString(userinfo),
     ).saveFile(data, validate: validate);
   }
