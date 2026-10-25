@@ -117,21 +117,38 @@ void main() {
     });
   }
 
-  testWidgets('tab walks card to card without stopping on the delay control', (
-    tester,
-  ) async {
-    await pumpCards(tester, ProxyCardType.standard);
+  testWidgets(
+    'tab walks card to card, stopping only on the info button, never '
+    'on the delay control',
+    (tester) async {
+      await pumpCards(tester, ProxyCardType.standard);
 
-    await focusCard(tester, 0);
-    await tester.sendKeyEvent(LogicalKeyboardKey.tab);
-    await tester.pump();
+      await focusCard(tester, 0);
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.pump();
 
-    final context = FocusManager.instance.primaryFocus?.context;
-    expect(
-      context?.findAncestorWidgetOfExactType<ProxyCard>()?.key,
-      const ValueKey('proxy 1'),
-    );
-  });
+      // First stop is the card's own info button (added with the node
+      // detail pages): an actionable control belongs in the tab order.
+      var context = FocusManager.instance.primaryFocus?.context;
+      expect(
+        context?.findAncestorWidgetOfExactType<ProxyCard>()?.key,
+        const ValueKey('proxy 0'),
+      );
+      expect(
+        context?.findAncestorWidgetOfExactType<IconButton>()?.tooltip,
+        '详情',
+      );
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.pump();
+
+      context = FocusManager.instance.primaryFocus?.context;
+      expect(
+        context?.findAncestorWidgetOfExactType<ProxyCard>()?.key,
+        const ValueKey('proxy 1'),
+      );
+    },
+  );
 
   testWidgets('enter on the delay control runs the delay test', (tester) async {
     await pumpCards(tester, ProxyCardType.standard);
