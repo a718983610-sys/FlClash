@@ -98,25 +98,27 @@ Future<QfFrozenAction> qfShowFrozenDialog(
     builder: (dialogContext) {
       return AlertDialog(
         title: const Text('账户已被冻结'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(message),
-            if (frozenAt != null && frozenAt > 0)
-              Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: Text('冻结时间：${qfFormatEpochSeconds(frozenAt)}'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(message),
+              if (frozenAt != null && frozenAt > 0)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text('冻结时间：${qfFormatEpochSeconds(frozenAt)}'),
+                ),
+              const Padding(
+                padding: EdgeInsets.only(top: 8),
+                child: Text(
+                  '如您的绑定邮箱可以正常接收验证码，请通过忘记密码重置密码，'
+                  '重置成功后冻结将自动解除；如绑定邮箱已无法使用，'
+                  '请提交找回申诉，由人工审核后协助您恢复账户。',
+                ),
               ),
-            const Padding(
-              padding: EdgeInsets.only(top: 8),
-              child: Text(
-                '如您的绑定邮箱可以正常接收验证码，请通过忘记密码重置密码，'
-                '重置成功后冻结将自动解除；如绑定邮箱已无法使用，'
-                '请提交找回申诉，由人工审核后协助您恢复账户。',
-              ),
-            ),
-          ],
+            ],
+          ),
         ),
         actions: [
           TextButton(
@@ -191,17 +193,19 @@ Future<void> qfShowRegistrationFrozenDialog(
     builder: (dialogContext) {
       return AlertDialog(
         title: const Text('注册功能已暂时冻结'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(message),
-            if (until.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: Text('解冻日期：$until'),
-              ),
-          ],
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(message),
+              if (until.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text('解冻日期：$until'),
+                ),
+            ],
+          ),
         ),
         actions: [
           FilledButton(

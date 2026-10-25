@@ -79,7 +79,9 @@ Future<bool> _ownerConfirm(
     context: context,
     builder: (ctx) => AlertDialog(
       title: Text(title),
-      content: Text('$body\n\n该操作将记录在管理审计中。请核对无误后再继续。'),
+      content: SingleChildScrollView(
+        child: Text('$body\n\n该操作将记录在管理审计中。请核对无误后再继续。'),
+      ),
       actions: [
         TextButton(
           onPressed: () => Navigator.of(ctx).pop(false),

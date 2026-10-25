@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:crypto/crypto.dart' as crypto;
 import 'package:fl_clash/qf/qf_api.dart';
+import 'package:fl_clash/qf/qf_http_client.dart';
 import 'package:fl_clash/qf/qf_pages2.dart';
 import 'package:fl_clash/qf/qf_update.dart';
 import 'package:flutter/services.dart';
@@ -50,6 +51,10 @@ void main() {
     QfUpdateService.retryDelay = const Duration(milliseconds: 50);
     QfUpdateService.maxAutoRetries = 1;
     QfUpdateService.installTimeout = const Duration(milliseconds: 500);
+    savedTimeouts['progressStall'] = QfUpdateService.progressStallTimeout;
+    savedTimeouts['progressCheck'] = QfUpdateService.progressCheckInterval;
+    QfUpdateService.progressStallTimeout = const Duration(seconds: 45);
+    QfUpdateService.progressCheckInterval = const Duration(seconds: 5);
   });
 
   tearDown(() {
@@ -60,6 +65,8 @@ void main() {
     QfUpdateService.overallTimeout = savedTimeouts['overall']!;
     QfUpdateService.retryDelay = savedTimeouts['retryDelay']!;
     QfUpdateService.installTimeout = savedTimeouts['install']!;
+    QfUpdateService.progressStallTimeout = savedTimeouts['progressStall']!;
+    QfUpdateService.progressCheckInterval = savedTimeouts['progressCheck']!;
     QfUpdateService.maxAutoRetries = savedRetries;
     QfUpdateService.isAndroidForTest = null;
     QfUpdateService.isWindowsForTest = null;
@@ -117,6 +124,74 @@ void main() {
       QfUpdateService.download(urlOf(server), onProgress: (_) {}),
       throwsA(isA<QfApiException>().having((e) => e.code, 'code', 'TIMEOUT')),
     );
+  });
+
+  test(
+    'a trickling download is aborted by the throughput watchdog instead '
+    'of looking stuck until the overall timeout',
+    () async {
+      QfUpdateService.stallTimeout = const Duration(seconds: 5);
+      QfUpdateService.progressStallTimeout = const Duration(
+        milliseconds: 700,
+      );
+      QfUpdateService.progressCheckInterval = const Duration(
+        milliseconds: 100,
+      );
+      var hits = 0;
+      final server = await serve((request, hit) async {
+        hits = hit;
+        request.response.statusCode = 200;
+        request.response.contentLength = 1024 * 1024;
+        request.response.add(List<int>.filled(1024, 3));
+        await request.response.flush();
+        // Drip far below the meaningful-progress floor forever.
+        final drip = Timer.periodic(const Duration(milliseconds: 150), (_) {
+          try {
+            request.response.add(List<int>.filled(100, 3));
+          } catch (_) {}
+        });
+        unawaited(
+          request.response.done.whenComplete(drip.cancel).catchError((_) {}),
+        );
+        await Completer<void>().future;
+      });
+      final sw = Stopwatch()..start();
+      await expectLater(
+        QfUpdateService.download(urlOf(server), onProgress: (_) {}),
+        throwsA(
+          isA<QfApiException>()
+              .having((e) => e.code, 'code', 'TIMEOUT')
+              .having((e) => e.message, 'message', contains('长时间没有进展')),
+        ),
+      );
+      expect(sw.elapsed, lessThan(const Duration(seconds: 8)));
+      expect(hits, 2, reason: 'the watchdog failure auto-retries once');
+    },
+  );
+
+  test('alternateSourceFor mirrors the account stack cross-path rule', () {
+    expect(
+      QfUpdateService.alternateSourceFor(QfProxySource.core),
+      QfProxySource.direct,
+    );
+    expect(
+      QfUpdateService.alternateSourceFor(QfProxySource.direct),
+      QfProxySource.core,
+    );
+    expect(
+      QfUpdateService.alternateSourceFor(QfProxySource.system),
+      QfProxySource.direct,
+    );
+    expect(
+      QfUpdateService.alternateSourceFor(QfProxySource.environment),
+      QfProxySource.direct,
+    );
+  });
+
+  test('qfDownloadProgressText shows bytes and a percentage number', () {
+    expect(qfDownloadProgressText(0, -1), '已下载 0 B');
+    expect(qfDownloadProgressText(512, 1024), '已下载 512 B / 1.0 KB（50%）');
+    expect(qfDownloadProgressText(2048, 1024), '已下载 2.0 KB / 1.0 KB（100%）');
   });
 
   test('healthy download reports bytes and verifies sha256', () async {

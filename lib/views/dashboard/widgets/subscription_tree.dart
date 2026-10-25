@@ -181,14 +181,9 @@ class SubscriptionTreeCard extends ConsumerWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          if (profiles.isEmpty)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 12, 20, 4),
-              child: Text(
-                '暂无订阅。添加一份订阅后，它的分组与节点会列在这里，点开即可自选节点。',
-                style: AppTextStyle.subheadline.of(context),
-              ),
-            ),
+          // No "you have not imported a subscription yet" reminder:
+          // the owner removed it outright (2026-10-25) — with no
+          // profiles the card simply offers the add actions below.
           for (final profile in profiles)
             _BigGroupSection(
               profile: profile,

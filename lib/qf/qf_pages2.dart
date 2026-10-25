@@ -67,9 +67,11 @@ class QfUpdateFlow {
             context: context,
             barrierDismissible: true,
             builder: (dialogContext) => AlertDialog(
-              content: QfUpdateDownloadPanel(
-                result: check,
-                onClose: () => Navigator.of(dialogContext).pop(),
+              content: SingleChildScrollView(
+                child: QfUpdateDownloadPanel(
+                  result: check,
+                  onClose: () => Navigator.of(dialogContext).pop(),
+                ),
               ),
             ),
           );
@@ -1351,6 +1353,17 @@ String qfFormatBytes(int bytes) {
   return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
 }
 
+/// Download progress line: bytes moved / total, plus the percentage
+/// number whenever the total is known.
+String qfDownloadProgressText(int received, int total) {
+  final receivedText = qfFormatBytes(received);
+  if (total <= 0) return '已下载 $receivedText';
+  var percent = (received * 100 / total).round();
+  if (percent < 0) percent = 0;
+  if (percent > 100) percent = 100;
+  return '已下载 $receivedText / ${qfFormatBytes(total)}（$percent%）';
+}
+
 class _QfUpdateDownloadPanelState extends State<QfUpdateDownloadPanel>
     with WidgetsBindingObserver {
   double? _progress;
@@ -1445,13 +1458,8 @@ class _QfUpdateDownloadPanelState extends State<QfUpdateDownloadPanel>
     }
   }
 
-  String get _progressText {
-    final received = qfFormatBytes(_receivedBytes);
-    if (_totalBytes > 0) {
-      return '已下载 $received / ${qfFormatBytes(_totalBytes)}';
-    }
-    return '已下载 $received';
-  }
+  String get _progressText =>
+      qfDownloadProgressText(_receivedBytes, _totalBytes);
 
   Future<void> _install(File file) async {
     if (mounted) setState(() => _status = '下载完成，正在打开安装');
@@ -1709,34 +1717,36 @@ Future<void> qfShowBanDialog(
     builder: (dialogContext) {
       return AlertDialog(
         title: const Text('账户已被封禁'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(QfSessionController.formatBanNotice(data)),
-            if (reason.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: Text('封禁原因：$reason'),
-              ),
-            QfBanAppealEntry(
-              session: session,
-              identifier: account,
-              credential: credential,
-              onAppeal: () {
-                Navigator.of(dialogContext).pop();
-                Navigator.of(context).push(
-                  MaterialPageRoute<void>(
-                    builder: (_) => QfAppealPage(
-                      serverBaseUrl: session.serverBaseUrl,
-                      initialAccount: account,
-                      permanent: data['permanent'] == true,
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(QfSessionController.formatBanNotice(data)),
+              if (reason.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text('封禁原因：$reason'),
+                ),
+              QfBanAppealEntry(
+                session: session,
+                identifier: account,
+                credential: credential,
+                onAppeal: () {
+                  Navigator.of(dialogContext).pop();
+                  Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => QfAppealPage(
+                        serverBaseUrl: session.serverBaseUrl,
+                        initialAccount: account,
+                        permanent: data['permanent'] == true,
+                      ),
                     ),
-                  ),
-                );
-              },
-            ),
-          ],
+                  );
+                },
+              ),
+            ],
+          ),
         ),
         actions: [
           TextButton(

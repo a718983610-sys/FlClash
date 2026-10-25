@@ -81,6 +81,28 @@ class QfUpdateService {
   static int maxAutoRetries = 1;
   static Duration installTimeout = const Duration(seconds: 30);
 
+  // Throughput watchdog: a connection that keeps trickling a few bytes
+  // never trips the per-gap stall timeout, so a 60+MB package can sit
+  // at a frozen-looking percentage for the full overall timeout (the
+  // user-reported "update is stuck"). If fewer than [minProgressBytes]
+  // arrive within [progressStallTimeout], the attempt is aborted as a
+  // timeout and the auto-retry switches path (see alternateSourceFor).
+  static Duration progressStallTimeout = const Duration(seconds: 45);
+  static Duration progressCheckInterval = const Duration(seconds: 5);
+  static int minProgressBytes = 32 * 1024;
+
+  /// The path the automatic retry should force after [source] failed or
+  /// stalled: the account stack's cross-path rule — a download that
+  /// died on the proxied path gets a direct attempt and vice versa.
+  static QfProxySource alternateSourceFor(QfProxySource source) {
+    return switch (source) {
+      QfProxySource.core => QfProxySource.direct,
+      QfProxySource.direct => QfProxySource.core,
+      QfProxySource.system => QfProxySource.direct,
+      QfProxySource.environment => QfProxySource.direct,
+    };
+  }
+
   static String get platformKey =>
       platformKeyOverride ??
       (Platform.isAndroid
@@ -239,6 +261,7 @@ class QfUpdateService {
         : Uri.parse(url).pathSegments.last;
     final file = File('${dir.path}/$fileName');
     var attempt = 0;
+    QfProxySource? retryForceSource;
     while (true) {
       if (control?.isCancelled == true) {
         throw const QfApiException(0, 'CANCELLED', '已取消下载');
@@ -250,6 +273,7 @@ class QfUpdateService {
           onProgress: onProgress,
           onBytes: onBytes,
           control: control,
+          forceSource: retryForceSource,
         );
         break;
       } catch (e) {
@@ -263,10 +287,12 @@ class QfUpdateService {
         if (!retryable || attempt >= maxAutoRetries) rethrow;
         attempt++;
         onAutoRetry?.call();
+        // Cross-path retry (same rule as the account stack): force the
+        // alternate route, so a path that is up but cannot actually
+        // move bytes (dead node, throttled direct route) is not simply
+        // retried identically.
+        retryForceSource = alternateSourceFor(QfHttpClient.lastDecision.source);
         await Future<void>.delayed(retryDelay);
-        // The next attempt builds a fresh client, so the proxy decision
-        // (core running? which port?) is re-resolved at retry time
-        // instead of reusing the possibly stale boot-time verdict.
       }
     }
     var sha = (expectedSha256 ?? '').trim().toLowerCase();
@@ -287,12 +313,25 @@ class QfUpdateService {
     required void Function(double progress) onProgress,
     void Function(int received, int total)? onBytes,
     QfDownloadControl? control,
+    QfProxySource? forceSource,
   }) async {
-    final client = await QfHttpClient.create(uri: Uri.parse(url));
+    final client = await QfHttpClient.create(
+      uri: Uri.parse(url),
+      forceSource: forceSource,
+    );
     var overallTimedOut = false;
     final overallTimer = Timer(overallTimeout, () {
       overallTimedOut = true;
       client.close(force: true);
+    });
+    var progressStalled = false;
+    var lastMarkBytes = 0;
+    var lastMarkAt = DateTime.now();
+    final progressTimer = Timer.periodic(progressCheckInterval, (_) {
+      if (DateTime.now().difference(lastMarkAt) > progressStallTimeout) {
+        progressStalled = true;
+        client.close(force: true);
+      }
     });
     control?._bind(() => client.close(force: true));
     try {
@@ -327,6 +366,9 @@ class QfUpdateService {
       }
       final total = response.contentLength;
       var received = 0;
+      // The throughput watchdog judges the body phase only; a slow
+      // connect/headers phase has its own timeouts above.
+      lastMarkAt = DateTime.now();
       onBytes?.call(0, total);
       final sink = file.openWrite();
       try {
@@ -336,6 +378,10 @@ class QfUpdateService {
           }
           sink.add(chunk);
           received += chunk.length;
+          if (received - lastMarkBytes >= minProgressBytes) {
+            lastMarkBytes = received;
+            lastMarkAt = DateTime.now();
+          }
           onBytes?.call(received, total);
           if (total > 0) onProgress(received / total);
         }
@@ -351,6 +397,13 @@ class QfUpdateService {
       if (overallTimedOut) {
         throw const QfApiException(0, 'TIMEOUT', '下载超时，请检查网络后重试');
       }
+      if (progressStalled) {
+        throw const QfApiException(
+          0,
+          'TIMEOUT',
+          '下载长时间没有进展，已自动停止，请检查网络后重试',
+        );
+      }
       if (e is QfApiException) rethrow;
       if (e is TimeoutException) {
         throw const QfApiException(0, 'TIMEOUT', '下载超时，请检查网络后重试');
@@ -358,6 +411,7 @@ class QfUpdateService {
       throw const QfApiException(0, 'NETWORK', '下载失败，请检查网络后重试');
     } finally {
       overallTimer.cancel();
+      progressTimer.cancel();
       control?._unbind();
       client.close(force: true);
     }

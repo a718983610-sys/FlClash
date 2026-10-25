@@ -20,6 +20,7 @@ import 'qf_providers.dart';
 import 'qf_recovery.dart';
 import 'qf_session.dart';
 import 'qf_social.dart';
+import 'qf_support.dart';
 import 'qf_update.dart';
 import 'qf_version.dart';
 
@@ -777,36 +778,50 @@ class _QfLoginFormState extends State<QfLoginForm> {
             builder: (dialogContext) {
               return AlertDialog(
                 title: const Text('账户已被封禁'),
-                content: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(QfSessionController.formatBanNotice(e.data)),
-                    if (reason.isNotEmpty)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 8),
-                        child: Text('封禁原因：$reason'),
-                      ),
-                    QfBanAppealEntry(
-                      session: widget.session,
-                      identifier: _email.text.trim(),
-                      credential: cred,
-                      onAppeal: () {
-                        Navigator.of(dialogContext).pop();
-                        Navigator.of(context).push(
-                          MaterialPageRoute<void>(
-                            builder: (_) => QfAppealPage(
-                              serverBaseUrl: widget.session.serverBaseUrl,
-                              initialAccount: _email.text.trim(),
-                              permanent: e.data['permanent'] == true,
+                content: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(QfSessionController.formatBanNotice(e.data)),
+                      if (reason.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 8),
+                          child: Text('封禁原因：$reason'),
+                        ),
+                      QfBanAppealEntry(
+                        session: widget.session,
+                        identifier: _email.text.trim(),
+                        credential: cred,
+                        onAppeal: () {
+                          Navigator.of(dialogContext).pop();
+                          Navigator.of(context).push(
+                            MaterialPageRoute<void>(
+                              builder: (_) => QfAppealPage(
+                                serverBaseUrl: widget.session.serverBaseUrl,
+                                initialAccount: _email.text.trim(),
+                                permanent: e.data['permanent'] == true,
+                              ),
                             ),
-                          ),
-                        );
-                      },
-                    ),
-                  ],
+                          );
+                        },
+                      ),
+                    ],
+                  ),
                 ),
                 actions: [
+                  TextButton(
+                    onPressed: () {
+                      Navigator.of(dialogContext).pop();
+                      Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) =>
+                              QfSupportPage(session: widget.session),
+                        ),
+                      );
+                    },
+                    child: const Text('联系智能客服'),
+                  ),
                   FilledButton(
                     onPressed: () => Navigator.of(dialogContext).pop(),
                     child: const Text('我知道了'),

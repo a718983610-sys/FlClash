@@ -1210,12 +1210,14 @@ class _QfForumPageState extends State<QfForumPage>
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('营地使用方法'),
-        content: const Text(
-          '营地是按话题划分的社区空间。官方社区由官方维护，个人营地由用户创建。\n\n'
-          '· 点开任意营地即可浏览其中的帖子；加入营地后可以在营地内发帖。\n'
-          '· 在「全部」里可以按热度查看全部营地。\n'
-          '· 登录后可以创建自己的营地，营地名称、简介和头像经审核通过后正式上线；'
-          '创建者可以在自己的营地页里修改名称、简介和头像。',
+        content: const SingleChildScrollView(
+          child: Text(
+            '营地是按话题划分的社区空间。官方社区由官方维护，个人营地由用户创建。\n\n'
+            '· 点开任意营地即可浏览其中的帖子；加入营地后可以在营地内发帖。\n'
+            '· 在「全部」里可以按热度查看全部营地。\n'
+            '· 登录后可以创建自己的营地，营地名称、简介和头像经审核通过后正式上线；'
+            '创建者可以在自己的营地页里修改名称、简介和头像。',
+          ),
         ),
         actions: [
           TextButton(

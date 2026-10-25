@@ -288,7 +288,7 @@ class _QfSessionGateState extends ConsumerState<QfSessionGate> {
         builder: (dialogContext) {
           shown = true;
           return AlertDialog(
-            content: Text(message),
+            content: SingleChildScrollView(child: Text(message)),
             actions: [
               FilledButton(
                 onPressed: () => Navigator.of(dialogContext).pop(),
@@ -328,36 +328,50 @@ class _QfSessionGateState extends ConsumerState<QfSessionGate> {
         builder: (dialogContext) {
           return AlertDialog(
             title: const Text('账户已被封禁'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(notice),
-                if (reason.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 8),
-                    child: Text('封禁原因：$reason'),
-                  ),
-                QfBanAppealEntry(
-                  session: session,
-                  identifier: account,
-                  credential: null,
-                  onAppeal: () {
-                    Navigator.of(dialogContext).pop();
-                    Navigator.of(context).push(
-                      MaterialPageRoute<void>(
-                        builder: (_) => QfAppealPage(
-                          serverBaseUrl: session.serverBaseUrl,
-                          initialAccount: account,
-                          permanent: notice.contains('永久封禁'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(notice),
+                  if (reason.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Text('封禁原因：$reason'),
+                    ),
+                  QfBanAppealEntry(
+                    session: session,
+                    identifier: account,
+                    credential: null,
+                    onAppeal: () {
+                      Navigator.of(dialogContext).pop();
+                      Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => QfAppealPage(
+                            serverBaseUrl: session.serverBaseUrl,
+                            initialAccount: account,
+                            permanent: notice.contains('永久封禁'),
+                          ),
                         ),
-                      ),
-                    );
-                  },
-                ),
-              ],
+                      );
+                    },
+                  ),
+                ],
+              ),
             ),
             actions: [
+              TextButton(
+                key: const ValueKey('qf-gate-ban-support'),
+                onPressed: () {
+                  Navigator.of(dialogContext).pop();
+                  Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => QfSupportPage(session: session),
+                    ),
+                  );
+                },
+                child: const Text('联系智能客服'),
+              ),
               FilledButton(
                 onPressed: () => Navigator.of(dialogContext).pop(),
                 child: const Text('我知道了'),
@@ -419,9 +433,11 @@ class _QfSessionGateState extends ConsumerState<QfSessionGate> {
           context: context,
           barrierDismissible: true,
           builder: (dialogContext) => AlertDialog(
-            content: QfUpdateDownloadPanel(
-              result: check,
-              onClose: () => Navigator.of(dialogContext).pop(),
+            content: SingleChildScrollView(
+              child: QfUpdateDownloadPanel(
+                result: check,
+                onClose: () => Navigator.of(dialogContext).pop(),
+              ),
             ),
           ),
         );
