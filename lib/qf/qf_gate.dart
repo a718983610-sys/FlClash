@@ -109,11 +109,15 @@ class _QfSessionGateState extends ConsumerState<QfSessionGate> {
         return false;
       }
     };
-    try {
-      QfHttpClient.corePort = ref.read(
-        patchClashConfigProvider.select((state) => state.mixedPort),
-      );
-    } catch (_) {}
+    QfHttpClient.corePortResolver = () {
+      try {
+        return ref.read(
+          patchClashConfigProvider.select((state) => state.mixedPort),
+        );
+      } catch (_) {
+        return 7890;
+      }
+    };
     session.trafficTotalFn = () {
       final traffic = ref.read(totalTrafficProvider);
       return (traffic.up + traffic.down).toInt();
@@ -442,6 +446,11 @@ class _QfSessionGateState extends ConsumerState<QfSessionGate> {
         final message = (data['message'] ?? '').toString();
         if (message.isNotEmpty) {
           _regionMessage = message;
+          // Queue immediately (C-08): waiting for a later build to
+          // notice the message could strand it forever on screens
+          // that never rebuild.
+          _queueRegionDialog();
+          if (mounted) setState(() {});
         }
       }
     } catch (_) {}

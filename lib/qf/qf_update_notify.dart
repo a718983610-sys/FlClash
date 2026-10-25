@@ -71,14 +71,18 @@ class QfUpdateNotify {
     if (!Platform.isAndroid) return;
     final prefs = await SharedPreferences.getInstance();
     if (prefs.getBool(_permAskedKey) == true) return;
-    await prefs.setBool(_permAskedKey, true);
     try {
       final plugin = await _ensurePlugin();
-      await plugin
+      final android = plugin
           .resolvePlatformSpecificImplementation<
             AndroidFlutterLocalNotificationsPlugin
-          >()
-          ?.requestNotificationsPermission();
+          >();
+      if (android == null) return;
+      await android.requestNotificationsPermission();
+      // Record "asked" only after the system prompt was actually
+      // requested (C-53): flagging first would suppress every later
+      // attempt when this call failed before reaching the system.
+      await prefs.setBool(_permAskedKey, true);
     } catch (_) {}
   }
 

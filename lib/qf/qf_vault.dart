@@ -834,7 +834,8 @@ class QfVaultEntry extends ConsumerStatefulWidget {
   ConsumerState<QfVaultEntry> createState() => _QfVaultEntryState();
 }
 
-class _QfVaultEntryState extends ConsumerState<QfVaultEntry> {
+class _QfVaultEntryState extends ConsumerState<QfVaultEntry>
+    with WidgetsBindingObserver {
   ProviderSubscription<Config>? _configSubscription;
   Timer? _debounceTimer;
   Timer? _retryTimer;
@@ -842,10 +843,12 @@ class _QfVaultEntryState extends ConsumerState<QfVaultEntry> {
   int _uploadAttempts = 0;
   bool _uploading = false;
   bool _applyingCloud = false;
+  bool _syncFailed = false;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _lastProjection = jsonEncode(_projectedSettings());
     _configSubscription = ref.listenManual(configProvider, (_, _) {
       _onConfigChanged();
@@ -854,10 +857,43 @@ class _QfVaultEntryState extends ConsumerState<QfVaultEntry> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    // Unsent debounced changes must not die with the page (C-30):
+    // flush them best-effort before the timers are cancelled.
+    _flushPendingUpload();
     _debounceTimer?.cancel();
     _retryTimer?.cancel();
     _configSubscription?.close();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden) {
+      _flushPendingUpload();
+    }
+  }
+
+  void _flushPendingUpload() {
+    final pending =
+        (_debounceTimer?.isActive ?? false) ||
+        (_retryTimer?.isActive ?? false);
+    if (!pending || _uploading) return;
+    _debounceTimer?.cancel();
+    _retryTimer?.cancel();
+    if (!widget.session.isLoggedIn || !QfVaultService.settingsUnlocked) {
+      return;
+    }
+    final settings = _projectedSettings();
+    unawaited(() async {
+      try {
+        await QfVaultService.uploadSettingsBackup(
+          session: widget.session,
+          settings: settings,
+        );
+      } catch (_) {}
+    }());
   }
 
   Map<String, dynamic> _configJson() {
@@ -906,6 +942,7 @@ class _QfVaultEntryState extends ConsumerState<QfVaultEntry> {
         settings: _projectedSettings(),
       );
       _uploadAttempts = 0;
+      if (_syncFailed && mounted) setState(() => _syncFailed = false);
     } catch (_) {
       _uploadAttempts += 1;
       if (_uploadAttempts <= QfSettingsSync.maxUploadRetries) {
@@ -914,6 +951,10 @@ class _QfVaultEntryState extends ConsumerState<QfVaultEntry> {
           Duration(seconds: 15 * _uploadAttempts),
           _attemptUpload,
         );
+      } else if (mounted) {
+        // Retries exhausted: say so where the user can act on it
+        // instead of failing silently forever (C-31).
+        setState(() => _syncFailed = true);
       }
     } finally {
       _uploading = false;
@@ -921,42 +962,57 @@ class _QfVaultEntryState extends ConsumerState<QfVaultEntry> {
   }
 
   Future<void> _afterUnlock(String password) async {
+    // Each step reports its own failure (C-32): one blanket catch made
+    // a failed pull, a failed merge and a failed upload
+    // indistinguishable - and invisible.
+    final QfSettingsPullResult result;
     try {
-      final result = await QfVaultService.pullSettings(
+      result = await QfVaultService.pullSettings(
         session: widget.session,
         password: password,
       );
-      if (!mounted) return;
-      switch (result.decision) {
-        case QfSettingsSyncDecision.cloudNewer:
-          final settings = result.settings;
-          if (settings == null) return;
-          _applyingCloud = true;
-          try {
-            final merged = QfSettingsSync.mergeIntoConfig(
-              _configJson(),
-              settings,
-            );
-            _applyMergedConfig(
-              Config.fromJson(Map<String, Object?>.from(merged)),
-            );
-            _lastProjection = jsonEncode(
-              QfSettingsSync.projectSettings(merged),
-            );
-          } finally {
-            _applyingCloud = false;
-          }
-          if (mounted) qfToast(context, '已应用云端设置。');
-        case QfSettingsSyncDecision.localNewer:
+    } catch (_) {
+      if (mounted) qfToast(context, '拉取云端设置失败，请检查网络后重试。');
+      return;
+    }
+    if (!mounted) return;
+    switch (result.decision) {
+      case QfSettingsSyncDecision.cloudNewer:
+        final settings = result.settings;
+        if (settings == null) return;
+        _applyingCloud = true;
+        try {
+          final merged = QfSettingsSync.mergeIntoConfig(
+            _configJson(),
+            settings,
+          );
+          _applyMergedConfig(
+            Config.fromJson(Map<String, Object?>.from(merged)),
+          );
+          _lastProjection = jsonEncode(QfSettingsSync.projectSettings(merged));
+        } catch (_) {
+          if (mounted) qfToast(context, '云端设置应用失败，已保留本机设置。');
+          return;
+        } finally {
+          _applyingCloud = false;
+        }
+        if (mounted) qfToast(context, '已应用云端设置。');
+      case QfSettingsSyncDecision.localNewer:
+        try {
           await QfVaultService.uploadSettingsBackup(
             session: widget.session,
             settings: _projectedSettings(),
           );
-        case QfSettingsSyncDecision.inSync:
-        case QfSettingsSyncDecision.noCloud:
-          break;
-      }
-    } catch (_) {}
+        } catch (_) {
+          if (mounted) {
+            setState(() => _syncFailed = true);
+            qfToast(context, '设置同步上传失败，可在本页点击重试。');
+          }
+        }
+      case QfSettingsSyncDecision.inSync:
+      case QfSettingsSyncDecision.noCloud:
+        break;
+    }
   }
 
   Future<void> _showLoginGuide() async {
@@ -1051,6 +1107,17 @@ class _QfVaultEntryState extends ConsumerState<QfVaultEntry> {
           onPressed: _openVaultPanel,
           child: const Text(QfCopy.vaultUnlockTitle),
         ),
+        if (_syncFailed)
+          TextButton(
+            onPressed: () {
+              _uploadAttempts = 0;
+              unawaited(_attemptUpload());
+            },
+            child: Text(
+              '设置同步失败，点击重试',
+              style: TextStyle(color: context.colorScheme.error),
+            ),
+          ),
       ],
     );
   }
@@ -1214,6 +1281,7 @@ class _QfBackupDialog extends StatefulWidget {
 class _QfBackupDialogState extends State<_QfBackupDialog> {
   final _password = TextEditingController();
   int? _existingUpdatedAt;
+  bool _metaFailed = false;
   bool _busy = false;
 
   @override
@@ -1229,12 +1297,16 @@ class _QfBackupDialogState extends State<_QfBackupDialog> {
   }
 
   Future<void> _loadMeta() async {
+    setState(() => _metaFailed = false);
     try {
       final updatedAt = await QfVaultService.subscriptionBackupUpdatedAt(
         session: widget.session,
       );
       if (mounted) setState(() => _existingUpdatedAt = updatedAt);
-    } catch (_) {}
+    } catch (_) {
+      // A failed lookup must not read as "no backup exists" (C-34).
+      if (mounted) setState(() => _metaFailed = true);
+    }
   }
 
   Future<void> _submit() async {
@@ -1268,8 +1340,17 @@ class _QfBackupDialogState extends State<_QfBackupDialog> {
   Future<void> _delete() async {
     setState(() => _busy = true);
     try {
-      await QfVaultService.deleteSubscriptionBackup(session: widget.session);
+      final deleted = await QfVaultService.deleteSubscriptionBackup(
+        session: widget.session,
+      );
       if (!mounted) return;
+      if (!deleted) {
+        // The server answered without deleting: do not claim success
+        // and do not close as if it happened (C-33).
+        setState(() => _busy = false);
+        qfToast(context, '删除失败，请稍后重试。');
+        return;
+      }
       Navigator.of(context).pop();
       qfToast(context, '云端备份已删除。');
     } on QfApiException catch (e) {
@@ -1293,6 +1374,18 @@ class _QfBackupDialogState extends State<_QfBackupDialog> {
               '将把当前设备上的 ${widget.profileCount} 个订阅配置加密后保存至云端保险库。'
               '仅备份订阅链接类配置，本地文件与自定义配置不在备份范围内。',
             ),
+            if (_metaFailed) ...[
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  const Expanded(child: Text('云端备份信息加载失败。')),
+                  TextButton(
+                    onPressed: _busy ? null : _loadMeta,
+                    child: const Text('重试'),
+                  ),
+                ],
+              ),
+            ],
             if (_existingUpdatedAt != null) ...[
               const SizedBox(height: 8),
               Text(
@@ -1338,6 +1431,7 @@ class _QfRestoreDialogState extends ConsumerState<_QfRestoreDialog> {
   final _password = TextEditingController();
   int? _existingUpdatedAt;
   bool _loaded = false;
+  bool _metaFailed = false;
   bool _busy = false;
 
   @override
@@ -1353,6 +1447,10 @@ class _QfRestoreDialogState extends ConsumerState<_QfRestoreDialog> {
   }
 
   Future<void> _loadMeta() async {
+    setState(() {
+      _loaded = false;
+      _metaFailed = false;
+    });
     try {
       final updatedAt = await QfVaultService.subscriptionBackupUpdatedAt(
         session: widget.session,
@@ -1364,7 +1462,13 @@ class _QfRestoreDialogState extends ConsumerState<_QfRestoreDialog> {
         });
       }
     } catch (_) {
-      if (mounted) setState(() => _loaded = true);
+      // A failed lookup must not read as "no backup exists" (C-34).
+      if (mounted) {
+        setState(() {
+          _metaFailed = true;
+          _loaded = true;
+        });
+      }
     }
   }
 
@@ -1440,6 +1544,13 @@ class _QfRestoreDialogState extends ConsumerState<_QfRestoreDialog> {
           children: [
             if (!_loaded)
               const Text('正在查询云端备份。')
+            else if (_metaFailed)
+              Row(
+                children: [
+                  const Expanded(child: Text('云端备份信息加载失败，请检查网络后重试。')),
+                  TextButton(onPressed: _loadMeta, child: const Text('重试')),
+                ],
+              )
             else if (!hasBackup)
               const Text('尚未备份。')
             else ...[

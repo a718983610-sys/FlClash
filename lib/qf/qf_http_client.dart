@@ -63,7 +63,23 @@ QfProxyDecision qfDecideProxy({
 
 class QfHttpClient {
   static bool Function()? coreRunningProbe;
-  static int corePort = 7890;
+
+  /// The mixed port is read fresh at every decision (C-03): the gate
+  /// installs a resolver over the live patch config, so a port change
+  /// in settings takes effect without an app restart. The plain setter
+  /// remains as the fallback for contexts without a resolver.
+  static int Function()? corePortResolver;
+  static int _corePortFallback = 7890;
+
+  static int get corePort {
+    try {
+      return corePortResolver?.call() ?? _corePortFallback;
+    } catch (_) {
+      return _corePortFallback;
+    }
+  }
+
+  static set corePort(int value) => _corePortFallback = value;
   static QfProxyDecision lastDecision = const QfProxyDecision(
     'DIRECT',
     QfProxySource.direct,

@@ -644,10 +644,21 @@ class _QfLoginFormState extends State<QfLoginForm> {
   String? _stepUpFailureText;
   bool _dual = false;
   bool _remember = true;
+  bool _savePassword = false;
 
   @override
   void initState() {
     super.initState();
+    _savePassword = widget.session.saveLoginCredentials;
+    if (_savePassword) {
+      unawaited(
+        widget.session.loadSavedLogin().then((saved) {
+          if (!mounted || saved == null) return;
+          if (_email.text.isEmpty) _email.text = saved.id;
+          if (_password.text.isEmpty) _password.text = saved.password;
+        }),
+      );
+    }
     if (!QfGoogleAuth.isConfigured) {
       unawaited(
         qfRefreshGoogleRuntime().then((_) {
@@ -728,6 +739,12 @@ class _QfLoginFormState extends State<QfLoginForm> {
         qfToast(context, outcome.message);
       } else if (widget.session.stepUpPending && mounted) {
         setState(() {});
+      }
+      if (_savePassword && widget.session.mode == QfMode.user) {
+        await widget.session.storeSavedLogin(
+          _email.text.trim(),
+          _password.text,
+        );
       }
     } on QfApiException catch (e) {
       if (mounted) {
@@ -1007,6 +1024,29 @@ class _QfLoginFormState extends State<QfLoginForm> {
             '邮箱无法接收验证码？请发送邮件至 a718983610@gmail.com 申请人工核验，并附上您的账户ID或绑定邮箱。',
           ),
         ],
+        CheckboxListTile(
+          value: _savePassword,
+          onChanged: (value) {
+            final on = value ?? false;
+            setState(() => _savePassword = on);
+            if (!on) {
+              unawaited(widget.session.clearSavedLogin());
+            } else if (_email.text.trim().isNotEmpty &&
+                _password.text.isNotEmpty) {
+              unawaited(
+                widget.session.storeSavedLogin(
+                  _email.text.trim(),
+                  _password.text,
+                ),
+              );
+            }
+          },
+          title: const Text('记住账号密码'),
+          subtitle: const Text('勾选后下次打开自动填好账号和密码，只保存在本机安全存储里；取消勾选立即清除。'),
+          controlAffinity: ListTileControlAffinity.leading,
+          contentPadding: EdgeInsets.zero,
+          dense: true,
+        ),
         CheckboxListTile(
           value: _remember,
           onChanged: (value) => setState(() => _remember = value ?? true),

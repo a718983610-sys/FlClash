@@ -117,6 +117,7 @@ class QfSessionController extends ChangeNotifier {
   static const String _kMode = 'qf_mode';
   final FlutterSecureStorage _secure = const FlutterSecureStorage();
   bool rememberDevice = true;
+  bool saveLoginCredentials = false;
 
   static const String _kAccess = 'qf_access_token';
   static const String _kRefresh = 'qf_refresh_token';
@@ -130,6 +131,9 @@ class QfSessionController extends ChangeNotifier {
   static const String _kPointsSeq = 'qf_points_seq';
   static const String _kGuestSeq = 'qf_guest_seq';
   static const String _kRemember = 'qf_remember_device';
+  static const String _kSaveLoginFlag = 'qf_save_login_credentials';
+  static const String _kSavedLoginId = 'qf_saved_login_id';
+  static const String _kSavedPassword = 'qf_saved_login_password';
   static const String _kGuestExhaustedLocal = 'qf_guest_exhausted_local';
   static const String _kGuestBlockedCore = 'qf_guest_blocked_core';
   static const String _kGuestLedgerDay = 'qf_guest_ledger_day';
@@ -316,6 +320,7 @@ class QfSessionController extends ChangeNotifier {
     _envEmulator = envEmulator;
     final prefs = await SharedPreferences.getInstance();
     rememberDevice = prefs.getBool(_kRemember) ?? true;
+    saveLoginCredentials = prefs.getBool(_kSaveLoginFlag) ?? false;
     Future<String?> readSecure(String key) async {
       try {
         return await _secure.read(key: key);
@@ -402,9 +407,47 @@ class QfSessionController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// The saved sign-in form credentials ("记住账号密码"): account
+  /// identifier and password kept in secure storage only, prefilled by
+  /// the login form while the user keeps the option on.
+  Future<({String id, String password})?> loadSavedLogin() async {
+    if (!saveLoginCredentials) return null;
+    try {
+      final id = await _secure.read(key: _kSavedLoginId);
+      final password = await _secure.read(key: _kSavedPassword);
+      if (id == null || id.isEmpty) return null;
+      return (id: id, password: password ?? '');
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> storeSavedLogin(String id, String password) async {
+    saveLoginCredentials = true;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_kSaveLoginFlag, true);
+    await _secure.write(key: _kSavedLoginId, value: id);
+    await _secure.write(key: _kSavedPassword, value: password);
+  }
+
+  Future<void> clearSavedLogin() async {
+    saveLoginCredentials = false;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_kSaveLoginFlag, false);
+    try {
+      await _secure.delete(key: _kSavedLoginId);
+      await _secure.delete(key: _kSavedPassword);
+    } catch (_) {}
+  }
+
   Future<void> _validateStoredUserSession() async {
     final startRefreshToken = _refreshToken;
-    await _refreshIfNeeded(force: true);
+    // No forced rotation at cold start: refreshing a still-valid access
+    // token on every launch multiplies the chances of a lost rotation
+    // response stranding the stored refresh token (server reuse rules
+    // then revoke every session). Refresh happens when the access
+    // token is actually near expiry, or on a 401 via authed().
+    await _refreshIfNeeded();
     if (_accessToken != null) {
       await _loadAccountState();
     } else if (_refreshToken == startRefreshToken) {
@@ -650,6 +693,14 @@ class QfSessionController extends ChangeNotifier {
           qfLearnOwnerFromView(data);
           return data;
         }
+        if (_lastRefreshWasNetworkFailure) {
+          // The refresh never reached a server verdict (dead network,
+          // intercepted response): the stored session may still be
+          // valid, so a bad network moment must not sign the user out.
+          // The original 401 propagates; the session clears only when
+          // the server itself rejects the refresh token.
+          rethrow;
+        }
         await _clearUserSession();
         mode = QfMode.entry;
         notifyListeners();
@@ -824,6 +875,17 @@ class QfSessionController extends ChangeNotifier {
 
   Future<bool>? _refreshFlight;
 
+  /// Why the last refresh attempt failed, when it did. A network-class
+  /// failure means the server never judged the refresh token, so the
+  /// stored session may still be perfectly valid.
+  QfApiException? _lastRefreshFailure;
+
+  bool get _lastRefreshWasNetworkFailure {
+    final failure = _lastRefreshFailure;
+    if (failure == null) return true;
+    return failure.isNetworkFailure || failure.code == 'BAD_RESPONSE';
+  }
+
   /// Token refresh, single-flighted (C-04): concurrent authed() calls
   /// that all decide to refresh share one in-flight request. Without
   /// this, parallel refreshes rotate the same refresh token against
@@ -862,6 +924,7 @@ class QfSessionController extends ChangeNotifier {
       _refreshToken = newRefreshToken;
       _accessExpiresAt = (data['accessExpiresAt'] as num?)?.toInt() ?? 0;
       _heartbeatKey = (data['heartbeatKey'] ?? _heartbeatKey ?? '').toString();
+      _lastRefreshFailure = null;
       if (rememberDevice) {
         await _storeCredentials();
       } else {
@@ -869,6 +932,7 @@ class QfSessionController extends ChangeNotifier {
       }
       return true;
     } on QfApiException catch (e) {
+      _lastRefreshFailure = e;
       if (e.code == 'ACCOUNT_FROZEN') {
         await handleFrozen(e);
       } else if (e.code == 'ACCOUNT_BANNED') {
@@ -876,9 +940,18 @@ class QfSessionController extends ChangeNotifier {
       }
       return false;
     } catch (_) {
+      _lastRefreshFailure = const QfApiException(
+        0,
+        'NETWORK',
+        '网络连接失败，请检查网络后重试',
+      );
       return false;
     }
   }
+
+  /// Set when the last account-state load failed; the cached session
+  /// keeps the app usable, but pages can tell the data may be stale.
+  bool accountStateSyncFailed = false;
 
   Future<void> _loadAccountState() async {
     try {
@@ -896,8 +969,12 @@ class QfSessionController extends ChangeNotifier {
       if (points is Map) {
         pointsMe = {...(pointsMe ?? {}), ...Map<String, dynamic>.from(points)};
       }
+      accountStateSyncFailed = false;
       notifyListeners();
-    } catch (_) {}
+    } catch (_) {
+      accountStateSyncFailed = true;
+      notifyListeners();
+    }
   }
 
   Future<QfLoginOutcome> login({
@@ -1318,7 +1395,12 @@ class QfSessionController extends ChangeNotifier {
       if (e.code == 'GUEST_TOKEN_INVALID') {
         try {
           await enterGuest();
-        } catch (_) {}
+        } catch (_) {
+          // The stored guest token is dead and re-entry failed too:
+          // staying in guest mode would strand the user on a session
+          // the server no longer knows (C-07).
+          await exitGuestToEntry();
+        }
       }
     } catch (_) {}
   }
@@ -1517,12 +1599,20 @@ class QfSessionController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Set when the last background points refresh failed, so pages can
+  /// show stale data as stale instead of silently presenting it (C-07).
+  bool pointsSyncFailed = false;
+
   Future<void> refreshPoints() async {
     if (mode != QfMode.user) return;
     try {
       pointsMe = await authed('GET', '/points/me');
+      pointsSyncFailed = false;
       notifyListeners();
-    } catch (_) {}
+    } catch (_) {
+      pointsSyncFailed = true;
+      notifyListeners();
+    }
   }
 
   Future<List<dynamic>> pointsLedger() async {

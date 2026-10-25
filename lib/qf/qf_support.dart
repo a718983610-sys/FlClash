@@ -304,7 +304,10 @@ class QfSupportContactTile extends StatefulWidget {
 }
 
 class _QfSupportContactTileState extends State<QfSupportContactTile> {
-  static const String _seenKey = 'qf_support_seen_latest_ts';
+  // The seen marker is per account (C-51): a shared key would leak one
+  // account's read state into another's unread count.
+  String get _seenKey =>
+      'qf_support_seen_latest_ts_${widget.session.userId ?? 0}';
   String? _latestSummary;
   int _unread = 0;
   int _latestTs = 0;
@@ -490,6 +493,8 @@ class _QfSupportPageState extends State<QfSupportPage> {
   Timer? _timer;
   bool _loading = true;
   bool _sending = false;
+  bool _handingOff = false;
+  bool _handedOff = false;
   String? _sessionId;
   QfSupportReply? _lastReply;
   String? _handoffNotice;
@@ -525,9 +530,28 @@ class _QfSupportPageState extends State<QfSupportPage> {
       if (mounted) {
         setState(() {
           if (parsed.isNotEmpty || _messages.isEmpty) {
+            // Merge, not replace (C-49): a poll landing right after a
+            // send must not wipe the just-added local echo and reply
+            // before the server snapshot includes them. Local-only
+            // entries carry ts 0; once the server echoes the same
+            // role+body, the local copy drops out.
+            final serverKeys = {
+              for (final message in parsed)
+                '${message.role}|${message.body}',
+            };
+            final localOnly = _messages
+                .where(
+                  (message) =>
+                      message.ts == 0 &&
+                      !serverKeys.contains(
+                        '${message.role}|${message.body}',
+                      ),
+                )
+                .toList();
             _messages
               ..clear()
-              ..addAll(parsed);
+              ..addAll(parsed)
+              ..addAll(localOnly);
           }
           if (sessionId != null) _sessionId = sessionId;
           _loading = false;
@@ -590,6 +614,8 @@ class _QfSupportPageState extends State<QfSupportPage> {
   }
 
   Future<void> _handoff() async {
+    if (_handingOff || _handedOff) return;
+    setState(() => _handingOff = true);
     try {
       final data = await widget.session.supportHandoff(_sessionId);
       final notice = qfSupportHandoffNoticeText(data);
@@ -597,6 +623,7 @@ class _QfSupportPageState extends State<QfSupportPage> {
       if (mounted) {
         setState(() {
           _handoffNotice = notice;
+          _handedOff = true;
           if (sessionId != null) _sessionId = sessionId;
         });
         qfToast(context, notice);
@@ -604,6 +631,8 @@ class _QfSupportPageState extends State<QfSupportPage> {
       await _load();
     } on QfApiException catch (e) {
       if (mounted) qfToast(context, e.message);
+    } finally {
+      if (mounted) setState(() => _handingOff = false);
     }
   }
 
@@ -687,8 +716,8 @@ class _QfSupportPageState extends State<QfSupportPage> {
               children: [
                 TextButton(
                   key: const ValueKey('qf-support-handoff'),
-                  onPressed: _handoff,
-                  child: const Text('转人工'),
+                  onPressed: _handingOff || _handedOff ? null : _handoff,
+                  child: Text(_handedOff ? '已转人工' : '转人工'),
                 ),
                 if (reply != null && !reply.isHandoffOffer)
                   TextButton(
@@ -699,12 +728,12 @@ class _QfSupportPageState extends State<QfSupportPage> {
               ],
             ),
           ),
-          if (reply != null && reply.isHandoffOffer)
+          if (reply != null && reply.isHandoffOffer && !_handedOff)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 12),
               child: FilledButton(
                 key: const ValueKey('qf-support-handoff-confirm'),
-                onPressed: _handoff,
+                onPressed: _handingOff ? null : _handoff,
                 child: const Text('转人工客服'),
               ),
             ),
@@ -771,6 +800,13 @@ class _QfSupportInboxPageState extends State<QfSupportInboxPage> {
         setState(() {
           _loading = false;
           _error = e.message;
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _error = '加载失败，请稍后重试。';
         });
       }
     }
@@ -842,6 +878,7 @@ class _QfSupportTicketPageState extends State<QfSupportTicketPage> {
   final _input = TextEditingController();
   List<QfSupportMessage> _messages = const [];
   bool _loading = true;
+  bool _loadFailed = false;
   bool _sending = false;
   bool _closed = false;
 
@@ -869,12 +906,25 @@ class _QfSupportTicketPageState extends State<QfSupportTicketPage> {
           final status = (data['status'] ?? '').toString();
           if (status.isNotEmpty) _closed = status == 'closed';
           _loading = false;
+          _loadFailed = false;
         });
       }
     } on QfApiException catch (e) {
       if (mounted) {
-        setState(() => _loading = false);
+        setState(() {
+          _loading = false;
+          _loadFailed = true;
+        });
         qfToast(context, e.message);
+      }
+    } catch (_) {
+      // Any non-API throw must still land on a failure state, never on
+      // an endless spinner (C-52).
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _loadFailed = true;
+        });
       }
     }
   }
@@ -928,6 +978,8 @@ class _QfSupportTicketPageState extends State<QfSupportTicketPage> {
           Expanded(
             child: _loading
                 ? const Center(child: CommonCircleLoading.page())
+                : _loadFailed
+                ? QfLoadFailure(onRetry: _load)
                 : ListView.builder(
                     padding: const EdgeInsets.all(12),
                     itemCount: _messages.length,

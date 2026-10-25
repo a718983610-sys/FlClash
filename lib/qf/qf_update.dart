@@ -466,7 +466,13 @@ class QfUpdateService {
   static Future<bool> openInstallPermissionSettings() async {
     try {
       if (!_isAndroid) return false;
-      return await _invokeAppChannel('openUnknownAppSettings', null) == true;
+      // Same hang guard as installApk (C-13): a native side that never
+      // answers must not wedge the caller.
+      final result = await _invokeAppChannel(
+        'openUnknownAppSettings',
+        null,
+      ).timeout(installTimeout, onTimeout: () => null);
+      return result == true;
     } catch (_) {
       return false;
     }

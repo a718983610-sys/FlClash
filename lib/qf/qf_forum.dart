@@ -628,15 +628,23 @@ class _QfForumRewardSectionState extends State<QfForumRewardSection> {
   }
 
   Future<void> _apply() async {
+    final rawId = widget.post['id'];
+    final postId = rawId is num ? rawId.toInt() : int.tryParse('$rawId');
+    if (postId == null) {
+      qfToast(context, '数据异常，请刷新后重试。');
+      return;
+    }
     setState(() => _busy = true);
     try {
-      await widget.session.forumApplyReward((widget.post['id'] as num).toInt());
+      await widget.session.forumApplyReward(postId);
       if (mounted) {
         setState(() => _state = 'pending');
         qfToast(context, '奖励申请已经提交，请等待审核');
       }
     } on QfApiException catch (e) {
       if (mounted) qfToast(context, e.message);
+    } catch (_) {
+      if (mounted) qfToast(context, '申请失败，请稍后重试。');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -864,7 +872,14 @@ class _QfForumPageState extends State<QfForumPage>
     await _loadPosts(reset: true);
   }
 
+  int _postsGen = 0;
+
   Future<void> _loadPosts({required bool reset}) async {
+    // Generation + board guard (C-43): a response for a board the user
+    // has already left must never land on the new board's list.
+    final gen = ++_postsGen;
+    final board = _board;
+    final offset = reset ? 0 : _posts.length;
     if (reset) {
       setState(() => _loading = true);
     } else {
@@ -872,12 +887,12 @@ class _QfForumPageState extends State<QfForumPage>
     }
     try {
       final data = await widget.session.forumPosts(
-        board: _board,
-        offset: reset ? 0 : _posts.length,
+        board: board,
+        offset: offset,
       );
       final rawPosts = data['posts'];
       final posts = rawPosts is List ? rawPosts : const <dynamic>[];
-      if (mounted) {
+      if (mounted && gen == _postsGen && board == _board) {
         setState(() {
           if (reset) {
             _posts = posts;
@@ -890,7 +905,7 @@ class _QfForumPageState extends State<QfForumPage>
         });
       }
     } catch (_) {
-      if (mounted) {
+      if (mounted && gen == _postsGen && board == _board) {
         setState(() {
           _postsFailed = true;
           _loading = false;
@@ -2542,23 +2557,41 @@ class _QfForumCampListPageState extends State<QfForumCampListPage> {
     }
   }
 
+  final Set<int> _joiningCampIds = {};
+
   Future<void> _toggleJoin(Map<dynamic, dynamic> camp) async {
     if (!widget.session.isLoggedIn) {
       await qfForumGuideLogin(context, widget.session);
       return;
     }
-    final joined = camp['joined'] != true;
+    final rawId = camp['id'];
+    final campId = rawId is num ? rawId.toInt() : int.tryParse('$rawId');
+    if (campId == null || !_joiningCampIds.add(campId)) return;
+    final wasJoined = camp['joined'] == true;
+    final joined = !wasJoined;
     try {
-      final data = await widget.session.forumJoinCamp(
-        (camp['id'] as num).toInt(),
-        joined,
-      );
+      final data = await widget.session.forumJoinCamp(campId, joined);
       if (mounted) {
-        setState(() => camp['joined'] = data['joined'] ?? joined);
+        setState(() {
+          final nowJoined = data['joined'] ?? joined;
+          camp['joined'] = nowJoined;
+          final serverCount = data['memberCount'];
+          if (serverCount is num) {
+            camp['memberCount'] = serverCount.toInt();
+          } else if (nowJoined != wasJoined) {
+            final current = (camp['memberCount'] as num?)?.toInt() ?? 0;
+            camp['memberCount'] = nowJoined == true
+                ? current + 1
+                : (current > 0 ? current - 1 : 0);
+          }
+        });
         qfToast(context, joined ? '已经加入营地' : '已经退出营地');
       }
     } on QfApiException catch (e) {
       if (mounted) qfToast(context, e.message);
+    } finally {
+      _joiningCampIds.remove(campId);
+      if (mounted) setState(() {});
     }
   }
 
@@ -2625,11 +2658,19 @@ class _QfForumCampListPageState extends State<QfForumCampListPage> {
                   ),
                   trailing: joined
                       ? OutlinedButton(
-                          onPressed: () => _toggleJoin(raw),
+                          onPressed: _joiningCampIds.contains(
+                            (raw['id'] as num?)?.toInt(),
+                          )
+                              ? null
+                              : () => _toggleJoin(raw),
                           child: const Text('已加入'),
                         )
                       : FilledButton(
-                          onPressed: () => _toggleJoin(raw),
+                          onPressed: _joiningCampIds.contains(
+                            (raw['id'] as num?)?.toInt(),
+                          )
+                              ? null
+                              : () => _toggleJoin(raw),
                           child: const Text('加入营地'),
                         ),
                   onTap: () {
@@ -2694,22 +2735,41 @@ class _QfForumCampPageState extends State<QfForumCampPage> {
     }
   }
 
+  bool _joinBusy = false;
+
   Future<void> _toggleJoin() async {
+    if (_joinBusy) return;
     if (!widget.session.isLoggedIn) {
       await qfForumGuideLogin(context, widget.session);
       return;
     }
     final camp = _camp;
     if (camp == null) return;
-    final joined = camp['joined'] != true;
+    final wasJoined = camp['joined'] == true;
+    final joined = !wasJoined;
+    setState(() => _joinBusy = true);
     try {
       final data = await widget.session.forumJoinCamp(widget.campId, joined);
       if (mounted) {
-        setState(() => camp['joined'] = data['joined'] ?? joined);
+        setState(() {
+          final nowJoined = data['joined'] ?? joined;
+          camp['joined'] = nowJoined;
+          final serverCount = data['memberCount'];
+          if (serverCount is num) {
+            camp['memberCount'] = serverCount.toInt();
+          } else if (nowJoined != wasJoined) {
+            final current = (camp['memberCount'] as num?)?.toInt() ?? 0;
+            camp['memberCount'] = nowJoined == true
+                ? current + 1
+                : (current > 0 ? current - 1 : 0);
+          }
+        });
         qfToast(context, joined ? '已经加入营地' : '已经退出营地');
       }
     } on QfApiException catch (e) {
       if (mounted) qfToast(context, e.message);
+    } finally {
+      if (mounted) setState(() => _joinBusy = false);
     }
   }
 
@@ -2788,12 +2848,12 @@ class _QfForumCampPageState extends State<QfForumCampPage> {
                 const SizedBox(height: 12),
                 if (camp['joined'] == true)
                   OutlinedButton(
-                    onPressed: _toggleJoin,
+                    onPressed: _joinBusy ? null : _toggleJoin,
                     child: const Text('已加入'),
                   )
                 else
                   FilledButton(
-                    onPressed: _toggleJoin,
+                    onPressed: _joinBusy ? null : _toggleJoin,
                     child: const Text('加入营地'),
                   ),
                 const SizedBox(height: 16),
