@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'qf_api.dart';
 import 'qf_config.dart';
+import 'qf_forum.dart';
 import 'qf_pages.dart';
 import 'qf_session.dart';
 
@@ -308,6 +309,7 @@ class _QfSupportContactTileState extends State<QfSupportContactTile> {
   // account's read state into another's unread count.
   String get _seenKey =>
       'qf_support_seen_latest_ts_${widget.session.userId ?? 0}';
+  bool get _guest => !widget.session.isLoggedIn;
   String? _latestSummary;
   int _unread = 0;
   int _latestTs = 0;
@@ -320,7 +322,9 @@ class _QfSupportContactTileState extends State<QfSupportContactTile> {
 
   Future<void> _load() async {
     try {
-      final data = await widget.session.supportSession();
+      final data = _guest
+          ? await widget.session.guestSupportSession()
+          : await widget.session.supportSession();
       final messages = qfSupportParseMessages(data);
       final latest = qfSupportLatestAgentMessage(messages);
       final prefs = await SharedPreferences.getInstance();
@@ -488,6 +492,8 @@ class QfSupportPage extends StatefulWidget {
 
 class _QfSupportPageState extends State<QfSupportPage> {
   final _input = TextEditingController();
+  final _verifyAccount = TextEditingController();
+  final _verifyPassword = TextEditingController();
   final _bottomAnchor = GlobalKey();
   final List<QfSupportMessage> _messages = [];
   Timer? _timer;
@@ -495,9 +501,17 @@ class _QfSupportPageState extends State<QfSupportPage> {
   bool _sending = false;
   bool _handingOff = false;
   bool _handedOff = false;
+  bool _verifyOpen = false;
+  bool _verifying = false;
+  String? _linkedLabel;
   String? _sessionId;
   QfSupportReply? _lastReply;
   String? _handoffNotice;
+
+  /// Reachable without an account: guests and signed-out visitors ask
+  /// anonymously through the guest channel and may optionally link the
+  /// consultation to their account by verification (never a login).
+  bool get _guest => !widget.session.isLoggedIn;
 
   @override
   void initState() {
@@ -510,6 +524,8 @@ class _QfSupportPageState extends State<QfSupportPage> {
   void dispose() {
     _timer?.cancel();
     _input.dispose();
+    _verifyAccount.dispose();
+    _verifyPassword.dispose();
     super.dispose();
   }
 
@@ -524,7 +540,9 @@ class _QfSupportPageState extends State<QfSupportPage> {
 
   Future<void> _load() async {
     try {
-      final data = await widget.session.supportSession();
+      final data = _guest
+          ? await widget.session.guestSupportSession()
+          : await widget.session.supportSession();
       final parsed = qfSupportParseMessages(data);
       final sessionId = qfSupportParseSessionId(data);
       if (mounted) {
@@ -572,12 +590,19 @@ class _QfSupportPageState extends State<QfSupportPage> {
     if (_sending) return false;
     setState(() => _sending = true);
     try {
-      final data = await widget.session.supportAsk(
-        sessionId: _sessionId,
-        text: text,
-        notThis: notThis,
-        kbId: kbId,
-      );
+      final data = _guest
+          ? await widget.session.guestSupportAsk(
+              sessionId: _sessionId,
+              text: text,
+              notThis: notThis,
+              kbId: kbId,
+            )
+          : await widget.session.supportAsk(
+              sessionId: _sessionId,
+              text: text,
+              notThis: notThis,
+              kbId: kbId,
+            );
       final reply = QfSupportReply.fromJson(data);
       if (mounted) {
         setState(() {
@@ -603,6 +628,79 @@ class _QfSupportPageState extends State<QfSupportPage> {
     }
   }
 
+  Future<void> _verify() async {
+    final account = _verifyAccount.text.trim();
+    final password = _verifyPassword.text;
+    if (account.isEmpty || password.isEmpty || _verifying) return;
+    setState(() => _verifying = true);
+    try {
+      final data = await widget.session.guestSupportVerify(
+        account: account,
+        password: password,
+      );
+      if (mounted) {
+        setState(() {
+          _linkedLabel =
+              (data['accountLabel'] ?? data['username'] ?? account).toString();
+          _verifyPassword.clear();
+        });
+        qfToast(context, '已关联账户，本次咨询将带上您的账户信息。');
+        await _load();
+      }
+    } on QfApiException catch (e) {
+      if (mounted) qfToast(context, e.message);
+    } finally {
+      if (mounted) setState(() => _verifying = false);
+    }
+  }
+
+  Widget _verifyCard(BuildContext context) {
+    if (!_guest) return const SizedBox.shrink();
+    if (_linkedLabel != null) {
+      return Container(
+        key: const ValueKey('qf-support-linked'),
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        child: Text('已关联账户：$_linkedLabel（仅用于本次咨询核验，不会登录您的账户）'),
+      );
+    }
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 4, 12, 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          TextButton(
+            key: const ValueKey('qf-support-verify-toggle'),
+            onPressed: () => setState(() => _verifyOpen = !_verifyOpen),
+            child: Text(_verifyOpen ? '收起账户关联' : '咨询与账户有关？可先关联账户（可选）'),
+          ),
+          if (_verifyOpen) ...[
+            const Text('输入账户 ID 或邮箱与密码进行核验。只核验身份、关联本次咨询，不会登录您的账户。'),
+            const SizedBox(height: 8),
+            TextField(
+              key: const ValueKey('qf-support-verify-account'),
+              controller: _verifyAccount,
+              decoration: const InputDecoration(labelText: '账户 ID 或邮箱'),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              key: const ValueKey('qf-support-verify-password'),
+              controller: _verifyPassword,
+              obscureText: true,
+              decoration: const InputDecoration(labelText: '密码'),
+            ),
+            const SizedBox(height: 8),
+            FilledButton(
+              key: const ValueKey('qf-support-verify-submit'),
+              onPressed: _verifying ? null : _verify,
+              child: Text(_verifying ? '正在核验……' : '核验并关联'),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
   Future<void> _send() async {
     final text = _input.text.trim();
     if (text.isEmpty) return;
@@ -617,7 +715,9 @@ class _QfSupportPageState extends State<QfSupportPage> {
     if (_handingOff || _handedOff) return;
     setState(() => _handingOff = true);
     try {
-      final data = await widget.session.supportHandoff(_sessionId);
+      final data = _guest
+          ? await widget.session.guestSupportHandoff(_sessionId)
+          : await widget.session.supportHandoff(_sessionId);
       final notice = qfSupportHandoffNoticeText(data);
       final sessionId = qfSupportParseSessionId(data);
       if (mounted) {
@@ -660,6 +760,7 @@ class _QfSupportPageState extends State<QfSupportPage> {
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               child: Text(_handoffNotice!),
             ),
+          _verifyCard(context),
           Expanded(
             child: _loading
                 ? const Center(child: CommonCircleLoading.page())

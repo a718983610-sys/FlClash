@@ -599,9 +599,11 @@ class _Cells extends StatelessWidget {
     return Row(
       spacing: gap,
       children: [
-        _Cell(
-          label: appLocalizations.runTime,
-          value: active ? const _RunTimeValue() : const _Placeholder(),
+        Flexible(
+          child: _Cell(
+            label: appLocalizations.runTime,
+            value: active ? const _RunTimeValue() : const _Placeholder(),
+          ),
         ),
         Flexible(
           child: _Cell(

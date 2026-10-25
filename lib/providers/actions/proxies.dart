@@ -170,6 +170,17 @@ class ProxiesAction extends _$ProxiesAction {
       if (groups == null) {
         return;
       }
+      // An applied config always yields at least the built-in GLOBAL
+      // group, so an empty answer here means the core has not finished
+      // applying yet; never let it wipe groups already on screen (the
+      // next apply/init trigger refreshes for real).
+      if (groups.isEmpty && ref.read(groupsProvider).isNotEmpty) {
+        commonPrint.log(
+          'updateGroups: keeping current groups over a transient empty answer',
+          logLevel: LogLevel.warning,
+        );
+        return;
+      }
       ref.read(groupsProvider.notifier).value = groups;
       _reconcileSelectedMap(groups);
     } catch (e) {

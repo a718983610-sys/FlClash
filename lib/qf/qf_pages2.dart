@@ -16,6 +16,7 @@ import 'qf_pages.dart';
 import 'qf_providers.dart';
 import 'qf_session.dart';
 import 'qf_signal.dart';
+import 'qf_support.dart';
 import 'qf_update.dart';
 import 'qf_vault.dart';
 import 'qf_version.dart';
@@ -1738,6 +1739,18 @@ Future<void> qfShowBanDialog(
           ],
         ),
         actions: [
+          TextButton(
+            key: const ValueKey('qf-ban-support'),
+            onPressed: () {
+              Navigator.of(dialogContext).pop();
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => QfSupportPage(session: session),
+                ),
+              );
+            },
+            child: const Text('联系智能客服'),
+          ),
           FilledButton(
             onPressed: () => Navigator.of(dialogContext).pop(),
             child: const Text('我知道了'),

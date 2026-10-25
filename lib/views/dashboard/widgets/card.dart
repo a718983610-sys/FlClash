@@ -134,7 +134,21 @@ class DashboardCardHeader extends StatelessWidget {
             style: style,
           ),
         ),
-        ...leading,
+        // The leading chips are fixed-width; in a narrow card (small
+        // phone, split view) they must yield instead of overflowing the
+        // header row, so they shrink as one capped unit.
+        if (leading.isNotEmpty)
+          Flexible(
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: AlignmentDirectional.centerStart,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                spacing: 8,
+                children: leading,
+              ),
+            ),
+          ),
       ],
     );
     return SizedBox(

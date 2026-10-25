@@ -21,6 +21,7 @@ import 'qf_providers.dart';
 import 'qf_recovery.dart';
 import 'qf_session.dart';
 import 'qf_signal.dart';
+import 'qf_support.dart';
 import 'qf_update.dart';
 import 'qf_update_notify.dart';
 import 'qf_version.dart';
@@ -569,6 +570,13 @@ class _QfSessionGateState extends ConsumerState<QfSessionGate> {
             onAbout: _openAbout,
             onCheckUpdate: () => QfUpdateFlow.runManualCheck(context),
             onAgreement: _openAgreement,
+            onSupport: () {
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => QfSupportPage(session: session),
+                ),
+              );
+            },
           );
         }
         _queueRegionDialog();
@@ -600,13 +608,35 @@ class _QfSessionGateState extends ConsumerState<QfSessionGate> {
                   child: Center(
                     child: Material(
                       type: MaterialType.transparency,
-                      child: TextButton(
-                        onPressed: _openAbout,
-                        style: TextButton.styleFrom(
-                          backgroundColor: context.colorScheme.surface,
-                          foregroundColor: context.colorScheme.onSurface,
-                        ),
-                        child: const Text('关于'),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          TextButton(
+                            onPressed: _openAbout,
+                            style: TextButton.styleFrom(
+                              backgroundColor: context.colorScheme.surface,
+                              foregroundColor: context.colorScheme.onSurface,
+                            ),
+                            child: const Text('关于'),
+                          ),
+                          const SizedBox(width: 12),
+                          TextButton(
+                            key: const ValueKey('qf-quota-support'),
+                            onPressed: () {
+                              Navigator.of(context).push(
+                                MaterialPageRoute<void>(
+                                  builder: (_) =>
+                                      QfSupportPage(session: session),
+                                ),
+                              );
+                            },
+                            style: TextButton.styleFrom(
+                              backgroundColor: context.colorScheme.surface,
+                              foregroundColor: context.colorScheme.onSurface,
+                            ),
+                            child: const Text('智能客服'),
+                          ),
+                        ],
                       ),
                     ),
                   ),

@@ -459,6 +459,7 @@ class QfEntryPage extends StatefulWidget {
   final VoidCallback onAbout;
   final VoidCallback onCheckUpdate;
   final VoidCallback onAgreement;
+  final VoidCallback onSupport;
 
   const QfEntryPage({
     super.key,
@@ -466,6 +467,7 @@ class QfEntryPage extends StatefulWidget {
     required this.onAbout,
     required this.onCheckUpdate,
     required this.onAgreement,
+    required this.onSupport,
   });
 
   @override
@@ -563,6 +565,11 @@ class _QfEntryPageState extends State<QfEntryPage> {
                       TextButton(
                         onPressed: widget.onCheckUpdate,
                         child: const Text('检查更新'),
+                      ),
+                      TextButton(
+                        key: const ValueKey('qf-entry-support'),
+                        onPressed: widget.onSupport,
+                        child: const Text('智能客服'),
                       ),
                       TextButton(
                         onPressed: widget.onAgreement,
@@ -1074,12 +1081,19 @@ class _QfLoginFormState extends State<QfLoginForm> {
         ),
         Row(
           children: [
-            TextButton(
-              onPressed: _openRecoveryAppeal,
-              child: const Text('邮箱不可用？提交找回申诉'),
+            Flexible(
+              child: TextButton(
+                onPressed: _openRecoveryAppeal,
+                child: const Text('邮箱不可用？提交找回申诉'),
+              ),
             ),
-            const Spacer(),
-            TextButton(onPressed: _forgotPassword, child: const Text('忘记密码')),
+            const SizedBox(width: 8),
+            Flexible(
+              child: TextButton(
+                onPressed: _forgotPassword,
+                child: const Text('忘记密码'),
+              ),
+            ),
           ],
         ),
       ],
@@ -2244,7 +2258,11 @@ class QfRedeemPage extends StatefulWidget {
 /// Safe id extraction for order/product rows: a missing or non-numeric
 /// id must surface as a visible data error, never a silent dead
 /// button via a throwing cast (C-22).
-int? qfRowId(Map<dynamic, dynamic> row) => (row['id'] as num?)?.toInt();
+int? qfRowId(Map<dynamic, dynamic> row) {
+  final raw = row['id'];
+  if (raw is num) return raw.toInt();
+  return int.tryParse('$raw');
+}
 
 class _QfRedeemPageState extends State<QfRedeemPage> {
   List<dynamic> _products = const [];

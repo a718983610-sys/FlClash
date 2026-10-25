@@ -523,11 +523,15 @@ class _QfForumPostCardState extends State<QfForumPostCard> {
                   },
                   child: Text('评论 ${qfForumCount(raw, 'replyCount')}'),
                 ),
-                const Spacer(),
-                Text(
-                  '分享 ${qfForumCount(raw, 'shareCount')} · '
-                  '浏览 ${qfForumCount(raw, 'viewCount')}',
-                  style: AppTextStyle.caption1.of(context),
+                Expanded(
+                  child: Text(
+                    '分享 ${qfForumCount(raw, 'shareCount')} · '
+                    '浏览 ${qfForumCount(raw, 'viewCount')}',
+                    style: AppTextStyle.caption1.of(context),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.end,
+                  ),
                 ),
               ],
             ),
@@ -762,7 +766,11 @@ class _QfCampAvatarState extends State<QfCampAvatar> {
     if (bytes != null && bytes.isNotEmpty) {
       return CircleAvatar(
         radius: widget.radius,
-        backgroundImage: MemoryImage(bytes),
+        backgroundImage: qfAvatarProvider(
+          bytes,
+          widget.radius,
+          MediaQuery.devicePixelRatioOf(context),
+        ),
       );
     }
     final name = (widget.camp['name'] ?? '').toString();

@@ -367,7 +367,7 @@ class _QfOwnerUsersPageState extends State<QfOwnerUsersPage> {
                       return ListTile(
                         leading: QfAvatarImage(
                           session: widget.session,
-                          userId: (u['id'] as num).toInt(),
+                          userId: qfRowId(u) ?? 0,
                           name: (u['nickname'] ?? u['username'] ?? '')
                               .toString(),
                           hasAvatar: u['hasAvatar'] == true,
@@ -382,11 +382,16 @@ class _QfOwnerUsersPageState extends State<QfOwnerUsersPage> {
                         ),
                         trailing: const GlyphIcon(AppGlyphs.chevronForward),
                         onTap: () async {
+                          final userId = qfRowId(u);
+                          if (userId == null) {
+                            qfToast(context, '数据异常，请刷新后重试。');
+                            return;
+                          }
                           await Navigator.of(context).push(
                             MaterialPageRoute<void>(
                               builder: (_) => QfOwnerUserPage(
                                 session: widget.session,
-                                userId: (u['id'] as num).toInt(),
+                                userId: userId,
                               ),
                             ),
                           );
@@ -1163,6 +1168,8 @@ class _OwnerAsyncTabState extends State<_OwnerAsyncTab>
       if (mounted) setState(() => _data = data);
     } on QfApiException catch (e) {
       if (mounted) setState(() => _error = qfAccountErrorMessage(e));
+    } catch (_) {
+      if (mounted) setState(() => _error = '加载失败，请稍后重试。');
     }
   }
 

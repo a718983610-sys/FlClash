@@ -208,6 +208,17 @@ class _FakeForumSession extends QfSessionController {
     return {'likeCount': liked ? 4 : 3, 'liked': liked};
   }
 
+  final List<({int postId, String text})> repliesSent = [];
+
+  @override
+  Future<Map<String, dynamic>> forumCreateReply(
+    int postId,
+    String content,
+  ) async {
+    repliesSent.add((postId: postId, text: content));
+    return {'status': 'published', 'message': '回复成功'};
+  }
+
   @override
   Future<Map<String, dynamic>> forumSharePost(int postId) async {
     return {'shareCount': 3};
@@ -258,6 +269,23 @@ void main() {
     expect(find.textContaining('分享 2'), findsWidgets);
     expect(find.textContaining('浏览 9'), findsWidgets);
   });
+
+  testWidgets(
+    'announcement post shows a working reply box to a normal logged-in user',
+    (tester) async {
+      final session = _FakeForumSession(loggedIn: true, currentUserId: 8);
+      session.detailPost = _post()..['board'] = 'announcements';
+      await tester.pumpWidget(
+        _wrap(QfForumPostPage(session: session, postId: 1)),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('回复'), findsOneWidget);
+      await tester.enterText(find.byType(TextField).last, '公告评论测试');
+      await tester.tap(find.text('回复'));
+      await tester.pumpAndSettle();
+      expect(session.repliesSent, [(postId: 1, text: '公告评论测试')]);
+    },
+  );
 
   testWidgets('like button toggles state on post detail', (tester) async {
     final session = _FakeForumSession(loggedIn: true, currentUserId: 8);

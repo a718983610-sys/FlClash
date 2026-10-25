@@ -9,7 +9,10 @@ GroupsState currentGroupsState(Ref ref) {
   final shown = switch (mode) {
     Mode.direct => const <Group>[],
     Mode.global => groups,
-    Mode.rule => groups.where((item) => item.hidden == false),
+    // Visible unless the core explicitly hides the group: a group whose
+    // payload omits the flag (null) is a normal group, and dropping it
+    // would empty the rule-mode list while global mode looks fine.
+    Mode.rule => groups.where((item) => item.hidden != true),
   };
   return GroupsState(value: shown.map(_withoutSelection).toList());
 }

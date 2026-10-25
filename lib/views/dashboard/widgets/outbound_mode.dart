@@ -55,8 +55,8 @@ class OutboundModeCard extends ConsumerWidget {
                     background: tone,
                     semanticLabel: item.label,
                     onTap: () => _changeMode(ref, item),
-                    builder: (foreground) => SizedBox(
-                      height: 52,
+                    builder: (foreground) => ConstrainedBox(
+                      constraints: const BoxConstraints(minHeight: 52),
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         spacing: 2,

@@ -2010,6 +2010,73 @@ class QfSessionController extends ChangeNotifier {
     return authed('POST', '/support/handoff', body: {'sessionId': ?sessionId});
   }
 
+  // Guest support (2.0.0): reachable with no account session at all, so
+  // it travels without a bearer and carries the device body for the
+  // server's per-device rate limits. A successful account verification
+  // returns a link token held in memory only — it links this one
+  // consultation to the account, it is never a login credential and is
+  // dropped with the process.
+  String? _supportLinkToken;
+
+  bool get supportLinked => _supportLinkToken != null;
+
+  Future<Map<String, dynamic>> _guestSupportBody([
+    Map<String, dynamic>? extra,
+  ]) async {
+    return {
+      ...await _deviceBody(),
+      'linkToken': ?_supportLinkToken,
+      ...?extra,
+    };
+  }
+
+  Future<Map<String, dynamic>> guestSupportSession() async {
+    return QfHttp.send(
+      'POST',
+      '$serverBaseUrl/support/guest/session',
+      body: await _guestSupportBody(),
+    );
+  }
+
+  Future<Map<String, dynamic>> guestSupportAsk({
+    String? sessionId,
+    String? text,
+    bool notThis = false,
+    String? kbId,
+  }) async {
+    return QfHttp.send(
+      'POST',
+      '$serverBaseUrl/support/guest/ask',
+      body: await _guestSupportBody({
+        'sessionId': ?sessionId,
+        if (notThis) 'notThis': true else 'text': text ?? '',
+        'kbId': ?kbId,
+      }),
+    );
+  }
+
+  Future<Map<String, dynamic>> guestSupportHandoff(String? sessionId) async {
+    return QfHttp.send(
+      'POST',
+      '$serverBaseUrl/support/guest/handoff',
+      body: await _guestSupportBody({'sessionId': ?sessionId}),
+    );
+  }
+
+  Future<Map<String, dynamic>> guestSupportVerify({
+    required String account,
+    required String password,
+  }) async {
+    final data = await QfHttp.send(
+      'POST',
+      '$serverBaseUrl/support/guest/verify',
+      body: await _guestSupportBody({'account': account, 'password': password}),
+    );
+    final token = (data['linkToken'] ?? '').toString();
+    if (token.isNotEmpty) _supportLinkToken = token;
+    return data;
+  }
+
   Future<Map<String, dynamic>> supportInbox() {
     return authed('GET', '/support/inbox');
   }

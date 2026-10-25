@@ -5,6 +5,7 @@ import 'package:material_ui/material_ui.dart';
 import 'qf_api.dart';
 import 'qf_pages.dart';
 import 'qf_session.dart';
+import 'qf_support.dart';
 
 String qfFormatEpochSeconds(dynamic raw) {
   final seconds = raw is num ? raw.toInt() : int.tryParse('${raw ?? ''}');
@@ -85,7 +86,7 @@ class QfRecoveryApi {
   }
 }
 
-enum QfFrozenAction { resetPassword, recoveryAppeal, dismissed }
+enum QfFrozenAction { resetPassword, recoveryAppeal, support, dismissed }
 
 Future<QfFrozenAction> qfShowFrozenDialog(
   BuildContext context, {
@@ -118,6 +119,12 @@ Future<QfFrozenAction> qfShowFrozenDialog(
           ],
         ),
         actions: [
+          TextButton(
+            key: const ValueKey('qf-frozen-support'),
+            onPressed: () =>
+                Navigator.of(dialogContext).pop(QfFrozenAction.support),
+            child: const Text('联系智能客服'),
+          ),
           TextButton(
             onPressed: () =>
                 Navigator.of(dialogContext).pop(QfFrozenAction.recoveryAppeal),
@@ -160,6 +167,12 @@ Future<void> qfHandleFrozenAction(
         MaterialPageRoute<void>(
           builder: (_) =>
               QfRecoveryAppealPage(session: session, initialAccount: account),
+        ),
+      );
+    case QfFrozenAction.support:
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => QfSupportPage(session: session),
         ),
       );
     case QfFrozenAction.dismissed:

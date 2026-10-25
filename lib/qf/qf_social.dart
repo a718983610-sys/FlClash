@@ -427,7 +427,11 @@ class _QfMyAvatarButtonState extends State<QfMyAvatarButton> {
       child: cached != null && cached.isNotEmpty
           ? CircleAvatar(
               radius: widget.radius,
-              backgroundImage: MemoryImage(cached),
+              backgroundImage: qfAvatarProvider(
+                cached,
+                widget.radius,
+                MediaQuery.devicePixelRatioOf(context),
+              ),
             )
           : QfAvatarImage(
               session: widget.session,
@@ -446,6 +450,14 @@ Widget _qfLetterAvatar(String name, double radius) {
 
 /// 按服务端公开资料的 hasAvatar 标记，从二进制端点拉头像并缓存；
 /// 没有头像或拉取失败时显示昵称首字。
+/// Avatar bytes decoded at display size, not at their stored resolution:
+/// list rows render dozens of these, and full-size decodes cost real
+/// memory and raster time for a 40dp circle.
+ImageProvider qfAvatarProvider(Uint8List bytes, double radius, double dpr) {
+  final px = (radius * 2 * dpr).ceil().clamp(1, 1024);
+  return ResizeImage(MemoryImage(bytes), width: px, height: px);
+}
+
 class QfAvatarImage extends StatefulWidget {
   final QfSessionController session;
   final int? userId;
@@ -516,7 +528,11 @@ class _QfAvatarImageState extends State<QfAvatarImage> {
     if (bytes != null && bytes.isNotEmpty) {
       return CircleAvatar(
         radius: widget.radius,
-        backgroundImage: MemoryImage(bytes),
+        backgroundImage: qfAvatarProvider(
+          bytes,
+          widget.radius,
+          MediaQuery.devicePixelRatioOf(context),
+        ),
       );
     }
     return _qfLetterAvatar(widget.name, widget.radius);
@@ -931,7 +947,11 @@ class _QfProfilePageState extends State<QfProfilePage> {
                         child: _avatarBytes != null
                             ? CircleAvatar(
                                 radius: 40,
-                                backgroundImage: MemoryImage(_avatarBytes!),
+                                backgroundImage: qfAvatarProvider(
+                                  _avatarBytes!,
+                                  40,
+                                  MediaQuery.devicePixelRatioOf(context),
+                                ),
                               )
                             : _qfLetterAvatar(_nickname.text, 40),
                       ),

@@ -101,6 +101,46 @@ class _FakeSupportSession extends QfSessionController {
     return {'ok': true, 'notice': handoffNoticeText, 'sessionId': 's-1'};
   }
 
+  List<Map<String, dynamic>> guestAskCalls = [];
+  bool guestHandoffCalled = false;
+  Map<String, dynamic>? guestVerifyCall;
+
+  @override
+  Future<Map<String, dynamic>> guestSupportSession() async {
+    return {'sessionId': 'g-1', 'messages': sessionMessages};
+  }
+
+  @override
+  Future<Map<String, dynamic>> guestSupportAsk({
+    String? sessionId,
+    String? text,
+    bool notThis = false,
+    String? kbId,
+  }) async {
+    guestAskCalls.add({
+      'sessionId': sessionId,
+      'text': text,
+      'notThis': notThis,
+      'kbId': kbId,
+    });
+    return nextAsk;
+  }
+
+  @override
+  Future<Map<String, dynamic>> guestSupportHandoff(String? sessionId) async {
+    guestHandoffCalled = true;
+    return {'ok': true, 'notice': handoffNoticeText, 'sessionId': 'g-1'};
+  }
+
+  @override
+  Future<Map<String, dynamic>> guestSupportVerify({
+    required String account,
+    required String password,
+  }) async {
+    guestVerifyCall = {'account': account, 'password': password};
+    return {'accountLabel': 'tester123', 'linkToken': 'lt-1'};
+  }
+
   @override
   Future<Map<String, dynamic>> supportInbox() async {
     if (!inboxReachable) {
@@ -242,6 +282,58 @@ void main() {
     expect(botY, lessThan(friendY));
     expect(find.byTooltip('删除好友'), findsOneWidget);
     expect(find.byKey(const ValueKey('qf-support-desk-entry')), findsNothing);
+    await _unmount(tester);
+  });
+
+  testWidgets('guest support page asks anonymously, verifies, hands off', (
+    tester,
+  ) async {
+    final session = _FakeSupportSession(loggedIn: false);
+    session.mode = QfMode.entry;
+    await tester.pumpWidget(_wrap(QfSupportPage(session: session)));
+    await tester.pump();
+    await tester.pump();
+    // Anonymous first: the verify card is an optional extra, collapsed.
+    expect(
+      find.byKey(const ValueKey('qf-support-verify-toggle')),
+      findsOneWidget,
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('qf-support-input')),
+      '连不上网怎么办',
+    );
+    await tester.tap(find.byKey(const ValueKey('qf-support-send')));
+    await tester.pump();
+    await tester.pump();
+    expect(session.guestAskCalls.single['text'], '连不上网怎么办');
+    expect(session.askCalls, isEmpty);
+    // Optional account linking: verify only, never a login.
+    await tester.tap(find.byKey(const ValueKey('qf-support-verify-toggle')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('只核验身份'), findsOneWidget);
+    await tester.enterText(
+      find.byKey(const ValueKey('qf-support-verify-account')),
+      'tester123',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('qf-support-verify-password')),
+      'pw123456',
+    );
+    await tester.tap(find.byKey(const ValueKey('qf-support-verify-submit')));
+    await tester.pump();
+    await tester.pump();
+    expect(session.guestVerifyCall, {
+      'account': 'tester123',
+      'password': 'pw123456',
+    });
+    expect(find.byKey(const ValueKey('qf-support-linked')), findsOneWidget);
+    expect(session.mode, QfMode.entry);
+    // Guest handoff goes through the guest channel too.
+    await tester.tap(find.byKey(const ValueKey('qf-support-handoff')));
+    await tester.pump();
+    await tester.pump();
+    expect(session.guestHandoffCalled, isTrue);
+    expect(session.handoffCalled, isFalse);
     await _unmount(tester);
   });
 

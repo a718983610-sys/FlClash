@@ -44,8 +44,13 @@ class Bootstrap {
     windowPort = window;
     trayPort = appTray;
     navigationPort = navigation;
-    final dynamicColor = await _initDynamicColor();
-    return _initData(version, dynamicColor);
+    // Display-only inputs stay off the pre-first-frame serial chain: the
+    // fetches start now but complete whenever the platform answers, and
+    // their consumers (theme seeds, version label, profile UA) all read
+    // after the first frame.
+    final dynamicColor = _initDynamicColor();
+    final packageInfo = PackageInfo.fromPlatform();
+    return _initData(version, dynamicColor, packageInfo);
   }
 
   Future<DynamicColorSeeds> _initDynamicColor() async {
@@ -98,10 +103,15 @@ class Bootstrap {
 
   Future<ProviderContainer> _initData(
     int version,
-    DynamicColorSeeds dynamicColor,
+    Future<DynamicColorSeeds> dynamicColor,
+    Future<PackageInfo> packageInfo,
   ) async {
     await _claimDataDirectory();
-    globalState.packageInfo = await PackageInfo.fromPlatform();
+    unawaited(() async {
+      try {
+        globalState.packageInfo = await packageInfo;
+      } catch (_) {}
+    }());
     var config = await migration.run();
     _bootDecision = await bootGuard.evaluate(
       profileId: config.currentProfileId,
@@ -131,13 +141,18 @@ class Bootstrap {
       overrides: [...appStateOverrides, ...configOverrides],
     );
     globalState.container = container;
-    container
-        .read(dynamicColorProvider.notifier)
-        .seed(
-          lightSeed: dynamicColor.lightSeed,
-          darkSeed: dynamicColor.darkSeed,
-          accentColor: dynamicColor.accentColor,
-        );
+    unawaited(() async {
+      try {
+        final seeds = await dynamicColor;
+        container
+            .read(dynamicColorProvider.notifier)
+            .seed(
+              lightSeed: seeds.lightSeed,
+              darkSeed: seeds.darkSeed,
+              accentColor: seeds.accentColor,
+            );
+      } catch (_) {}
+    }());
     final profiles = await database.profilesDao.query().get();
     container.read(profilesProvider.notifier).reorder(profiles);
     await AppLocalizations.load(
