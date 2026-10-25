@@ -344,11 +344,31 @@ class _BigGroupSection extends ConsumerWidget {
         ),
         if (expanded)
           if (isCurrent)
-            const _RuntimeGroups()
+            _CurrentGroups(profile: profile)
           else
             _FileGroups(profile: profile),
       ],
     );
+  }
+}
+
+/// The current subscription's groups. Live core data wins when the core
+/// has the profile loaded; while it has not (app opened but not
+/// connected, core still loading), the same file-based groups the
+/// other subscriptions show keep the current one visible and
+/// pre-selectable instead of an empty placeholder.
+class _CurrentGroups extends ConsumerWidget {
+  const _CurrentGroups({required this.profile});
+
+  final Profile profile;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final groups = ref.watch(currentGroupsStateProvider).value;
+    if (groups.isNotEmpty) {
+      return const _RuntimeGroups();
+    }
+    return _FileGroups(profile: profile, isCurrent: true);
   }
 }
 
@@ -419,14 +439,15 @@ class _RuntimeGroupSection extends ConsumerWidget {
 }
 
 class _FileGroups extends ConsumerWidget {
-  const _FileGroups({required this.profile});
+  const _FileGroups({required this.profile, this.isCurrent = false});
 
   final Profile profile;
+  final bool isCurrent;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     if (profile.type == ProfileType.custom) {
-      return _SwitchHint(profile: profile, custom: true);
+      return isCurrent ? const _NoGroupsHint() : _SwitchHint(profile: profile, custom: true);
     }
     final groups = ref.watch(_profileFileGroupsProvider(profile.id));
     return groups.when(
@@ -434,9 +455,12 @@ class _FileGroups extends ConsumerWidget {
         padding: EdgeInsets.symmetric(vertical: 12),
         child: Center(child: CommonCircleLoading()),
       ),
-      error: (_, _) => _SwitchHint(profile: profile),
+      error: (_, _) =>
+          isCurrent ? const _NoGroupsHint() : _SwitchHint(profile: profile),
       data: (groups) => groups.isEmpty
-          ? _SwitchHint(profile: profile)
+          ? (isCurrent
+                ? const _NoGroupsHint()
+                : _SwitchHint(profile: profile))
           : Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
@@ -444,6 +468,21 @@ class _FileGroups extends ConsumerWidget {
                   _FileGroupSection(profile: profile, group: group),
               ],
             ),
+    );
+  }
+}
+
+class _NoGroupsHint extends StatelessWidget {
+  const _NoGroupsHint();
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(48, 4, 20, 12),
+      child: Text(
+        '暂无分组，请先导入并启用一份订阅。',
+        style: AppTextStyle.subheadline.of(context),
+      ),
     );
   }
 }
@@ -501,15 +540,26 @@ class _FileGroupSectionState extends ConsumerState<_FileGroupSection> {
       // The core needs a moment to load the switched profile before the
       // group exists; wait for it, then apply the pick.
       final stopwatch = Stopwatch()..start();
+      var loaded = false;
       while (stopwatch.elapsed < const Duration(seconds: 6)) {
         if (ref.read(groupsProvider).getGroup(widget.group.name) != null) {
+          loaded = true;
           break;
         }
         await Future<void>.delayed(const Duration(milliseconds: 120));
       }
-      await ref
-          .read(proxiesActionProvider.notifier)
-          .changeProxy(groupName: widget.group.name, proxyName: proxyName);
+      if (loaded) {
+        await ref
+            .read(proxiesActionProvider.notifier)
+            .changeProxy(groupName: widget.group.name, proxyName: proxyName);
+      } else if (ref.read(currentProfileIdProvider) == widget.profile.id) {
+        // The core has not loaded this profile (not connected yet):
+        // keep the pick as the saved selection instead of failing; it
+        // reaches the core on the next apply.
+        ref
+            .read(profilesActionProvider.notifier)
+            .updateCurrentSelectedMap(widget.group.name, proxyName);
+      }
     } finally {
       if (mounted) setState(() => _switching = false);
     }
@@ -537,7 +587,8 @@ class _FileGroupSectionState extends ConsumerState<_FileGroupSection> {
           for (final member in widget.group.members)
             _NodeRow(
               name: member,
-              selected: false,
+              selected:
+                  widget.profile.selectedMap[widget.group.name] == member,
               onTap: _switching ? null : () => _selectNode(member),
             ),
       ],

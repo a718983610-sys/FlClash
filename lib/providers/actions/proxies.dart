@@ -134,7 +134,11 @@ class ProxiesAction extends _$ProxiesAction {
 
   Future<void> updateGroups() async {
     try {
-      final List<Group> groups = await retry(
+      // A core error is not an empty result: it must never overwrite the
+      // groups already on screen with an empty list (C-54). Null marks
+      // the error case; only a real answer, even an empty one, replaces
+      // the current groups.
+      final List<Group>? groups = await retry<List<Group>?>(
         task: () async {
           final sortType = ref.read(
             proxiesStyleSettingProvider.select((state) => state.sortType),
@@ -158,11 +162,14 @@ class ProxiesAction extends _$ProxiesAction {
               'updateGroups error: $e',
               logLevel: coreFailureLogLevel(e),
             );
-            return [];
+            return null;
           }
         },
-        retryIf: (res) => res.isEmpty,
+        retryIf: (res) => res == null || res.isEmpty,
       );
+      if (groups == null) {
+        return;
+      }
       ref.read(groupsProvider.notifier).value = groups;
       _reconcileSelectedMap(groups);
     } catch (e) {
