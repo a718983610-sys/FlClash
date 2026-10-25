@@ -16,6 +16,20 @@ class FlClashHttpOverrides extends HttpOverrides {
   static const _coreRootsAsset =
       'core/Clash.Meta/component/ca/ca-certificates.crt';
 
+  static Future<void>? _trustInstall;
+
+  /// Starts the install without blocking the caller; a second start is a
+  /// no-op. Consumers that depend on the roots await [settleTrustCoreRoots]
+  /// instead of the startup path awaiting [trustCoreRoots].
+  static void beginTrustCoreRoots() {
+    _trustInstall ??= trustCoreRoots();
+  }
+
+  static Future<void> settleTrustCoreRoots() {
+    beginTrustCoreRoots();
+    return _trustInstall!;
+  }
+
   /// The bundle the core embeds; only release CI fills it.
   static Future<void> trustCoreRoots() async {
     try {

@@ -177,6 +177,7 @@ class Bootstrap {
   ProviderContainer get _container => globalState.container;
 
   Future<void> _initApp() async {
+    await FlClashHttpOverrides.settleTrustCoreRoots();
     unawaited(_container.read(systemActionProvider.notifier).updateTray());
     unawaited(
       _container.read(profilesActionProvider.notifier).autoUpdateProfiles(),

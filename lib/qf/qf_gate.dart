@@ -10,6 +10,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../application.dart';
+import '../common/http.dart';
 import '../providers/providers.dart';
 import '../views/about.dart';
 import 'qf_api.dart';
@@ -150,6 +151,7 @@ class _QfSessionGateState extends ConsumerState<QfSessionGate> {
   }
 
   Future<void> _bootBackground(QfSessionController session) async {
+    await FlClashHttpOverrides.settleTrustCoreRoots();
     try {
       final cached = await QfManifestService.loadCached();
       if (cached != null) _applyManifest(session, cached);
