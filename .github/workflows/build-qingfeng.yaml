@@ -32,6 +32,13 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Free disk space (TEMP candidate build 2026-10-26, revert after run)
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost /opt/hostedtoolcache
+          sudo rm -rf /usr/share/swift /opt/miniconda /opt/az /usr/local/lib/android/sdk/ndk
+          sudo docker image prune -af >/dev/null 2>&1 || true
+          df -h / | tail -1
+
       - name: Setup Android Signing
         run: |
           echo "${{ secrets.KEYSTORE }}" | base64 --decode > android/app/keystore.jks
