@@ -9,6 +9,7 @@ import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/views/profiles/add.dart';
+import 'package:fl_clash/views/profiles/qf_detail_pages.dart';
 import 'package:fl_clash/views/proxies/card.dart';
 import 'package:fl_clash/widgets/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -432,6 +433,20 @@ class _RuntimeGroupSection extends ConsumerWidget {
                 groupType: group.type,
                 proxyName: proxy.name,
               ),
+              onInfo: GroupTypeExtension.valueList.contains(proxy.type)
+                  ? null
+                  : () {
+                      final profile = ref.read(currentProfileProvider);
+                      if (profile == null) return;
+                      BaseNavigator.push(
+                        context,
+                        QfProxyDetailPage(
+                          profileId: profile.id,
+                          proxyName: proxy.name,
+                          isCustom: profile.type == ProfileType.custom,
+                        ),
+                      );
+                    },
             ),
       ],
     );
@@ -590,6 +605,20 @@ class _FileGroupSectionState extends ConsumerState<_FileGroupSection> {
               selected:
                   widget.profile.selectedMap[widget.group.name] == member,
               onTap: _switching ? null : () => _selectNode(member),
+              onInfo:
+                  const {'DIRECT', 'REJECT', 'REJECT-DROP'}.contains(member)
+                  ? null
+                  : () {
+                      BaseNavigator.push(
+                        context,
+                        QfProxyDetailPage(
+                          profileId: widget.profile.id,
+                          proxyName: member,
+                          isCustom:
+                              widget.profile.type == ProfileType.custom,
+                        ),
+                      );
+                    },
             ),
       ],
     );
@@ -653,12 +682,14 @@ class _NodeRow extends StatelessWidget {
     this.caption,
     required this.selected,
     required this.onTap,
+    this.onInfo,
   });
 
   final String name;
   final String? caption;
   final bool selected;
   final VoidCallback? onTap;
+  final VoidCallback? onInfo;
 
   @override
   Widget build(BuildContext context) {
@@ -666,7 +697,7 @@ class _NodeRow extends StatelessWidget {
     return InkWell(
       onTap: onTap,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(64, 9, 20, 9),
+        padding: EdgeInsets.fromLTRB(64, 9, onInfo == null ? 20 : 8, 9),
         child: Row(
           children: [
             SizedBox(
@@ -696,6 +727,7 @@ class _NodeRow extends StatelessWidget {
                     .of(context)
                     .copyWith(color: colorScheme.onSurfaceVariant),
               ),
+            if (onInfo != null) QfInfoButton(onPressed: onInfo!),
           ],
         ),
       ),

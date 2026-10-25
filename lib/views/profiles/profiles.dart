@@ -18,6 +18,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'add.dart';
 import 'edit.dart';
 import 'preview.dart';
+import 'qf_detail_pages.dart';
 
 const _infoGap = 4.0;
 
@@ -514,6 +515,14 @@ class ProfileItem extends ConsumerWidget {
               else
                 _buildTrailing(context, isUpdating: isUpdating),
               if (isSelected) const SelectionBadge(size: 24),
+              QfInfoButton(
+                onPressed: () {
+                  BaseNavigator.push(
+                    context,
+                    QfProfileDetailPage(profileId: profile.id),
+                  );
+                },
+              ),
             ],
           ),
           title: _ProfileCardTitle(
