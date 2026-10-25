@@ -2,9 +2,14 @@ import 'package:fl_clash/qf/qf_api.dart';
 import 'package:fl_clash/qf/qf_session.dart';
 import 'package:fl_clash/qf/qf_signal.dart';
 import 'package:fl_clash/qf/qf_social.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+const _secureChannel = MethodChannel(
+  'plugins.it_nomads.com/flutter_secure_storage',
+);
 
 class _CensusSession extends QfSessionController {
   _CensusSession() {
@@ -83,6 +88,28 @@ void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues({});
     QfSignalStore.resetCache();
+    // Without a handler the secure-storage read never settles in the
+    // test environment and its 5s timeout timer outlives the test.
+    final store = <String, String>{};
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(_secureChannel, (call) async {
+          final args = call.arguments is Map
+              ? Map<dynamic, dynamic>.from(call.arguments as Map)
+              : const {};
+          final key = args['key']?.toString() ?? '';
+          return switch (call.method) {
+            'read' => store[key],
+            'write' => store[key] = args['value'].toString(),
+            'delete' => store.remove(key),
+            'containsKey' => store.containsKey(key),
+            _ => null,
+          };
+        });
+  });
+
+  tearDown(() {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(_secureChannel, null);
   });
 
   group('C-38 delete for everyone', () {
@@ -228,8 +255,8 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 500));
       await tester.pump(const Duration(milliseconds: 500));
-      expect(find.text('本机尚未生成聊天密钥'), findsOneWidget);
-      expect(find.text('本机已生成聊天密钥'), findsNothing);
+      expect(find.textContaining('本机尚未生成聊天密钥'), findsOneWidget);
+      expect(find.textContaining('本机已生成聊天密钥'), findsNothing);
       await tester.pumpWidget(const MaterialApp(home: SizedBox()));
       await tester.pump(const Duration(seconds: 5));
     });

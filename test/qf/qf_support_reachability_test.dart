@@ -29,6 +29,11 @@ void main() {
   testWidgets('entry page shows a smart-support entry before login', (
     tester,
   ) async {
+    // The entry page is taller than the default 800x600 test surface;
+    // give it a phone-like height so the bottom link row is on screen.
+    tester.view.physicalSize = const Size(800, 1400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
     SharedPreferences.setMockInitialValues({});
     var taps = 0;
     await tester.pumpWidget(
@@ -73,7 +78,10 @@ void main() {
     final support = find.byKey(const ValueKey('qf-ban-support'));
     expect(support, findsOneWidget);
     await tester.tap(support);
-    await tester.pumpAndSettle();
+    // The support page polls every 10s, so pumpAndSettle can never
+    // settle on it; pump a bounded amount instead.
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
     expect(find.byType(QfSupportPage), findsOneWidget);
     await tester.pumpWidget(_wrap(const SizedBox()));
     await tester.pump(const Duration(seconds: 5));

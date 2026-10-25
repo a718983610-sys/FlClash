@@ -370,15 +370,25 @@ HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settin
           ),
         ),
       );
+      // Avatars decode at display size: the provider is a ResizeImage
+      // wrapping the MemoryImage since the smoothness pass.
+      MemoryImage memoryOf(CircleAvatar avatar) {
+        final provider = avatar.backgroundImage!;
+        final inner = provider is ResizeImage
+            ? provider.imageProvider
+            : provider;
+        return inner as MemoryImage;
+      }
+
       await tester.pumpWidget(host());
       await tester.pump();
       CircleAvatar avatar = tester.widget(find.byType(CircleAvatar));
-      expect((avatar.backgroundImage as MemoryImage).bytes, pngA);
+      expect(memoryOf(avatar).bytes, pngA);
       qfApplyUploadedAvatar(userId, 200, pngB);
       await tester.pumpWidget(host());
       await tester.pump();
       avatar = tester.widget(find.byType(CircleAvatar));
-      expect((avatar.backgroundImage as MemoryImage).bytes, pngB);
+      expect(memoryOf(avatar).bytes, pngB);
     });
   });
 }

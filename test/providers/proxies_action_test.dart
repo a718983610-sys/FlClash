@@ -159,8 +159,12 @@ void main() {
     );
 
     test(
-      'clears the groups once retry is exhausted after core throws',
+      'keeps the current groups once retry is exhausted after core throws',
       () async {
+        // C-54 contract: a core error is not an empty result. The
+        // groups already on screen stay until a real answer replaces
+        // them; blanking them on a transient core failure is exactly
+        // the empty-groups failure mode this guards against.
         when(core.getProxies).thenThrow(StateError('core down'));
         final container = buildContainer();
         container.read(groupsProvider.notifier).value = [
@@ -169,7 +173,10 @@ void main() {
 
         await actionOf(container).updateGroups();
 
-        expect(container.read(groupsProvider), isEmpty);
+        expect(
+          container.read(groupsProvider).map((group) => group.name),
+          ['Stale'],
+        );
         verify(core.getProxies).called(3);
       },
     );
