@@ -185,6 +185,7 @@ extension ProfileExtension on Profile {
   Future<Profile> update({required ValidateConfig validate}) async {
     final response = await request.getFileResponseForUrl(url);
     final disposition = response.headers.value('content-disposition');
+    final profileTitle = response.headers.value('profile-title');
     final userinfo = response.headers.value('subscription-userinfo');
     final data = decompressUnlabeled(response.data ?? Uint8List(0));
     final issue = qfSubscriptionContentIssue(data);
@@ -193,7 +194,7 @@ extension ProfileExtension on Profile {
     }
     return copyWith(
       label: label.takeFirstValid([
-        getFileNameForDisposition(disposition),
+        qfImportLabel(disposition: disposition, profileTitle: profileTitle),
         defaultLabel,
       ]),
       subscriptionInfo: SubscriptionInfo.formHString(userinfo),
@@ -225,6 +226,16 @@ extension ProfileExtension on Profile {
       await tempFile.safeDelete();
     }
   }
+}
+
+/// Name a fresh URL import by what the server declares, in priority
+/// order: the content-disposition file name first, then the
+/// profile-title header (the provider's display name for the
+/// subscription, which the merged subscription sends base64-encoded).
+/// Null means neither header named it and the caller falls back.
+String? qfImportLabel({String? disposition, String? profileTitle}) {
+  return getFileNameForDisposition(disposition) ??
+      getTitleForProfileTitleHeader(profileTitle);
 }
 
 /// An endpoint that answers an empty body or a web page (login wall, WAF

@@ -158,3 +158,26 @@ String? getFileNameForDisposition(String? disposition) {
   if (fileNameKey.isEmpty) return null;
   return parameters[fileNameKey];
 }
+
+/// Display title from a `profile-title` response header. Providers send
+/// it either as plain text (sometimes percent-encoded) or with a
+/// `base64:` prefix over the UTF-8 bytes; an undecodable value counts
+/// as absent so callers fall back to their next naming source.
+String? getTitleForProfileTitleHeader(String? value) {
+  if (value == null) return null;
+  var title = value.trim();
+  if (title.isEmpty) return null;
+  if (title.toLowerCase().startsWith('base64:')) {
+    try {
+      title = utf8.decode(base64Decode(title.substring(7).trim()));
+    } catch (_) {
+      return null;
+    }
+  } else if (title.contains('%')) {
+    try {
+      title = Uri.decodeComponent(title);
+    } catch (_) {}
+  }
+  title = title.trim();
+  return title.isEmpty ? null : title;
+}
