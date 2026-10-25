@@ -212,13 +212,8 @@ class _QfSessionGateState extends ConsumerState<QfSessionGate> {
         });
       }
     }
-    if (check.decision == QfUpdateDecision.minor &&
-        !_minorShown &&
-        !await _minorShownToday()) {
-      _minorShown = true;
-      _minorCheck = check;
-      _minorQueued = true;
-      _scheduleDialogs();
+    if (check.decision == QfUpdateDecision.minor) {
+      await _handleMinorCheck(check);
     }
   }
 
@@ -250,13 +245,56 @@ class _QfSessionGateState extends ConsumerState<QfSessionGate> {
         check.decision == QfUpdateDecision.force) {
       await _stopCore();
     }
-    if (check.decision == QfUpdateDecision.minor &&
-        !_minorShown &&
-        !await _minorShownToday()) {
-      _minorShown = true;
-      _minorCheck = check;
-      _minorQueued = true;
-      _scheduleDialogs();
+    if (check.decision == QfUpdateDecision.minor) {
+      await _handleMinorCheck(check);
+    }
+  }
+
+  Future<void> _handleMinorCheck(QfUpdateCheck check) async {
+    if (QfUpdateService.shouldAttemptSilent(check)) {
+      unawaited(_runSilentUpdate(check));
+      return;
+    }
+    await _queueMinorPresentation(check);
+  }
+
+  Future<void> _queueMinorPresentation(QfUpdateCheck check) async {
+    if (_minorShown || await _minorShownToday()) return;
+    _minorShown = true;
+    _minorCheck = check;
+    _minorQueued = true;
+    _scheduleDialogs();
+  }
+
+  bool _silentRunning = false;
+
+  /// Background silent update: one attempt per version; anything short
+  /// of installed falls back to the daily-once minor dialog.
+  Future<void> _runSilentUpdate(QfUpdateCheck check) async {
+    if (_silentRunning) return;
+    _silentRunning = true;
+    try {
+      var settled = false;
+      if (await QfUpdateService.claimSilentAttempt(check.latestVersion) &&
+          check.downloadUrl.isNotEmpty) {
+        try {
+          final file = await QfUpdateService.download(
+            check.downloadUrl,
+            onProgress: (_) {},
+            expectedSha256: check.sha256,
+            expectedSizeBytes: check.sizeBytes,
+          );
+          final outcome = await QfUpdateService.installSilentFirst(file);
+          settled =
+              outcome == QfSilentFirstOutcome.installed ||
+              outcome == QfSilentFirstOutcome.launched;
+        } catch (_) {}
+      }
+      if (!settled && mounted) {
+        await _queueMinorPresentation(check);
+      }
+    } finally {
+      _silentRunning = false;
     }
   }
 

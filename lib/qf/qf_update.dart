@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:crypto/crypto.dart' as crypto;
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'qf_api.dart';
 import 'qf_http_client.dart';
@@ -80,6 +81,7 @@ class QfUpdateService {
   static Duration retryDelay = const Duration(seconds: 2);
   static int maxAutoRetries = 1;
   static Duration installTimeout = const Duration(seconds: 30);
+  static Duration silentInstallTimeout = const Duration(minutes: 2);
 
   // Throughput watchdog: a connection that keeps trickling a few bytes
   // never trips the per-gap stall timeout, so a 60+MB package can sit
@@ -340,29 +342,17 @@ class QfUpdateService {
           .getUrl(Uri.parse(url))
           .timeout(
             responseTimeout,
-            onTimeout: () => throw const QfApiException(
-              0,
-              'TIMEOUT',
-              '连接下载服务器超时，请检查网络后重试',
-            ),
+            onTimeout: () =>
+                throw const QfApiException(0, 'TIMEOUT', '连接下载服务器超时，请检查网络后重试'),
           );
       request.headers.set('User-Agent', 'QFClash');
-      final response = await request
-          .close()
-          .timeout(
-            responseTimeout,
-            onTimeout: () => throw const QfApiException(
-              0,
-              'TIMEOUT',
-              '连接下载服务器超时，请检查网络后重试',
-            ),
-          );
+      final response = await request.close().timeout(
+        responseTimeout,
+        onTimeout: () =>
+            throw const QfApiException(0, 'TIMEOUT', '连接下载服务器超时，请检查网络后重试'),
+      );
       if (response.statusCode < 200 || response.statusCode >= 300) {
-        throw QfApiException(
-          response.statusCode,
-          'DOWNLOAD',
-          '下载失败，请稍后重试',
-        );
+        throw QfApiException(response.statusCode, 'DOWNLOAD', '下载失败，请稍后重试');
       }
       final total = response.contentLength;
       var received = 0;
@@ -398,11 +388,7 @@ class QfUpdateService {
         throw const QfApiException(0, 'TIMEOUT', '下载超时，请检查网络后重试');
       }
       if (progressStalled) {
-        throw const QfApiException(
-          0,
-          'TIMEOUT',
-          '下载长时间没有进展，已自动停止，请检查网络后重试',
-        );
+        throw const QfApiException(0, 'TIMEOUT', '下载长时间没有进展，已自动停止，请检查网络后重试');
       }
       if (e is QfApiException) rethrow;
       if (e is TimeoutException) {
@@ -464,10 +450,11 @@ class QfUpdateService {
   static bool get _isAndroid => isAndroidForTest ?? Platform.isAndroid;
   static bool get _isWindows => isWindowsForTest ?? Platform.isWindows;
 
+  // Async on purpose: a narrower invoker future makes Future.timeout reject onTimeout at runtime.
   static Future<Object?> _invokeAppChannel(
     String method,
     Object? arguments,
-  ) {
+  ) async {
     final invoker = appChannelInvokerForTest;
     if (invoker != null) return invoker(method, arguments);
     return _appChannel.invokeMethod<Object?>(method, arguments);
@@ -515,6 +502,60 @@ class QfUpdateService {
     return QfInstallOutcome.failed;
   }
 
+  static bool shouldAttemptSilent(QfUpdateCheck check, {bool? isAndroid}) {
+    return check.manifestFresh &&
+        check.decision == QfUpdateDecision.minor &&
+        (check.manifest?.silentUpdate ?? false) &&
+        (isAndroid ?? _isAndroid);
+  }
+
+  /// Claims the one automatic silent attempt for [version].
+  static Future<bool> claimSilentAttempt(String version) async {
+    if (version.isEmpty) return false;
+    final prefs = await SharedPreferences.getInstance();
+    final key = 'qf_silent_attempted_$version';
+    if (prefs.getBool(key) == true) return false;
+    await prefs.setBool(key, true);
+    return true;
+  }
+
+  /// Installs via the no-user-action session; non-success means fall back.
+  static Future<QfSilentInstallOutcome> installSilently(File file) async {
+    try {
+      if (!_isAndroid) return QfSilentInstallOutcome.failed;
+      if (!await file.exists()) return QfSilentInstallOutcome.failed;
+      if (!file.path.toLowerCase().endsWith('.apk')) {
+        return QfSilentInstallOutcome.failed;
+      }
+      final result = await _invokeAppChannel('installApkSilent', {
+        'path': file.path,
+      }).timeout(silentInstallTimeout, onTimeout: () => null);
+      return switch (result) {
+        'success' => QfSilentInstallOutcome.success,
+        'pending_user_action' => QfSilentInstallOutcome.pendingUserAction,
+        'needs_permission' => QfSilentInstallOutcome.needsPermission,
+        _ => QfSilentInstallOutcome.failed,
+      };
+    } catch (_) {
+      return QfSilentInstallOutcome.failed;
+    }
+  }
+
+  static Future<QfSilentFirstOutcome> installSilentFirst(File file) async {
+    if (_isAndroid) {
+      final silent = await installSilently(file);
+      if (silent == QfSilentInstallOutcome.success) {
+        return QfSilentFirstOutcome.installed;
+      }
+    }
+    final ordinary = await installOutcome(file);
+    return switch (ordinary) {
+      QfInstallOutcome.launched => QfSilentFirstOutcome.launched,
+      QfInstallOutcome.needsPermission => QfSilentFirstOutcome.needsPermission,
+      QfInstallOutcome.failed => QfSilentFirstOutcome.failed,
+    };
+  }
+
   /// Opens the system page for allowing installs from this app; false
   /// when there is nothing to open (already allowed or unsupported).
   static Future<bool> openInstallPermissionSettings() async {
@@ -534,3 +575,12 @@ class QfUpdateService {
 }
 
 enum QfInstallOutcome { launched, needsPermission, failed }
+
+enum QfSilentInstallOutcome {
+  success,
+  pendingUserAction,
+  needsPermission,
+  failed,
+}
+
+enum QfSilentFirstOutcome { installed, launched, needsPermission, failed }

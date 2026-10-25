@@ -212,6 +212,10 @@ class AppPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware 
                 result.success(openApkInstaller(call.argument<String>("path")))
             }
 
+            "installApkSilent" -> {
+                installApkSilently(call.argument<String>("path"), result)
+            }
+
             "openUnknownAppSettings" -> {
                 result.success(openUnknownAppSettings())
             }
@@ -301,6 +305,96 @@ class AppPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware 
             "launched"
         } catch (_: Exception) {
             "failed"
+        }
+    }
+
+    // Dart contract: "success" / "pending_user_action" /
+    // "needs_permission" / "failed".
+    private fun installApkSilently(path: String?, result: Result) {
+        val context = appContext
+        if (path.isNullOrEmpty() ||
+            Build.VERSION.SDK_INT < Build.VERSION_CODES.S
+        ) {
+            result.success("failed")
+            return
+        }
+        val file = java.io.File(path)
+        if (!file.exists() || !file.isFile) {
+            result.success("failed")
+            return
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+            !context.packageManager.canRequestPackageInstalls()
+        ) {
+            result.success("needs_permission")
+            return
+        }
+        val answered = java.util.concurrent.atomic.AtomicBoolean(false)
+        lateinit var receiver: BroadcastReceiver
+        fun answer(value: String) {
+            if (answered.compareAndSet(false, true)) {
+                runCatching { context.unregisterReceiver(receiver) }
+                onMainThread { result.success(value) }
+            }
+        }
+        receiver = object : BroadcastReceiver() {
+            override fun onReceive(receiverContext: Context?, intent: Intent?) {
+                val status = intent?.getIntExtra(
+                    android.content.pm.PackageInstaller.EXTRA_STATUS,
+                    android.content.pm.PackageInstaller.STATUS_FAILURE,
+                ) ?: android.content.pm.PackageInstaller.STATUS_FAILURE
+                answer(
+                    when (status) {
+                        android.content.pm.PackageInstaller.STATUS_SUCCESS ->
+                            "success"
+                        android.content.pm.PackageInstaller.STATUS_PENDING_USER_ACTION ->
+                            "pending_user_action"
+                        else -> "failed"
+                    },
+                )
+            }
+        }
+        ContextCompat.registerReceiver(
+            context,
+            receiver,
+            IntentFilter(SILENT_INSTALL_STATUS_ACTION),
+            ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
+        mainHandler.postDelayed({ answer("failed") }, SILENT_INSTALL_TIMEOUT_MS)
+        scope.launch(Dispatchers.IO) {
+            var session: android.content.pm.PackageInstaller.Session? = null
+            try {
+                val installer = context.packageManager.packageInstaller
+                val params = android.content.pm.PackageInstaller.SessionParams(
+                    android.content.pm.PackageInstaller.SessionParams.MODE_FULL_INSTALL,
+                ).apply {
+                    setRequireUserAction(
+                        android.content.pm.PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED,
+                    )
+                }
+                session = installer.openSession(installer.createSession(params))
+                session.openWrite("qf-update", 0, file.length()).use { out ->
+                    file.inputStream().use { input -> input.copyTo(out) }
+                    session.fsync(out)
+                }
+                val statusIntent = Intent(SILENT_INSTALL_STATUS_ACTION).setPackage(
+                    context.packageName,
+                )
+                val pendingIntent = android.app.PendingIntent.getBroadcast(
+                    context,
+                    SILENT_INSTALL_REQUEST_CODE,
+                    statusIntent,
+                    android.app.PendingIntent.FLAG_UPDATE_CURRENT or
+                        android.app.PendingIntent.FLAG_MUTABLE,
+                )
+                session.commit(pendingIntent.intentSender)
+            } catch (error: Exception) {
+                GlobalState.log("Silent install failed: $error")
+                runCatching { session?.abandon() }
+                answer("failed")
+            } finally {
+                runCatching { session?.close() }
+            }
         }
     }
 
@@ -604,5 +698,9 @@ class AppPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware 
         const val NOTIFICATION_PERMISSION_REQUEST_CODE = 1002
         const val INSTALLED_APPS_PERMISSION_REQUEST_CODE = 1003
         const val LOCAL_NETWORK_PERMISSION_REQUEST_CODE = 1004
+        const val SILENT_INSTALL_REQUEST_CODE = 1005
+        const val SILENT_INSTALL_STATUS_ACTION =
+            "com.follow.clash.SILENT_INSTALL_STATUS"
+        const val SILENT_INSTALL_TIMEOUT_MS = 90_000L
     }
 }

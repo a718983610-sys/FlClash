@@ -55,6 +55,7 @@ class QfReleaseManifest {
   final String retiredBelowVersion;
   final String minUsableVersion;
   final bool maintenance;
+  final bool silentUpdate;
   final String serverBaseUrl;
   final String serverBaseUrlFallback;
   final String googleClientId;
@@ -65,6 +66,7 @@ class QfReleaseManifest {
     required this.retiredBelowVersion,
     this.minUsableVersion = '0.0.0',
     required this.maintenance,
+    this.silentUpdate = false,
     required this.serverBaseUrl,
     this.serverBaseUrlFallback = '',
     required this.googleClientId,
@@ -88,6 +90,7 @@ class QfReleaseManifest {
       retiredBelowVersion: (json['retiredBelowVersion'] ?? '0.0.0').toString(),
       minUsableVersion: (json['minUsableVersion'] ?? '0.0.0').toString(),
       maintenance: json['maintenance'] == true,
+      silentUpdate: json['silentUpdate'] == true,
       serverBaseUrl: (json['serverBaseUrl'] ?? '').toString(),
       serverBaseUrlFallback: (json['serverBaseUrlFallback'] ?? '').toString(),
       googleClientId: (json['googleClientId'] ?? '').toString(),
@@ -101,6 +104,7 @@ class QfReleaseManifest {
       'retiredBelowVersion': retiredBelowVersion,
       'minUsableVersion': minUsableVersion,
       'maintenance': maintenance,
+      'silentUpdate': silentUpdate,
       'serverBaseUrl': serverBaseUrl,
       'serverBaseUrlFallback': serverBaseUrlFallback,
       'googleClientId': googleClientId,
@@ -114,6 +118,7 @@ class QfReleaseManifest {
       retiredBelowVersion: retiredBelowVersion,
       minUsableVersion: minUsableVersion,
       maintenance: value,
+      silentUpdate: silentUpdate,
       serverBaseUrl: serverBaseUrl,
       serverBaseUrlFallback: serverBaseUrlFallback,
       googleClientId: googleClientId,

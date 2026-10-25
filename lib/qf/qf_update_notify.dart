@@ -119,6 +119,9 @@ class QfUpdateNotify {
         decision != QfUpdateDecision.retired) {
       return;
     }
+    // A minor release the manifest marks silent is applied in the
+    // background by the app itself; announcing it would be a lie.
+    if (manifest.silentUpdate && decision == QfUpdateDecision.minor) return;
     if (interactive) return;
     final version = manifest.latestVersion;
     if (version.isEmpty) return;

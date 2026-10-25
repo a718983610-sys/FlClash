@@ -28,6 +28,23 @@ QfReleaseManifest _manifest({
 }
 
 void main() {
+  test('silentUpdate manifest flag parses with a false default', () {
+    expect(_manifest().silentUpdate, isFalse);
+    final flagged = QfReleaseManifest.fromJson({
+      'latestVersion': '2.0.1',
+      'retiredBelowVersion': '0.0.0',
+      'maintenance': false,
+      'silentUpdate': true,
+      'serverBaseUrl': 'https://example.invalid',
+      'googleClientId': 'top-level-id',
+      'platforms': const <String, dynamic>{},
+    });
+    expect(flagged.silentUpdate, isTrue);
+    expect(flagged.toJson()['silentUpdate'], isTrue);
+    expect(flagged.withMaintenance(true).silentUpdate, isTrue);
+    expect(_manifest().toJson()['silentUpdate'], isFalse);
+  });
+
   test('version parse and compare', () {
     expect(
       QfVersion.tryParse('1.2.3')!.compareTo(const QfVersion(1, 2, 4)),
