@@ -398,12 +398,25 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 400));
       await tester.tap(find.text('👍'));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 500));
-      await tester.pump(const Duration(seconds: 5));
+      // Wait on states, not a fixed budget: the verdict lands at a different fake time per pump schedule, and this notice queues one 4-second qfToast slot behind the delivery failure notice.
+      var rolledBack = false;
+      var failureNoticeShown = false;
+      var noticeShown = false;
+      for (var step = 0; step < 80 && !noticeShown; step++) {
+        await tester.pump(const Duration(milliseconds: 250));
+        if (find.text('👍').evaluate().isEmpty) rolledBack = true;
+        if (find.text('发送失败：网络或接口错误，请检查网络后重试。').evaluate().isNotEmpty ||
+            find.text('对方尚未启用聊天加密，暂时无法发送消息。').evaluate().isNotEmpty) {
+          failureNoticeShown = true;
+        }
+        if (find.text('回应发送失败，请稍后重试。').evaluate().isNotEmpty) {
+          noticeShown = true;
+        }
+      }
+      expect(rolledBack, isTrue);
+      expect(failureNoticeShown, isTrue);
+      expect(noticeShown, isTrue);
       expect(find.text('👍'), findsNothing);
-      await tester.pump(const Duration(milliseconds: 600));
-      await tester.pump(const Duration(milliseconds: 600));
       expect(find.text('回应发送失败，请稍后重试。'), findsOneWidget);
       await tester.pumpWidget(const MaterialApp(home: SizedBox()));
       await tester.pump(const Duration(seconds: 5));
