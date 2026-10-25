@@ -75,7 +75,7 @@ class QfGoogleAuth {
       if (e.code == GoogleSignInExceptionCode.canceled) {
         throw const QfGoogleAuthException('已取消谷歌登录。');
       }
-      throw const QfGoogleAuthException('谷歌登录失败，请重试或改用密码登录。');
+      throw const QfGoogleAuthException(QfCopy.googleFailedWithNetworkHint);
     }
     final idToken = account.authentication.idToken;
     if (idToken == null || idToken.isEmpty) {
@@ -123,7 +123,7 @@ class QfGoogleAuth {
         if (error == 'access_denied') {
           throw const QfGoogleAuthException('已取消谷歌授权。');
         }
-        throw const QfGoogleAuthException('谷歌登录失败，请重试或改用密码登录。');
+        throw const QfGoogleAuthException(QfCopy.googleFailedWithNetworkHint);
       }
       final code = params['code'];
       if (code == null || code.isEmpty) {
@@ -160,7 +160,7 @@ class QfGoogleAuth {
     try {
       return await completer.future.timeout(const Duration(minutes: 5));
     } on TimeoutException {
-      throw const QfGoogleAuthException('谷歌登录等待超时，请重试。');
+      throw const QfGoogleAuthException(QfCopy.googleTimeoutWithNetworkHint);
     } finally {
       await subscription.cancel();
     }
@@ -215,7 +215,7 @@ class QfGoogleAuth {
     } on QfGoogleAuthException {
       rethrow;
     } catch (_) {
-      throw const QfGoogleAuthException(QfCopy.networkAccountUnreachable);
+      throw const QfGoogleAuthException(QfCopy.googleUnreachable);
     } finally {
       client.close(force: true);
     }

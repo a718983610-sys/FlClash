@@ -157,6 +157,11 @@ class QfCopy {
   static const String qrCameraUnsupported = '当前设备不支持相机扫码，请导入二维码图片。';
   static const String qrNoCodeFound = '图片中没有识别到有效的二维码';
   static const String googleNotConfiguredHint = '谷歌登录尚未完成配置，请改用邮箱或账户 ID 登录。';
+  static const String googleNeedsNetwork =
+      '谷歌登录需要能访问谷歌的网络环境。当前网络无法访问谷歌时，请开启代理后重试，或改用账户密码登录。';
+  static const String googleFailedWithNetworkHint = '谷歌登录失败。$googleNeedsNetwork';
+  static const String googleTimeoutWithNetworkHint = '谷歌登录等待超时。$googleNeedsNetwork';
+  static const String googleUnreachable = '无法连接谷歌服务器。$googleNeedsNetwork';
   static const String googleConfigNetworkHint =
       '暂时无法连接谷歌登录服务，请检查网络后重试，或改用邮箱或账户 ID 登录。';
   static const String actionFailedRetry = '操作没有完成，请检查网络后重试；如果连续失败，请稍后再试。';
