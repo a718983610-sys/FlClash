@@ -1,4 +1,3 @@
-import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/database.dart';
 import 'package:fl_clash/views/profiles/qf_detail_pages.dart';
