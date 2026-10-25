@@ -143,6 +143,10 @@ extension QfSocialApi on QfSessionController {
     );
   }
 
+  Future<Map<String, dynamic>> socialChatDeleteMessage(int messageId) async {
+    return authed('DELETE', '/chat/messages/$messageId');
+  }
+
   Future<List<dynamic>> recoveryFriendRequests() async {
     final data = await authed('GET', '/appeals/recovery/friend-requests');
     final requests = data['requests'];
@@ -533,6 +537,7 @@ class _QfProfilePageState extends State<QfProfilePage> {
   Uint8List? _avatarBytes;
   String _loadedNickname = '';
   bool _loading = true;
+  bool _loadFailed = false;
   bool _hasKey = false;
   bool _hasBackup = false;
   bool _historyUnlocked = false;
@@ -554,15 +559,17 @@ class _QfProfilePageState extends State<QfProfilePage> {
   }
 
   Future<void> _refreshHistoryStatus() async {
-    final status = await QfChatHistoryVault.status();
-    if (mounted) {
-      setState(() {
-        _historyUnlocked = QfChatHistoryVault.historyUnlocked;
-        _historyLocalCount = status.localCount;
-        _historyCloudEntries = status.totalEntries;
-        _historyCloudBytes = status.totalBytes;
-      });
-    }
+    try {
+      final status = await QfChatHistoryVault.status();
+      if (mounted) {
+        setState(() {
+          _historyUnlocked = QfChatHistoryVault.historyUnlocked;
+          _historyLocalCount = status.localCount;
+          _historyCloudEntries = status.totalEntries;
+          _historyCloudBytes = status.totalBytes;
+        });
+      }
+    } catch (_) {}
   }
 
   Future<void> _unlockHistory() async {
@@ -635,6 +642,9 @@ class _QfProfilePageState extends State<QfProfilePage> {
 
   Future<void> _load() async {
     unawaited(_refreshHistoryStatus());
+    // Local key presence is a local fact: probe it passively instead
+    // of assuming a key exists whenever any profile call succeeds (C-35).
+    final hasLocalKey = await QfSignalStore.hasLocalIdentity();
     try {
       final profile = await widget.session.socialGetProfile();
       final nickname = (profile['nickname'] ?? '').toString();
@@ -652,7 +662,8 @@ class _QfProfilePageState extends State<QfProfilePage> {
           _loadedNickname = nickname;
           _avatarBytes = bytes;
           _hasBackup = profile['hasKeyBackup'] == true;
-          _hasKey = true;
+          _hasKey = hasLocalKey;
+          _loadFailed = false;
           _loading = false;
         });
       }
@@ -663,12 +674,18 @@ class _QfProfilePageState extends State<QfProfilePage> {
           setState(() {
             _nickname.text = (forumProfile['nickname'] ?? '').toString();
             _loadedNickname = _nickname.text;
-            _hasKey = true;
+            _hasKey = hasLocalKey;
+            _loadFailed = false;
             _loading = false;
           });
         }
       } catch (_) {
-        if (mounted) setState(() => _loading = false);
+        if (mounted) {
+          setState(() {
+            _loadFailed = true;
+            _loading = false;
+          });
+        }
       }
     }
   }
@@ -883,6 +900,26 @@ class _QfProfilePageState extends State<QfProfilePage> {
       appBar: AppBar(title: const Text('个人资料')),
       body: _loading
           ? const Center(child: CommonCircleLoading.page())
+          : _loadFailed
+          ? Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('个人资料加载失败，请检查网络后重试。'),
+                  const SizedBox(height: 12),
+                  FilledButton(
+                    onPressed: () {
+                      setState(() {
+                        _loading = true;
+                        _loadFailed = false;
+                      });
+                      _load();
+                    },
+                    child: const Text('重试'),
+                  ),
+                ],
+              ),
+            )
           : ListView(
               padding: const EdgeInsets.all(16),
               children: [
@@ -1023,6 +1060,8 @@ class _QfAttachmentsPageState extends State<QfAttachmentsPage> {
   List<dynamic> _blobs = const [];
   int _total = 0;
   bool _loading = true;
+  bool _loadingMore = false;
+  bool _loadFailed = false;
 
   @override
   void initState() {
@@ -1031,6 +1070,8 @@ class _QfAttachmentsPageState extends State<QfAttachmentsPage> {
   }
 
   Future<void> _load({bool more = false}) async {
+    if (more && _loadingMore) return;
+    if (more) setState(() => _loadingMore = true);
     try {
       final data = await widget.session.chatBlobs(
         offset: more ? _blobs.length : 0,
@@ -1039,13 +1080,34 @@ class _QfAttachmentsPageState extends State<QfAttachmentsPage> {
       if (mounted) {
         setState(() {
           final list = blobs is List ? blobs : const <dynamic>[];
-          _blobs = more ? [..._blobs, ...list] : list;
+          if (more) {
+            final known = _blobs
+                .map((b) => b is Map ? '${b['blobId']}' : '')
+                .toSet();
+            _blobs = [
+              ..._blobs,
+              ...list.where(
+                (b) => b is! Map || !known.contains('${b['blobId']}'),
+              ),
+            ];
+          } else {
+            _blobs = list;
+          }
           _total = (data['total'] as num?)?.toInt() ?? _blobs.length;
           _loading = false;
+          _loadingMore = false;
+          _loadFailed = false;
         });
       }
     } catch (_) {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _loadingMore = false;
+          if (!more) _loadFailed = true;
+        });
+        if (more) qfToast(context, '加载失败，请稍后重试。');
+      }
     }
   }
 
@@ -1085,6 +1147,26 @@ class _QfAttachmentsPageState extends State<QfAttachmentsPage> {
       appBar: AppBar(title: const Text(QfCopy.attachmentsTitle)),
       body: _loading
           ? const Center(child: CommonCircleLoading.page())
+          : _loadFailed && _blobs.isEmpty
+          ? Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('附件加载失败，请检查网络后重试。'),
+                  const SizedBox(height: 12),
+                  FilledButton(
+                    onPressed: () {
+                      setState(() {
+                        _loading = true;
+                        _loadFailed = false;
+                      });
+                      _load();
+                    },
+                    child: const Text('重试'),
+                  ),
+                ],
+              ),
+            )
           : _blobs.isEmpty
           ? const Center(child: Text(QfCopy.attachmentsEmpty))
           : ListView.separated(
@@ -1093,8 +1175,8 @@ class _QfAttachmentsPageState extends State<QfAttachmentsPage> {
               itemBuilder: (context, index) {
                 if (index == _blobs.length) {
                   return TextButton(
-                    onPressed: () => _load(more: true),
-                    child: const Text('加载更多'),
+                    onPressed: _loadingMore ? null : () => _load(more: true),
+                    child: Text(_loadingMore ? '加载中…' : '加载更多'),
                   );
                 }
                 final raw = _blobs[index];
@@ -1144,6 +1226,7 @@ class _QfFriendsPageState extends State<QfFriendsPage> {
   bool _loading = true;
   bool _supportDeskVisible = false;
   String? _error;
+  int _loadGen = 0;
 
   @override
   void initState() {
@@ -1161,6 +1244,9 @@ class _QfFriendsPageState extends State<QfFriendsPage> {
   }
 
   Future<void> _load() async {
+    // Poll, pull-to-refresh and post-action reloads race each other;
+    // only the newest generation may land (C-37).
+    final gen = ++_loadGen;
     try {
       final data = await widget.session.socialFriends();
       List<dynamic> incoming = const [];
@@ -1177,7 +1263,7 @@ class _QfFriendsPageState extends State<QfFriendsPage> {
       try {
         unread = qfUnreadByUser(await widget.session.socialChatConversations());
       } catch (_) {}
-      if (mounted) {
+      if (mounted && gen == _loadGen) {
         setState(() {
           final friends = data['friends'];
           _friends = qfSupportWithBotEntry(
@@ -1193,10 +1279,17 @@ class _QfFriendsPageState extends State<QfFriendsPage> {
         });
       }
     } on QfApiException catch (e) {
-      if (mounted) {
+      if (mounted && gen == _loadGen) {
         setState(() {
           _loading = false;
           _error = e.message;
+        });
+      }
+    } catch (_) {
+      if (mounted && gen == _loadGen) {
+        setState(() {
+          _loading = false;
+          _error = '加载失败，请稍后重试。';
         });
       }
     }
@@ -1810,6 +1903,7 @@ class _QfChatPageState extends State<QfChatPage> {
   bool _loading = true;
   bool _historySyncing = false;
   bool _sendingAttachment = false;
+  bool _sendingText = false;
   String? _vaultNotice;
   List<dynamic> _recoveryRequests = const [];
   bool _recoveryBusy = false;
@@ -1985,13 +2079,15 @@ class _QfChatPageState extends State<QfChatPage> {
               '已加密发送的消息';
         } else {
           final rawId = (raw['id'] as num?)?.toInt();
-          if (rawId != null) lastIncomingId = rawId;
           try {
             text = await QfSignalManager.decryptFrom(
               widget.session,
               _peerId,
               (raw['ciphertext'] ?? '').toString(),
             );
+            // Only messages actually read may advance the read
+            // receipt bound; an undecryptable one was never seen (C-40).
+            if (rawId != null) lastIncomingId = rawId;
           } catch (_) {
             decryptFailed = true;
           }
@@ -2023,6 +2119,7 @@ class _QfChatPageState extends State<QfChatPage> {
             'ts': ts,
             'localId': localId,
             'decryptFailed': decryptFailed,
+            if (raw['id'] is num) 'serverId': (raw['id'] as num).toInt(),
             if (mine) 'readAt': raw['readAt'],
           });
         }
@@ -2160,9 +2257,15 @@ class _QfChatPageState extends State<QfChatPage> {
   }
 
   Future<void> _send() async {
+    if (_sendingText) return;
     final text = _input.text.trim();
     if (text.isEmpty) return;
-    if (await _deliver(text)) _input.clear();
+    setState(() => _sendingText = true);
+    try {
+      if (await _deliver(text)) _input.clear();
+    } finally {
+      if (mounted) setState(() => _sendingText = false);
+    }
   }
 
   Future<void> _sendSticker(String id) async {
@@ -2311,6 +2414,11 @@ class _QfChatPageState extends State<QfChatPage> {
       },
     );
     if (confirmed != true) return;
+    await _purgeLocalMessage(message);
+    if (mounted) qfToast(context, '本机记录已删除。');
+  }
+
+  Future<void> _purgeLocalMessage(Map<String, dynamic> message) async {
     final payload = message['payload'] as QfChatPayload?;
     final ref = payload?.attachment;
     if (ref != null) {
@@ -2320,13 +2428,52 @@ class _QfChatPageState extends State<QfChatPage> {
       _attachmentBytes.remove(ref.blobId);
     }
     final localId = (message['localId'] ?? '').toString();
+    // removeLocalRecord also writes the tombstone that stops the
+    // message from being rebuilt out of history responses (C-38).
     await QfChatHistoryVault.removeLocalRecord(localId);
     if (mounted) {
       setState(() {
         _messages.removeWhere((item) => item['localId'] == localId);
       });
-      qfToast(context, '本机记录已删除。');
     }
+  }
+
+  Future<void> _deleteForEveryone(Map<String, dynamic> message) async {
+    final serverId = (message['serverId'] as num?)?.toInt();
+    if (serverId == null) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('删除消息'),
+          content: const Text(
+            '删除后，这条消息将从服务器上删除，对方也无法再看到；本机记录与附件将一并删除。',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('删除'),
+            ),
+          ],
+        );
+      },
+    );
+    if (confirmed != true) return;
+    try {
+      await widget.session.socialChatDeleteMessage(serverId);
+    } on QfApiException catch (e) {
+      if (mounted) qfToast(context, e.message);
+      return;
+    } catch (_) {
+      if (mounted) qfToast(context, '删除失败，请检查网络后重试。');
+      return;
+    }
+    await _purgeLocalMessage(message);
+    if (mounted) qfToast(context, '消息已经删除。');
   }
 
   void _insertEmoji(String emoji) {
@@ -2516,6 +2663,15 @@ class _QfChatPageState extends State<QfChatPage> {
                   unawaited(_showEmojiPanel(reactionTarget: localId));
                 },
               ),
+              if (mine && message['serverId'] is num)
+                ListTile(
+                  leading: const GlyphIcon(AppGlyphs.delete),
+                  title: const Text('删除（对所有人）'),
+                  onTap: () {
+                    Navigator.of(sheetContext).pop();
+                    unawaited(_deleteForEveryone(message));
+                  },
+                ),
               if (mine)
                 ListTile(
                   leading: const GlyphIcon(AppGlyphs.delete),
@@ -2875,7 +3031,10 @@ class _QfChatPageState extends State<QfChatPage> {
                     ),
                   ),
                   const SizedBox(width: 8),
-                  FilledButton(onPressed: _send, child: const Text('发送')),
+                  FilledButton(
+                    onPressed: _sendingText ? null : _send,
+                    child: const Text('发送'),
+                  ),
                 ],
               ),
             ),

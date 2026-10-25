@@ -183,6 +183,21 @@ class QfSignalStore extends SignalProtocolStore {
     return store;
   }
 
+  /// Whether an identity blob exists locally, without loading or
+  /// minting one; for surfaces that only report key presence (C-35).
+  static Future<bool> hasLocalIdentity() async {
+    if (_cached != null) return true;
+    try {
+      final raw = await _secureRead();
+      if (raw != null && raw.isNotEmpty) return true;
+      final prefs = await SharedPreferences.getInstance();
+      final legacy = prefs.getString(_prefsKey);
+      return legacy != null && legacy.isNotEmpty;
+    } catch (_) {
+      return false;
+    }
+  }
+
   static void resetCache() {
     _cached = null;
   }
