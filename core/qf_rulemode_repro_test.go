@@ -21,7 +21,7 @@ proxies:
     server: 192.0.2.11
     port: 8388
     cipher: 2022-blake3-aes-128-gcm
-    password: "test-password-one"
+    password: "MDEyMzQ1Njc4OWFiY2RlZg=="
     udp: true
   - name: "🇹🇼台北（Hy2协议备用）"
     type: hysteria2
@@ -36,7 +36,7 @@ proxies:
     server: 192.0.2.13
     port: 8388
     cipher: 2022-blake3-aes-128-gcm
-    password: "test-password-three"
+    password: "ZmVkY2JhOTg3NjU0MzIxMA=="
     udp: true
   - name: "🇯🇵东京（Hy2协议 备选）"
     type: hysteria2
@@ -72,7 +72,16 @@ func TestQfRuleModeSubscriptionExposesGroup(t *testing.T) {
 	t.Logf("load report: total=%d proxies=%d groups=%d rules=%d skipped=%v",
 		report.Total, report.Proxies, report.Groups, report.Rules, report.Skipped)
 	hub.ApplyConfig(cfg)
-	t.Cleanup(func() { hub.ApplyConfig(nil) })
+	t.Cleanup(func() {
+		// hub.ApplyConfig(nil) panics inside mihomo; reset with a
+		// minimal empty config instead.
+		emptyPath := filepath.Join(t.TempDir(), "empty.yaml")
+		if err := os.WriteFile(emptyPath, []byte("mode: rule\n"), 0o600); err == nil {
+			if emptyCfg, err := loadConfig(emptyPath); err == nil {
+				hub.ApplyConfig(emptyCfg)
+			}
+		}
+	})
 
 	data := handleGetProxies()
 	t.Logf("All names: %v", data.All)
@@ -95,7 +104,16 @@ func TestQfRuleModeSubscriptionExposesGroup(t *testing.T) {
 	if hidden, _ := view["hidden"].(bool); hidden {
 		t.Errorf("AWS组 hidden=true, want false")
 	}
-	members, _ := view["all"].([]string)
+	// The view crosses a JSON boundary, so "all" arrives as []any.
+	var members []string
+	switch all := view["all"].(type) {
+	case []string:
+		members = all
+	case []any:
+		for _, item := range all {
+			members = append(members, item.(string))
+		}
+	}
 	if len(members) != 6 {
 		t.Errorf("AWS组 members = %v, want 6 entries", members)
 	}
