@@ -17,7 +17,6 @@ import 'package:material_ui/material_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:yaml/yaml.dart';
 
-import '../../../qf/qf_providers.dart';
 import 'card.dart';
 
 /// Expansion state of the subscription tree. A big group, once opened by
@@ -188,16 +187,6 @@ class SubscriptionTreeCard extends ConsumerWidget {
             _BigGroupSection(
               profile: profile,
               isCurrent: profile.id == currentProfileId,
-            ),
-          if (profiles.isNotEmpty && ref.watch(qfDirectOnlyProfileProvider))
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 8, 20, 4),
-              child: Text(
-                '当前订阅没有可用节点，请更新订阅或更换订阅。',
-                style: AppTextStyle.subheadline
-                    .of(context)
-                    .copyWith(color: const Color(0xFFB3261E)),
-              ),
             ),
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 4, 12, 4),
@@ -457,7 +446,9 @@ class _FileGroups extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     if (profile.type == ProfileType.custom) {
-      return isCurrent ? const _NoGroupsHint() : _SwitchHint(profile: profile, custom: true);
+      return isCurrent
+          ? const _NoGroupsHint()
+          : _SwitchHint(profile: profile, custom: true);
     }
     final groups = ref.watch(_profileFileGroupsProvider(profile.id));
     return groups.when(
@@ -468,9 +459,7 @@ class _FileGroups extends ConsumerWidget {
       error: (_, _) =>
           isCurrent ? const _NoGroupsHint() : _SwitchHint(profile: profile),
       data: (groups) => groups.isEmpty
-          ? (isCurrent
-                ? const _NoGroupsHint()
-                : _SwitchHint(profile: profile))
+          ? (isCurrent ? const _NoGroupsHint() : _SwitchHint(profile: profile))
           : Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
@@ -597,11 +586,9 @@ class _FileGroupSectionState extends ConsumerState<_FileGroupSection> {
           for (final member in widget.group.members)
             _NodeRow(
               name: member,
-              selected:
-                  widget.profile.selectedMap[widget.group.name] == member,
+              selected: widget.profile.selectedMap[widget.group.name] == member,
               onTap: _switching ? null : () => _selectNode(member),
-              onInfo:
-                  const {'DIRECT', 'REJECT', 'REJECT-DROP'}.contains(member)
+              onInfo: const {'DIRECT', 'REJECT', 'REJECT-DROP'}.contains(member)
                   ? null
                   : () {
                       BaseNavigator.push(
@@ -609,8 +596,7 @@ class _FileGroupSectionState extends ConsumerState<_FileGroupSection> {
                         QfProxyDetailPage(
                           profileId: widget.profile.id,
                           proxyName: member,
-                          isCustom:
-                              widget.profile.type == ProfileType.custom,
+                          isCustom: widget.profile.type == ProfileType.custom,
                         ),
                       );
                     },

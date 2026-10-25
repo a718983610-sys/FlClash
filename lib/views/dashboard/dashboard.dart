@@ -85,68 +85,50 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
           ),
       ],
       // The providers learn a resize a frame late, too late for the cards.
-      body: Column(
-        children: [
-          const _QfEgressMonitor(),
-          const _QfGuestRemainingBanner(),
-          const _QfDirectOnlyBanner(),
-          const _QfEgressBanner(),
-          Expanded(
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                final room = constraints.biggest / scale;
-                final layout = DashboardDensity.of(room);
-                return DashboardDensityScope(
-                  density: layout,
-                  scale: scale,
-                  child: layout.isDesktop
-                      ? _DesktopDashboard(
-                          platform: platform,
-                          columns: dashboardColumnsOf(room.width),
-                          gap: gap,
-                        )
-                      : _MobileDashboard(
-                          platform: platform,
-                          gap: gap,
-                          editing: editing,
-                          cardKeyOf: _cardKeyOf,
-                          onDone: () => _setEditing(false),
-                        ),
-                );
-              },
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _QfDirectOnlyBanner extends ConsumerWidget {
-  const _QfDirectOnlyBanner();
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    if (!ref.watch(qfDirectOnlyProfileProvider)) {
-      return const SizedBox.shrink();
-    }
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-      child: DecoratedBox(
-        decoration: const ShapeDecoration(
-          color: Color(0xFFB3261E),
-          shape: AppShape.sm,
-        ),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-          child: Text(
-            '当前订阅没有任何可用节点，已按仅直连模式运行，网络流量不会经过代理。请更新或更换订阅。',
-            textAlign: TextAlign.center,
-            style: AppTextStyle.subheadline
-                .of(context, emphasized: true)
-                .copyWith(color: Colors.white),
-          ),
-        ),
+      body: Builder(
+        builder: (context) {
+          // On Android the bar floats over the body and the banners
+          // must clear it; desktop hosts size the dashboard to fill
+          // its area exactly, so their clearance stays zero.
+          final barInset = platform == SupportPlatform.Android
+              ? context.appBarInset
+              : 0.0;
+          return Column(
+            children: [
+              const _QfEgressMonitor(),
+              SizedBox(height: barInset),
+              const _QfGuestRemainingBanner(),
+              const _QfEgressBanner(),
+              Expanded(
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final room = constraints.biggest / scale;
+                    final layout = DashboardDensity.of(room);
+                    return DashboardDensityScope(
+                      density: layout,
+                      scale: scale,
+                      child: layout.isDesktop
+                          ? _DesktopDashboard(
+                              platform: platform,
+                              columns: dashboardColumnsOf(room.width),
+                              gap: gap,
+                              barInset: barInset,
+                            )
+                          : _MobileDashboard(
+                              platform: platform,
+                              gap: gap,
+                              editing: editing,
+                              cardKeyOf: _cardKeyOf,
+                              onDone: () => _setEditing(false),
+                              barInset: barInset,
+                            ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -194,11 +176,14 @@ class _DesktopDashboard extends StatelessWidget {
     required this.platform,
     required this.columns,
     required this.gap,
+    required this.barInset,
   });
 
   final SupportPlatform platform;
   final int columns;
   final double gap;
+
+  final double barInset;
 
   @override
   Widget build(BuildContext context) {
@@ -207,7 +192,7 @@ class _DesktopDashboard extends StatelessWidget {
     final scale = DashboardDensityScope.scaleOf(context);
     final base = EdgeInsetsDirectional.fromSTEB(
       16,
-      MediaQuery.paddingOf(context).top,
+      math.max(0.0, MediaQuery.paddingOf(context).top - barInset),
       24,
       24 + MediaQuery.paddingOf(context).bottom,
     );
@@ -373,6 +358,7 @@ class _MobileDashboard extends ConsumerWidget {
     required this.editing,
     required this.cardKeyOf,
     required this.onDone,
+    required this.barInset,
   });
 
   final SupportPlatform platform;
@@ -381,12 +367,14 @@ class _MobileDashboard extends ConsumerWidget {
   final GlobalKey Function(DashboardWidget widget) cardKeyOf;
   final VoidCallback onDone;
 
+  final double barInset;
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final saved = ref.watch(
       dashboardStateProvider.select((state) => state.dashboardWidgets),
     );
-    final top = MediaQuery.paddingOf(context).top + 4;
+    final top = math.max(0.0, MediaQuery.paddingOf(context).top + 4 - barInset);
     final bottom = 16 + BottomInsetScope.of(context);
     return CustomScrollView(
       // A viewport per card lays them all out and holds the scroll end still.
