@@ -154,6 +154,13 @@ class QfSessionController extends ChangeNotifier {
   String serverBaseUrl = QfConfig.fallbackServerBaseUrl;
   QfMode mode = QfMode.unknown;
   String? email;
+
+  /// Keeps the signed-in email in step after a rebind so surfaces
+  /// that prefill from the session stop showing the old address (C-27).
+  void updateEmail(String newEmail) {
+    email = newEmail;
+    notifyListeners();
+  }
   String? username;
   int? userId;
   bool accountDeleting = false;

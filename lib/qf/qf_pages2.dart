@@ -33,7 +33,21 @@ List<String> qfUpdateBlockText(QfUpdateDecision decision) {
 }
 
 class QfUpdateFlow {
+  static bool _checking = false;
+
   static Future<void> runManualCheck(BuildContext context) async {
+    if (_checking) return;
+    _checking = true;
+    try {
+      await _runManualCheck(context);
+    } catch (_) {
+      if (context.mounted) qfToast(context, '检查更新失败，请稍后重试。');
+    } finally {
+      _checking = false;
+    }
+  }
+
+  static Future<void> _runManualCheck(BuildContext context) async {
     final check = await QfUpdateService.check(QfRuntime.appVersion);
     if (!context.mounted) return;
     switch (check.decision) {
@@ -102,6 +116,9 @@ class _QfSecurityPageState extends State<QfSecurityPage> {
   bool _loading = true;
   bool? _loginProtection;
   bool _settingsBusy = false;
+  bool _loadFailed = false;
+  bool _passkeysFailed = false;
+  bool _settingsFailed = false;
 
   @override
   void initState() {
@@ -114,10 +131,14 @@ class _QfSecurityPageState extends State<QfSecurityPage> {
       final me = await widget.session.authed('GET', '/security/me');
       final devices = await widget.session.securityDevices();
       var passkeys = _passkeys;
+      var passkeysFailed = false;
       try {
         passkeys = await widget.session.passkeyList();
-      } catch (_) {}
+      } catch (_) {
+        passkeysFailed = true;
+      }
       var loginProtection = me['loginProtection'] == true;
+      var settingsFailed = false;
       try {
         final settings = await widget.session.authed(
           'GET',
@@ -126,18 +147,28 @@ class _QfSecurityPageState extends State<QfSecurityPage> {
         if (settings['loginProtection'] is bool) {
           loginProtection = settings['loginProtection'] == true;
         }
-      } catch (_) {}
+      } catch (_) {
+        settingsFailed = true;
+      }
       if (mounted) {
         setState(() {
           _me = me;
           _devices = devices;
           _passkeys = passkeys;
           _loginProtection = loginProtection;
+          _passkeysFailed = passkeysFailed;
+          _settingsFailed = settingsFailed;
+          _loadFailed = false;
           _loading = false;
         });
       }
     } catch (_) {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _loadFailed = true;
+        });
+      }
     }
   }
 
@@ -158,6 +189,11 @@ class _QfSecurityPageState extends State<QfSecurityPage> {
       if (mounted) {
         setState(() => _loginProtection = previous);
         qfToast(context, qfAccountErrorMessage(e));
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() => _loginProtection = previous);
+        qfToast(context, '设置失败，请稍后重试。');
       }
     } finally {
       if (mounted) setState(() => _settingsBusy = false);
@@ -366,6 +402,11 @@ class _QfSecurityPageState extends State<QfSecurityPage> {
                   title: const Text('当前账号'),
                   subtitle: Text(_me?['email']?.toString() ?? ''),
                 ),
+                if (_loadFailed)
+                  TextButton(
+                    onPressed: _load,
+                    child: const Text('安全信息加载失败，点击重试'),
+                  ),
                 if (_loginProtection != null)
                   SwitchListTile(
                     title: const Text('环境异常双重验证'),
@@ -375,6 +416,11 @@ class _QfSecurityPageState extends State<QfSecurityPage> {
                     ),
                     value: _loginProtection!,
                     onChanged: _settingsBusy ? null : _toggleLoginProtection,
+                  ),
+                if (_settingsFailed)
+                  TextButton(
+                    onPressed: _load,
+                    child: const Text('双重验证状态加载失败，点击重试'),
                   ),
                 ListTile(
                   leading: const GlyphIcon(AppGlyphs.lock),
@@ -431,6 +477,11 @@ class _QfSecurityPageState extends State<QfSecurityPage> {
                   padding: EdgeInsets.symmetric(vertical: 4),
                   child: Text('通行密钥可通过系统生物识别或设备 PIN 快速登录。'),
                 ),
+                if (_passkeysFailed)
+                  TextButton(
+                    onPressed: _load,
+                    child: const Text('通行密钥加载失败，点击重试'),
+                  ),
                 for (final raw in _passkeys)
                   if (raw is Map)
                     ListTile(
@@ -781,6 +832,18 @@ class _QfChangePasswordDialogState extends State<_QfChangePasswordDialog> {
       qfToast(context, '请先使用通行密钥完成验证');
       return;
     }
+    if (_method == 0 && _current.text.isEmpty) {
+      qfToast(context, '请输入当前密码');
+      return;
+    }
+    if (_method == 2 && _code.text.trim().isEmpty) {
+      qfToast(context, '请输入邮箱验证码');
+      return;
+    }
+    if (_password.text.length < 8) {
+      qfToast(context, '新密码至少需要 8 位');
+      return;
+    }
     try {
       await widget.session.authed(
         'POST',
@@ -961,16 +1024,26 @@ class _QfChangeEmailDialogState extends State<_QfChangeEmailDialog> {
   }
 
   Future<void> _submit() async {
+    final newEmail = _newEmail.text.trim();
+    if (!newEmail.contains('@')) {
+      qfToast(context, '新邮箱格式不正确');
+      return;
+    }
+    if (_oldCode.text.trim().isEmpty || _newCode.text.trim().isEmpty) {
+      qfToast(context, '请输入邮箱验证码');
+      return;
+    }
     try {
       await widget.session.authed(
         'POST',
         '/security/email/confirm',
         body: {
-          'newEmail': _newEmail.text,
-          'oldCode': _oldCode.text,
-          'newCode': _newCode.text,
+          'newEmail': newEmail,
+          'oldCode': _oldCode.text.trim(),
+          'newCode': _newCode.text.trim(),
         },
       );
+      widget.session.updateEmail(newEmail);
       if (mounted) {
         Navigator.of(context).pop();
         qfToast(context, '邮箱已经换绑，请使用新邮箱登录');
