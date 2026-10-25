@@ -450,6 +450,13 @@ class QfSessionController extends ChangeNotifier {
     await _refreshIfNeeded();
     if (_accessToken != null) {
       await _loadAccountState();
+    } else if (_lastRefreshWasNetworkFailure) {
+      // Remembered-device 30-day rule: a cold start on a dead network
+      // (or an unreadable refresh response) must never sign the user
+      // out. The stored session stays untouched; the next launch or
+      // authed() call retries the refresh. Only a definitive server
+      // rejection of the refresh token ends the session.
+      accountStateSyncFailed = true;
     } else if (_refreshToken == startRefreshToken) {
       // Same token as at start: nobody signed in again, safe to drop it.
       await _clearUserSession();
@@ -738,6 +745,9 @@ class QfSessionController extends ChangeNotifier {
           if (_refreshToken == null) return null;
           final refreshed = await _refreshIfNeeded(force: true);
           if (!refreshed) {
+            // Same 30-day rule as authed(): a network-dead refresh is
+            // not a server verdict — never clear the session for it.
+            if (_lastRefreshWasNetworkFailure) return null;
             await _clearUserSession();
             mode = QfMode.entry;
             await _syncGuestBlockedCore();
@@ -833,6 +843,13 @@ class QfSessionController extends ChangeNotifier {
           }
           final refreshed = await _refreshIfNeeded(force: true);
           if (!refreshed) {
+            if (_lastRefreshWasNetworkFailure) {
+              throw const QfApiException(
+                0,
+                'NETWORK',
+                '网络连接失败，请检查网络后重试',
+              );
+            }
             await _clearUserSession();
             mode = QfMode.entry;
             notifyListeners();
@@ -1825,6 +1842,11 @@ class QfSessionController extends ChangeNotifier {
 
   Future<Map<String, dynamic>> forumBoards() {
     return QfHttp.send('GET', '$serverBaseUrl/forum/boards');
+  }
+
+  /// 外站精选（免登录，与网页版资讯流同一接口）。
+  Future<Map<String, dynamic>> forumExternal({int limit = 10}) {
+    return QfHttp.send('GET', '$serverBaseUrl/forum/external?limit=$limit');
   }
 
   Future<Map<String, dynamic>> forumPosts({

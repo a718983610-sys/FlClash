@@ -5,6 +5,7 @@ import 'package:fl_clash/ui/ui.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import 'qf_api.dart';
 import 'qf_config.dart';
@@ -253,6 +254,22 @@ String _qfFormatSec(int sec) {
   String two(int v) => v.toString().padLeft(2, '0');
   return '${time.year}-${two(time.month)}-${two(time.day)} '
       '${two(time.hour)}:${two(time.minute)}';
+}
+
+/// 外站精选的来源平台显示名（与网页版 EXT_PLATFORM_NAMES 同表）。
+String qfExternalPlatformName(String platform) {
+  const names = {
+    'github': 'GitHub',
+    'v2ex': 'V2EX',
+    'juejin': '掘金',
+    'sspai': '少数派',
+    'hackernews': 'Hacker News',
+    'devto': 'DEV',
+    'telegram': 'Telegram',
+    'lobsters': 'Lobsters',
+    'nodeseek': 'NodeSeek',
+  };
+  return names[platform] ?? (platform.isEmpty ? '外部平台' : platform);
 }
 
 /// 访客只读下发帖/回复/举报的登录引导。
@@ -803,6 +820,7 @@ class _QfForumPageState extends State<QfForumPage>
   List<dynamic> _rewardApplications = const [];
   Map<String, dynamic>? _analytics;
   List<dynamic> _camps = const [];
+  List<dynamic> _external = const [];
   bool _campsExpanded = false;
   bool _meLoading = false;
   bool _analyticsLoading = false;
@@ -867,10 +885,24 @@ class _QfForumPageState extends State<QfForumPage>
     }
   }
 
+  Future<void> _fetchExternal() async {
+    try {
+      final data = await widget.session.forumExternal();
+      final posts = data['posts'];
+      if (mounted) {
+        setState(() => _external = posts is List ? posts : const []);
+      }
+    } catch (_) {
+      // 精选是资讯流的补充内容：拉不到就整段不显示，不挡帖子流。
+      if (mounted) setState(() => _external = const []);
+    }
+  }
+
   Future<void> _loadBoards() async {
     if (!_readOnly) await widget.session.refreshCanAnnounce();
     await _fetchBoards();
     await _fetchCamps();
+    unawaited(_fetchExternal());
     if (!_readOnly) {
       try {
         final profile = await widget.session.forumProfile();
@@ -1309,7 +1341,75 @@ class _QfForumPageState extends State<QfForumPage>
               child: const Text('加载更多'),
             ),
         ],
+        // 外站精选与网页版同源同要素；与网页版一致，只在未按板块筛选的
+        // 默认视图出现（App 默认板块即综合讨论），其余板块不混精选。
+        if (_board == 'general' && _external.isNotEmpty) _externalSection(),
       ],
+    );
+  }
+
+  Widget _externalSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: 16),
+        Text('外站精选', style: AppTextStyle.headline.of(context)),
+        const SizedBox(height: 8),
+        for (final raw in _external)
+          if (raw is Map) _externalTile(raw),
+      ],
+    );
+  }
+
+  Widget _externalTile(Map<dynamic, dynamic> raw) {
+    final platform = (raw['platform'] ?? '').toString();
+    final title = (raw['title'] ?? '').toString();
+    final summary = (raw['summary'] ?? '').toString();
+    final author = (raw['author_name'] ?? '').toString();
+    final url = (raw['url'] ?? '').toString();
+    final published = raw['published_at'] ?? raw['released_at'];
+    final whenSec = published is num ? published.toInt() : 0;
+    return Card(
+      key: ValueKey('qf-forum-external-${raw['id'] ?? url}'),
+      child: InkWell(
+        customBorder: AppShape.md,
+        onTap: url.isEmpty
+            ? null
+            : () => launchUrl(
+                Uri.parse(url),
+                mode: LaunchMode.externalApplication,
+              ),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Chip(
+                label: Text('精选 · ${qfExternalPlatformName(platform)}'),
+                visualDensity: VisualDensity.compact,
+              ),
+              const SizedBox(height: 6),
+              Text(
+                title.isEmpty ? '(无标题)' : title,
+                style: AppTextStyle.title3.of(context),
+              ),
+              if (summary.isNotEmpty) ...[
+                const SizedBox(height: 4),
+                Text(summary, maxLines: 2, overflow: TextOverflow.ellipsis),
+              ],
+              const SizedBox(height: 6),
+              Text(
+                [
+                  if (author.isNotEmpty) author else '原作者',
+                  if (whenSec > 0) _qfFormatSec(whenSec),
+                  '查看原文 ›',
+                ].join(' · '),
+                style: AppTextStyle.caption1.of(context),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 

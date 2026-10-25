@@ -2,6 +2,7 @@ import 'package:fl_clash/qf/qf_api.dart';
 import 'package:fl_clash/qf/qf_config.dart';
 import 'package:fl_clash/qf/qf_forum.dart';
 import 'package:fl_clash/qf/qf_session.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -40,6 +41,12 @@ class _FakeForumSession extends QfSessionController {
   List<Map<String, dynamic>> posts = [_post()];
   Map<String, dynamic> detailPost = _post();
   bool? lastLike;
+  List<Map<String, dynamic>> externalPosts = const [];
+
+  @override
+  Future<Map<String, dynamic>> forumExternal({int limit = 10}) async {
+    return {'posts': externalPosts};
+  }
 
   @override
   Future<Map<String, dynamic>> forumBoards() async {
@@ -890,5 +897,59 @@ void main() {
       expect(find.text(QfCopy.forumLoadFailed), findsOneWidget);
       expect(find.text('营地暂不可见'), findsNothing);
     });
+
+    testWidgets(
+      'home shows the external picks section with web-identical elements '
+      'and opens the source url',
+      (tester) async {
+        const launcherChannel = MethodChannel(
+          'plugins.flutter.io/url_launcher',
+        );
+        String? launched;
+        tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          launcherChannel,
+          (call) async {
+            if (call.method == 'launch') {
+              launched = (call.arguments as Map)['url']?.toString();
+              return true;
+            }
+            return null;
+          },
+        );
+        addTearDown(
+          () => tester.binding.defaultBinaryMessenger
+              .setMockMethodCallHandler(launcherChannel, null),
+        );
+        final session = _FakeForumSession(loggedIn: false)
+          ..externalPosts = [
+            {
+              'id': 3,
+              'platform': 'sspai',
+              'title': '精选文章标题',
+              'summary': '精选摘要',
+              'url': 'https://example.com/post/3',
+              'author_name': '原作者甲',
+              'published_at': 1760000000,
+              'released_at': 1760000100,
+            },
+          ];
+        await tester.pumpWidget(_wrap(QfForumPage(session: session)));
+        await tester.pumpAndSettle();
+        for (var i = 0; i < 4 && find.text('外站精选').evaluate().isEmpty; i++) {
+          await tester.drag(
+            find.byType(ListView).first,
+            const Offset(0, -500),
+          );
+          await tester.pumpAndSettle();
+        }
+        expect(find.text('外站精选'), findsOneWidget);
+        expect(find.text('精选 · 少数派'), findsOneWidget);
+        expect(find.text('精选文章标题'), findsOneWidget);
+        expect(find.text('精选摘要'), findsOneWidget);
+        await tester.tap(find.text('精选文章标题'));
+        await tester.pumpAndSettle();
+        expect(launched, 'https://example.com/post/3');
+      },
+    );
   });
 }

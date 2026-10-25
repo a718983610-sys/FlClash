@@ -104,6 +104,150 @@ void main() {
     });
   });
 
+  group('sign out', () {
+    test(
+      'logout revokes server-side, clears tokens, keeps remembered login '
+      'and local data keys',
+      () async {
+        SharedPreferences.setMockInitialValues({
+          'qf_mode': 'user',
+          'qf_remember_device': true,
+          'qf_user_email': 'a@b.c',
+          'qf_user_username': 'tester123',
+          'qf_user_id': 7,
+          'qf_device_hash': 'hash-1',
+          'qf_device_name': 'test-box',
+        });
+        final store = <String, String>{
+          'qf_access_token': 'acc-1',
+          'qf_refresh_token': 'ref-1',
+          'qf_access_expires_at': '9999999999',
+          'qf_heartbeat_key': 'hk',
+          'qf_saved_login_id': 'tester123',
+          'qf_saved_login_password': 'pw-keep',
+          'qf_support_guest_token': 'guest-support-keep',
+        };
+        _mockSecureStore(store);
+        HttpOverrides.global = _RealHttpOverrides();
+        var logoutHits = 0;
+        String? logoutAuth;
+        final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+        addTearDown(() => server.close(force: true));
+        server.listen((request) async {
+          await request.drain<void>();
+          if (request.uri.path == '/auth/logout') {
+            logoutHits++;
+            logoutAuth = request.headers.value('authorization');
+          }
+          final body = request.uri.path == '/security/me'
+              ? {'id': 7, 'email': 'a@b.c', 'username': 'tester123'}
+              : <String, dynamic>{};
+          request.response
+            ..headers.contentType = ContentType.json
+            ..write(jsonEncode(body));
+          await request.response.close();
+        });
+        final session = QfSessionController();
+        session.serverBaseUrl = 'http://127.0.0.1:${server.port}';
+        await session.init(envEmulator: false);
+        expect(session.mode, QfMode.user);
+        await session.logout();
+        expect(logoutHits, 1);
+        expect(logoutAuth, 'Bearer acc-1');
+        expect(session.mode, QfMode.entry);
+        expect(session.isLoggedIn, isFalse);
+        expect(session.userId, isNull);
+        expect(session.username, isNull);
+        // Session credentials are gone from secure storage.
+        expect(store['qf_access_token'], isNull);
+        expect(store['qf_refresh_token'], isNull);
+        expect(store['qf_heartbeat_key'], isNull);
+        // Remembered login credentials are the user's own local memory:
+        // signing out must not delete them.
+        expect(store['qf_saved_login_id'], 'tester123');
+        expect(store['qf_saved_login_password'], 'pw-keep');
+        // The guest support credential is device-scoped, not account
+        // session state: it survives as well.
+        expect(store['qf_support_guest_token'], 'guest-support-keep');
+        final prefs = await SharedPreferences.getInstance();
+        expect(prefs.getString('qf_mode'), 'entry');
+      },
+    );
+  });
+
+  group('remembered device 30-day rule', () {
+    test(
+      'cold start on a dead network with only a refresh token stored '
+      'keeps the session',
+      () async {
+        SharedPreferences.setMockInitialValues({
+          'qf_mode': 'user',
+          'qf_remember_device': true,
+          'qf_user_email': 'a@b.c',
+          'qf_user_username': 'tester123',
+          'qf_user_id': 7,
+          'qf_device_hash': 'hash-1',
+          'qf_device_name': 'test-box',
+        });
+        final store = <String, String>{'qf_refresh_token': 'ref-keep'};
+        _mockSecureStore(store);
+        HttpOverrides.global = _RealHttpOverrides();
+        // A port that is guaranteed closed: bind, remember, release.
+        final probe = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+        final deadPort = probe.port;
+        await probe.close(force: true);
+        final session = QfSessionController();
+        session.serverBaseUrl = 'http://127.0.0.1:$deadPort';
+        await session.init(envEmulator: false);
+        expect(session.mode, QfMode.user);
+        await Future<void>.delayed(const Duration(milliseconds: 1500));
+        expect(session.mode, QfMode.user);
+        expect(session.accountStateSyncFailed, isTrue);
+        expect(store['qf_refresh_token'], 'ref-keep');
+      },
+    );
+
+    test(
+      'cold start with a definitively rejected refresh token signs out',
+      () async {
+        SharedPreferences.setMockInitialValues({
+          'qf_mode': 'user',
+          'qf_remember_device': true,
+          'qf_user_email': 'a@b.c',
+          'qf_user_username': 'tester123',
+          'qf_user_id': 7,
+          'qf_device_hash': 'hash-1',
+          'qf_device_name': 'test-box',
+        });
+        final store = <String, String>{'qf_refresh_token': 'ref-dead'};
+        _mockSecureStore(store);
+        HttpOverrides.global = _RealHttpOverrides();
+        final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+        addTearDown(() => server.close(force: true));
+        server.listen((request) async {
+          await request.drain<void>();
+          request.response
+            ..statusCode = 401
+            ..headers.contentType = ContentType.json
+            ..write(
+              jsonEncode({
+                'ok': false,
+                'code': 'REFRESH_EXPIRED',
+                'message': '登录状态已失效，请重新登录。',
+              }),
+            );
+          await request.response.close();
+        });
+        final session = QfSessionController();
+        session.serverBaseUrl = 'http://127.0.0.1:${server.port}';
+        await session.init(envEmulator: false);
+        await Future<void>.delayed(const Duration(milliseconds: 1200));
+        expect(session.mode, QfMode.entry);
+        expect(store['qf_refresh_token'], isNull);
+      },
+    );
+  });
+
   group('upgrade session survival', () {
     test(
       'cold start with a valid access token does not rotate the refresh token',
