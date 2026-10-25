@@ -105,9 +105,35 @@ class _FakeSupportSession extends QfSessionController {
   bool guestHandoffCalled = false;
   Map<String, dynamic>? guestVerifyCall;
 
+  Map<String, dynamic> guestVerified = {'linked': false, 'username': null};
+
   @override
   Future<Map<String, dynamic>> guestSupportSession() async {
-    return {'sessionId': 'g-1', 'messages': sessionMessages};
+    return {
+      'sessionId': 'g-1',
+      'status': 'active',
+      'guestToken': null,
+      'verified': guestVerified,
+    };
+  }
+
+  @override
+  Future<Map<String, dynamic>> guestSupportSnapshot() async {
+    return {
+      'sessionId': 'g-1',
+      'status': 'active',
+      'verified': guestVerified,
+      'messages': sessionMessages,
+    };
+  }
+
+  @override
+  Future<Map<String, dynamic>> guestSupportFetch({String? sessionId}) async {
+    return {
+      'sessionId': 'g-1',
+      'verified': guestVerified,
+      'messages': sessionMessages,
+    };
   }
 
   @override
@@ -129,7 +155,13 @@ class _FakeSupportSession extends QfSessionController {
   @override
   Future<Map<String, dynamic>> guestSupportHandoff(String? sessionId) async {
     guestHandoffCalled = true;
-    return {'ok': true, 'notice': handoffNoticeText, 'sessionId': 'g-1'};
+    return {
+      'handoff': true,
+      'gated': false,
+      'notice': handoffNoticeText,
+      'sessionId': 'g-1',
+      'supportConfigured': true,
+    };
   }
 
   @override
@@ -138,7 +170,13 @@ class _FakeSupportSession extends QfSessionController {
     required String password,
   }) async {
     guestVerifyCall = {'account': account, 'password': password};
-    return {'accountLabel': 'tester123', 'linkToken': 'lt-1'};
+    guestVerified = {'linked': true, 'username': 'tester123'};
+    return {
+      'verified': true,
+      'alreadyLinked': false,
+      'username': 'tester123',
+      'message': '核验通过，已关联您的账户。',
+    };
   }
 
   @override

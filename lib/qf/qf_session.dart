@@ -2010,32 +2010,104 @@ class QfSessionController extends ChangeNotifier {
     return authed('POST', '/support/handoff', body: {'sessionId': ?sessionId});
   }
 
-  // Guest support (2.0.0): reachable with no account session at all, so
-  // it travels without a bearer and carries the device body for the
-  // server's per-device rate limits. A successful account verification
-  // returns a link token held in memory only — it links this one
-  // consultation to the account, it is never a login credential and is
-  // dropped with the process.
-  String? _supportLinkToken;
+  // Guest support (contract: docs/QFClash-游客客服接口契约-v1.md).
+  // No login bearer: the pair is the device hash plus a guest support
+  // credential the server issues on session entry. The credential is
+  // kept in secure storage; a null guestToken in the entry response
+  // means the stored one stays valid, a fresh one replaces it (the old
+  // one dies server-side at once). Verification links the account to
+  // the device row server-side and issues nothing, so there is no link
+  // token on the client at all.
+  static const String _kGuestSupportToken = 'qf_support_guest_token';
+  String? _guestSupportTokenCache;
 
-  bool get supportLinked => _supportLinkToken != null;
+  Future<String> _guestDeviceHash() async =>
+      (await QfDeviceIdentity.resolve()).deviceHash;
 
-  Future<Map<String, dynamic>> _guestSupportBody([
+  Future<String?> _supportGuestCredential() async {
+    if (_guestSupportTokenCache != null) return _guestSupportTokenCache;
+    try {
+      _guestSupportTokenCache = await _secure.read(key: _kGuestSupportToken);
+    } catch (_) {}
+    return _guestSupportTokenCache;
+  }
+
+  Future<void> _storeGuestToken(dynamic raw) async {
+    final token = (raw ?? '').toString();
+    if (token.isEmpty) return;
+    _guestSupportTokenCache = token;
+    try {
+      await _secure.write(key: _kGuestSupportToken, value: token);
+    } catch (_) {}
+  }
+
+  /// Entry: creates or resumes the guest credential and reports the
+  /// current session state (sessionId/status/verified).
+  Future<Map<String, dynamic>> guestSupportSession() async {
+    final data = await QfHttp.send(
+      'POST',
+      '$serverBaseUrl/support/guest/session',
+      body: {
+        'deviceHash': await _guestDeviceHash(),
+        'guestToken': ?await _supportGuestCredential(),
+      },
+    );
+    await _storeGuestToken(data['guestToken']);
+    return data;
+  }
+
+  /// One guest call with the contract's 401 recovery: rotate the
+  /// credential through the entry endpoint once, then retry.
+  Future<Map<String, dynamic>> _guestCall(
+    Future<Map<String, dynamic>> Function() run,
+  ) async {
+    if (await _supportGuestCredential() == null) {
+      await guestSupportSession();
+    }
+    try {
+      return await run();
+    } on QfApiException catch (e) {
+      if (e.code != 'SUPPORT_GUEST_UNAUTHORIZED') rethrow;
+      await guestSupportSession();
+      return run();
+    }
+  }
+
+  Future<Map<String, dynamic>> _guestBody([
     Map<String, dynamic>? extra,
   ]) async {
     return {
-      ...await _deviceBody(),
-      'linkToken': ?_supportLinkToken,
+      'deviceHash': await _guestDeviceHash(),
+      'guestToken': await _supportGuestCredential(),
       ...?extra,
     };
   }
 
-  Future<Map<String, dynamic>> guestSupportSession() async {
-    return QfHttp.send(
-      'POST',
-      '$serverBaseUrl/support/guest/session',
-      body: await _guestSupportBody(),
+  /// Entry state plus the message stream in one load (page entry and
+  /// the contact tile); polling afterwards uses guestSupportFetch.
+  Future<Map<String, dynamic>> guestSupportSnapshot() async {
+    final entry = await guestSupportSession();
+    final sessionId = (entry['sessionId'] ?? '').toString();
+    final flow = await guestSupportFetch(
+      sessionId: sessionId.isEmpty ? null : sessionId,
     );
+    return {...entry, ...flow};
+  }
+
+  Future<Map<String, dynamic>> guestSupportFetch({String? sessionId}) {
+    return _guestCall(() async {
+      final query = sessionId == null
+          ? ''
+          : '?sessionId=${Uri.encodeQueryComponent(sessionId)}';
+      return QfHttp.send(
+        'GET',
+        '$serverBaseUrl/support/guest/session$query',
+        headers: {
+          'x-device-hash': await _guestDeviceHash(),
+          'x-guest-support-token': (await _supportGuestCredential()) ?? '',
+        },
+      );
+    });
   }
 
   Future<Map<String, dynamic>> guestSupportAsk({
@@ -2043,38 +2115,41 @@ class QfSessionController extends ChangeNotifier {
     String? text,
     bool notThis = false,
     String? kbId,
-  }) async {
-    return QfHttp.send(
-      'POST',
-      '$serverBaseUrl/support/guest/ask',
-      body: await _guestSupportBody({
-        'sessionId': ?sessionId,
-        if (notThis) 'notThis': true else 'text': text ?? '',
-        'kbId': ?kbId,
-      }),
-    );
+  }) {
+    return _guestCall(() async {
+      return QfHttp.send(
+        'POST',
+        '$serverBaseUrl/support/guest/ask',
+        body: await _guestBody({
+          'sessionId': ?sessionId,
+          if (notThis) 'notThis': true else 'text': text ?? '',
+          'kbId': ?kbId,
+        }),
+      );
+    });
   }
 
-  Future<Map<String, dynamic>> guestSupportHandoff(String? sessionId) async {
-    return QfHttp.send(
-      'POST',
-      '$serverBaseUrl/support/guest/handoff',
-      body: await _guestSupportBody({'sessionId': ?sessionId}),
-    );
+  Future<Map<String, dynamic>> guestSupportHandoff(String? sessionId) {
+    return _guestCall(() async {
+      return QfHttp.send(
+        'POST',
+        '$serverBaseUrl/support/guest/handoff',
+        body: await _guestBody({'sessionId': ?sessionId}),
+      );
+    });
   }
 
   Future<Map<String, dynamic>> guestSupportVerify({
     required String account,
     required String password,
-  }) async {
-    final data = await QfHttp.send(
-      'POST',
-      '$serverBaseUrl/support/guest/verify',
-      body: await _guestSupportBody({'account': account, 'password': password}),
-    );
-    final token = (data['linkToken'] ?? '').toString();
-    if (token.isNotEmpty) _supportLinkToken = token;
-    return data;
+  }) {
+    return _guestCall(() async {
+      return QfHttp.send(
+        'POST',
+        '$serverBaseUrl/support/guest/verify',
+        body: await _guestBody({'account': account, 'password': password}),
+      );
+    });
   }
 
   Future<Map<String, dynamic>> supportInbox() {

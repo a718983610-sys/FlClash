@@ -90,6 +90,7 @@ class QfSupportReply {
   final String text;
   final String? kbId;
   final String? sessionId;
+  final bool verifyOffer;
   final List<QfSupportOption> alternates;
   final List<QfSupportOption> options;
 
@@ -98,6 +99,7 @@ class QfSupportReply {
     required this.text,
     this.kbId,
     this.sessionId,
+    this.verifyOffer = false,
     this.alternates = const [],
     this.options = const [],
   });
@@ -108,6 +110,7 @@ class QfSupportReply {
       text: (data['text'] ?? data['message'] ?? '').toString(),
       kbId: data['kbId']?.toString(),
       sessionId: data['sessionId']?.toString(),
+      verifyOffer: data['verifyOffer'] == true,
       alternates: _qfSupportOptions(data['alternates']),
       options: _qfSupportOptions(data['options']),
     );
@@ -115,6 +118,8 @@ class QfSupportReply {
 
   bool get isHandoffOffer => action == 'handoff_offer';
   bool get isClarify => action == 'clarify';
+  bool get isVerifyPrompt => action == 'verify_prompt';
+  bool get isHandoffDone => action == 'handoff';
 
   List<QfSupportOption> get choices =>
       options.isNotEmpty ? options : alternates;
@@ -323,7 +328,7 @@ class _QfSupportContactTileState extends State<QfSupportContactTile> {
   Future<void> _load() async {
     try {
       final data = _guest
-          ? await widget.session.guestSupportSession()
+          ? await widget.session.guestSupportSnapshot()
           : await widget.session.supportSession();
       final messages = qfSupportParseMessages(data);
       final latest = qfSupportLatestAgentMessage(messages);
@@ -538,11 +543,37 @@ class _QfSupportPageState extends State<QfSupportPage> {
     });
   }
 
+  bool _guestBooted = false;
+
+  /// The verified object rides on every guest response: it, not local
+  /// state, decides whether the consultation is account-linked.
+  void _applyVerified(Map<String, dynamic> data) {
+    final verified = data['verified'];
+    if (verified is! Map) return;
+    final linked = verified['linked'] == true;
+    final username = (verified['username'] ?? '').toString();
+    final label = !linked
+        ? null
+        : (username.isEmpty ? '已关联账户' : username);
+    if (label != _linkedLabel && mounted) {
+      setState(() => _linkedLabel = label);
+    } else {
+      _linkedLabel = label;
+    }
+  }
+
   Future<void> _load() async {
     try {
-      final data = _guest
-          ? await widget.session.guestSupportSession()
-          : await widget.session.supportSession();
+      final Map<String, dynamic> data;
+      if (_guest && !_guestBooted) {
+        data = await widget.session.guestSupportSnapshot();
+        _guestBooted = true;
+      } else if (_guest) {
+        data = await widget.session.guestSupportFetch(sessionId: _sessionId);
+      } else {
+        data = await widget.session.supportSession();
+      }
+      _applyVerified(data);
       final parsed = qfSupportParseMessages(data);
       final sessionId = qfSupportParseSessionId(data);
       if (mounted) {
@@ -604,6 +635,7 @@ class _QfSupportPageState extends State<QfSupportPage> {
               kbId: kbId,
             );
       final reply = QfSupportReply.fromJson(data);
+      _applyVerified(data);
       if (mounted) {
         setState(() {
           if (reply.sessionId != null) _sessionId = reply.sessionId;
@@ -616,6 +648,10 @@ class _QfSupportPageState extends State<QfSupportPage> {
             );
           }
           _lastReply = reply;
+          if (reply.isHandoffDone) _handedOff = true;
+          if (reply.isVerifyPrompt && _linkedLabel == null) {
+            _verifyOpen = true;
+          }
         });
         _scrollToBottom();
       }
@@ -641,10 +677,14 @@ class _QfSupportPageState extends State<QfSupportPage> {
       if (mounted) {
         setState(() {
           _linkedLabel =
-              (data['accountLabel'] ?? data['username'] ?? account).toString();
+              (data['username'] ?? account).toString();
           _verifyPassword.clear();
         });
-        qfToast(context, '已关联账户，本次咨询将带上您的账户信息。');
+        final message = (data['message'] ?? '').toString();
+        qfToast(
+          context,
+          message.isEmpty ? '已关联账户，本次咨询将带上您的账户信息。' : message,
+        );
         await _load();
       }
     } on QfApiException catch (e) {
@@ -720,10 +760,14 @@ class _QfSupportPageState extends State<QfSupportPage> {
           : await widget.session.supportHandoff(_sessionId);
       final notice = qfSupportHandoffNoticeText(data);
       final sessionId = qfSupportParseSessionId(data);
+      // Gated is not handed off: the server answers with guidance and
+      // no ticket; only an explicit handoff (or a response that does
+      // not deny it, as the signed-in shape historically did) counts.
+      final handedOff = data['handoff'] != false && data['gated'] != true;
       if (mounted) {
         setState(() {
           _handoffNotice = notice;
-          _handedOff = true;
+          _handedOff = handedOff;
           if (sessionId != null) _sessionId = sessionId;
         });
         qfToast(context, notice);
@@ -825,6 +869,12 @@ class _QfSupportPageState extends State<QfSupportPage> {
                     key: const ValueKey('qf-support-not-this'),
                     onPressed: _sending ? null : () => _ask(notThis: true),
                     child: const Text(QfCopy.supportNotThis),
+                  ),
+                if (_guest && _linkedLabel == null && reply != null && reply.verifyOffer)
+                  TextButton(
+                    key: const ValueKey('qf-support-verify-offer'),
+                    onPressed: () => setState(() => _verifyOpen = true),
+                    child: const Text('核验账号'),
                   ),
               ],
             ),
