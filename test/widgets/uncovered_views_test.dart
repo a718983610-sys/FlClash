@@ -182,7 +182,10 @@ void main() {
     await tester.pump();
 
     expect(find.byType(AboutView), findsOneWidget);
-    expect(find.text('Telegram'), findsOneWidget);
+    // The product no longer links Telegram anywhere (removed by design);
+    // the About page must render its current link sections without it.
+    expect(find.text('Telegram'), findsNothing);
+    expect(find.text('源代码获取'), findsOneWidget);
     final hero = find.byWidgetPredicate(
       (widget) => widget.runtimeType.toString() == '_AboutHero',
     );
