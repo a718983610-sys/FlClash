@@ -9,8 +9,9 @@ import 'qf_social.dart';
 
 // 站长管理台（App 端）：入口显隐以服务端 GET /owner/me 为准，接口另有角色
 // 校验，前端隐藏不构成权限边界。可见字段与服务端白名单一致（隐私裁定正本），
-// 本页只呈现接口下发的字段。敏感操作两层防护：先确认（讲清对象与后果），
-// 再身份核验（密码或通行密钥），与网页版同口径。
+// 本页只呈现接口下发的字段。敏感操作只过一道确认（讲清对象与后果）：站长
+// 会话本身即身份凭据，不再要求输入登录密码或通行密钥复核（站长 2026-10-26
+// 亲令；服务端 /owner/* 与网页版站长台同口径，服务端闸门只验确认标记）。
 
 String _fmtSec(dynamic sec) {
   final n = sec is num ? sec.toInt() : 0;
@@ -97,117 +98,18 @@ Future<bool> _ownerConfirm(
   return ok == true;
 }
 
-class _OwnerVerifyDialog extends StatefulWidget {
-  final QfSessionController session;
-  final String purpose;
-
-  const _OwnerVerifyDialog({required this.session, required this.purpose});
-
-  @override
-  State<_OwnerVerifyDialog> createState() => _OwnerVerifyDialogState();
-}
-
-class _OwnerVerifyDialogState extends State<_OwnerVerifyDialog> {
-  final _password = TextEditingController();
-  String? _error;
-  bool _busy = false;
-
-  @override
-  void dispose() {
-    _password.dispose();
-    super.dispose();
-  }
-
-  Future<void> _usePasskey() async {
-    setState(() {
-      _busy = true;
-      _error = null;
-    });
-    try {
-      final token = await qfPasskeyReauthToken(widget.session, widget.purpose);
-      if (mounted) Navigator.of(context).pop({'reauthToken': token});
-    } on QfApiException catch (e) {
-      if (mounted) {
-        setState(() {
-          _busy = false;
-          _error = e.code == 'PASSKEY_NOT_ENROLLED'
-              ? '您尚未创建通行密钥，请使用账户密码验证。'
-              : qfAccountErrorMessage(e);
-        });
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _busy = false;
-          _error = '通行密钥验证未完成，请重试或改用密码。';
-        });
-      }
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('身份核验'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const Text('为防止账号被他人冒用执行敏感操作，请输入您的登录密码，或使用通行密钥完成核验。核验通过后操作将立即执行。'),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _password,
-            obscureText: true,
-            decoration: InputDecoration(labelText: '登录密码', errorText: _error),
-          ),
-          const SizedBox(height: 8),
-          OutlinedButton(
-            onPressed: _busy ? null : _usePasskey,
-            child: const Text('使用通行密钥验证'),
-          ),
-        ],
-      ),
-      actions: [
-        TextButton(
-          onPressed: _busy ? null : () => Navigator.of(context).pop(),
-          child: const Text('取消'),
-        ),
-        FilledButton(
-          onPressed: _busy
-              ? null
-              : () {
-                  if (_password.text.isEmpty) {
-                    setState(() => _error = '请输入登录密码');
-                    return;
-                  }
-                  Navigator.of(context).pop({'password': _password.text});
-                },
-          child: const Text('确认执行'),
-        ),
-      ],
-    );
-  }
-}
-
-// 两层防护统一入口：确认 → 核验 → 执行业务体（creds 已并入 confirm 标记）。
+// 敏感操作统一入口：确认 → 直接执行业务体（只带 confirm 确认标记）。
 Future<void> _ownerSensitive(
   BuildContext context,
   QfSessionController session, {
-  required String purpose,
   required String title,
   required String body,
-  required Future<String> Function(Map<String, dynamic> creds) run,
+  required Future<String> Function(Map<String, dynamic> payload) run,
 }) async {
   if (!await _ownerConfirm(context, title, body)) return;
   if (!context.mounted) return;
-  final creds = await showDialog<Map<String, String>>(
-    context: context,
-    builder: (_) => _OwnerVerifyDialog(session: session, purpose: purpose),
-  );
-  if (creds == null || !context.mounted) return;
-  final payload = <String, dynamic>{'confirm': true, ...creds};
   try {
-    final done = await run(payload);
+    final done = await run(const {'confirm': true});
     if (context.mounted) qfToast(context, done);
   } on QfApiException catch (e) {
     if (context.mounted) qfToast(context, qfAccountErrorMessage(e));
@@ -342,7 +244,7 @@ class _QfOwnerUsersPageState extends State<QfOwnerUsersPage> {
             child: Align(
               alignment: Alignment.centerLeft,
               child: Text(
-                '共 $_total 个用户。${_maskNote()}；完整邮箱仅可在用户详情中经身份核验后单条查看。',
+                '共 $_total 个用户。${_maskNote()}；完整邮箱仅可在用户详情中单条查看，查看会留审计记录。',
               ),
             ),
           ),
@@ -482,14 +384,13 @@ class _QfOwnerUserPageState extends State<QfOwnerUserPage> {
     await _ownerSensitive(
       context,
       session,
-      purpose: 'owner_view_email',
       title: '查看完整邮箱',
       body: '您将查看该用户的完整邮箱地址。此操作将记录在管理审计中（记录不含邮箱本身）。',
-      run: (creds) async {
+      run: (payload) async {
         final data = await session.authed(
           'POST',
           '/owner/users/$uid/view-email',
-          body: creds,
+          body: payload,
         );
         if (mounted) {
           await showDialog<void>(
@@ -542,14 +443,13 @@ class _QfOwnerUserPageState extends State<QfOwnerUserPage> {
     await _ownerSensitive(
       context,
       session,
-      purpose: 'owner_set_password',
       title: '确认替用户设置新密码',
       body: '执行后：该用户在所有设备上的登录状态将被退出；如其密码处于冻结状态将一并解除；系统会发邮件通知该用户。',
-      run: (creds) async {
+      run: (payload) async {
         final data = await session.authed(
           'POST',
           '/owner/users/$uid/set-password',
-          body: {...creds, 'newPassword': newPw},
+          body: {...payload, 'newPassword': newPw},
         );
         await _loadBasic();
         return '${data['message'] ?? '密码已重置。'}';
@@ -584,14 +484,13 @@ class _QfOwnerUserPageState extends State<QfOwnerUserPage> {
     await _ownerSensitive(
       context,
       session,
-      purpose: 'owner_profile_edit',
       title: '确认修改昵称',
       body: '新昵称将即时生效并公开显示，须通过内容审核口径。',
-      run: (creds) async {
+      run: (payload) async {
         final data = await session.authed(
           'POST',
           '/owner/users/$uid/profile',
-          body: {...creds, 'nickname': nick},
+          body: {...payload, 'nickname': nick},
         );
         await _loadBasic();
         return '${data['message'] ?? '资料已更新。'}';
@@ -626,14 +525,13 @@ class _QfOwnerUserPageState extends State<QfOwnerUserPage> {
     await _ownerSensitive(
       context,
       session,
-      purpose: 'owner_change_email',
       title: '确认更换绑定邮箱',
       body: '执行后：该用户在所有设备上的登录状态将被退出；新邮箱与原邮箱都会收到通知邮件。',
-      run: (creds) async {
+      run: (payload) async {
         final data = await session.authed(
           'POST',
           '/owner/users/$uid/change-email',
-          body: {...creds, 'newEmail': mail},
+          body: {...payload, 'newEmail': mail},
         );
         await _loadBasic();
         return '${data['message'] ?? '绑定邮箱已更换。'}';
@@ -701,12 +599,11 @@ class _QfOwnerUserPageState extends State<QfOwnerUserPage> {
     await _ownerSensitive(
       context,
       session,
-      purpose: 'owner_enforce',
       title: '确认封禁该用户',
       body: '封禁后该用户将无法登录（警告除外），其现有登录状态会被退出。封禁原因将按既定口径向该用户展示。',
-      run: (creds) async {
+      run: (payload) async {
         final body = <String, dynamic>{
-          ...creds,
+          ...payload,
           'level': level,
           'reasonText': reason.text.trim().isEmpty
               ? '违反用户协议'
@@ -729,14 +626,13 @@ class _QfOwnerUserPageState extends State<QfOwnerUserPage> {
     await _ownerSensitive(
       context,
       session,
-      purpose: 'owner_enforce',
       title: '解除封禁',
       body: '将解除该用户当前全部生效中的封禁（含永久封禁）。站长人工处置优先于自动处置，解除后自动系统不会就同一事由立即再次处置。',
-      run: (creds) async {
+      run: (payload) async {
         final data = await session.authed(
           'POST',
           '/owner/users/$uid/unban',
-          body: {...creds, 'includeDevices': true},
+          body: {...payload, 'includeDevices': true},
         );
         await _loadBasic();
         return '已解除封禁 ${data['lifted']} 条。';
@@ -748,14 +644,13 @@ class _QfOwnerUserPageState extends State<QfOwnerUserPage> {
     await _ownerSensitive(
       context,
       session,
-      purpose: 'owner_enforce',
       title: '解除密码冻结',
       body: '将立即解除该用户的密码冻结并清零密码连错计数，该用户可重新登录。',
-      run: (creds) async {
+      run: (payload) async {
         final data = await session.authed(
           'POST',
           '/owner/users/$uid/unfreeze',
-          body: creds,
+          body: payload,
         );
         await _loadBasic();
         return '${data['message'] ?? '已解除冻结。'}';
@@ -767,14 +662,13 @@ class _QfOwnerUserPageState extends State<QfOwnerUserPage> {
     await _ownerSensitive(
       context,
       session,
-      purpose: 'owner_enforce',
       title: '静默断开连接',
       body: '将断开该用户当前的全部在线连接（仅断开本次连接，不封禁账号，其可重新连接）。对方不会收到任何提示。',
-      run: (creds) async {
+      run: (payload) async {
         final data = await session.authed(
           'POST',
           '/owner/users/$uid/disconnect',
-          body: {...creds, 'reasonCode': 'SECURITY_RISK'},
+          body: {...payload, 'reasonCode': 'SECURITY_RISK'},
         );
         return '断开指令已发送，将在对方下一次心跳时生效（已排队 ${data['queuedDevices'] ?? 0} 台设备）。';
       },
@@ -997,14 +891,13 @@ class _QfOwnerUserPageState extends State<QfOwnerUserPage> {
     await _ownerSensitive(
       context,
       session,
-      purpose: 'owner_view_payout',
       title: '查看完整发放信息',
       body: '您将查看该订单的完整发放信息（收款地址或接收邮箱）。此操作将记录在管理审计中（记录不含具体内容）。',
-      run: (creds) async {
+      run: (payload) async {
         final data = await session.authed(
           'POST',
           '/owner/users/$uid/view-payout',
-          body: {...creds, 'orderId': orderId},
+          body: {...payload, 'orderId': orderId},
         );
         if (mounted) {
           await showDialog<void>(
@@ -1214,11 +1107,10 @@ class _QfOwnerReviewsPageState extends State<QfOwnerReviewsPage> {
     await _ownerSensitive(
       context,
       session,
-      purpose: 'owner_review',
       title: title,
       body: '请确认对该条目执行此处理。处理结果将记录在管理审计中。',
-      run: (creds) async {
-        await session.authed('POST', path, body: {...creds, ...extra});
+      run: (payload) async {
+        await session.authed('POST', path, body: {...payload, ...extra});
         await _load();
         return '已处理。';
       },
