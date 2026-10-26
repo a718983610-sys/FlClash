@@ -6,6 +6,7 @@ list(APPEND FLUTTER_PLUGIN_LIST
   app_links_linux
   dynamic_color
   file_selector_linux
+  flutter_inappwebview_linux
   flutter_secure_storage_linux
   flutter_timezone
   screen_retriever_linux

@@ -336,7 +336,7 @@ class _QfRemoteViewState extends State<QfRemoteView> {
             child: const Text(QfCopy.remoteOpenConsole),
           )
         else if (access != null && access.isBanned)
-          Text(QfCopy.remoteBanned)
+          const Text(QfCopy.remoteBanned)
         else if (access != null) ...[
           const Text(QfCopy.remoteNeedKey),
           const SizedBox(height: 12),
