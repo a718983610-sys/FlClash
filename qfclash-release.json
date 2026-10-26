@@ -1,20 +1,21 @@
 {
   "googleClientId": "340614194006-7a7anda3p473qjlhr67k6hn3o6aaqu9o.apps.googleusercontent.com",
-  "latestVersion": "2.0.2",
+  "latestVersion": "2.0.3",
   "maintenance": false,
   "minUsableVersion": "2.0.1",
   "platforms": {
     "android": {
-      "downloadUrl": "https://github.com/a718983610-sys/FlClash/releases/download/v2.0.2/QFClash-Android-v2.0.2.apk",
+      "downloadUrl": "https://github.com/a718983610-sys/FlClash/releases/download/v2.0.3/QFClash-Android-v2.0.3.apk",
       "googleClientId": "340614194006-80vi66ee45a447nvudpqc93vp7u0mo31.apps.googleusercontent.com",
-      "notes": "发布日期：2026-10-26\n\n## 前言\n\nQFClash v2.0.2 为常规更新，安卓与 Windows 双平台同步发布。本次更新修复规则模式下分组与节点选择异常的问题，并修复订阅名称显示问题。\n\n## 一、规则模式修复\n\n- 修复部分订阅在规则模式下分组为空、无法选择节点、无法正常连接的问题；切换到规则模式后，分组与节点完整显示，可正常选择与使用。\n- 全局模式与直连模式不受影响，三种模式之间可正常切换。\n\n## 二、订阅名称显示修复\n\n- 修复通过链接导入或刷新订阅后，订阅名称未按服务提供的名称显示的问题；现在将正确显示订阅服务提供的名称。\n- 已手动修改过的订阅名称不受影响，不会被自动改动。\n\n## 结语\n\n感谢您的支持与反馈。如在使用中遇到任何问题，欢迎通过应用内智能客服、意见反馈或官方论坛与我们联系。"
+      "notes": "发布日期：2026-10-26\n\n## 前言\n\nQFClash v2.0.3 为常规更新，安卓与 Windows 双平台同步发布。本次更新修复升级后订阅丢失的问题，优化规则模式下的分流效果，并新增「远程控制」功能。\n\n## 一、升级后订阅保留修复\n\n- 修复更新到新版本后，已添加的订阅与当前选择丢失、需要重新导入的问题；今后升级将完整保留订阅与选择状态。\n- 用户手动删除订阅的行为不受影响。\n\n## 二、规则模式分流优化\n\n- 优化规则模式的分流规则：国内网站与局域网络流量直接连接，境外流量经所选节点转发，规则模式与全局模式的实际效果恢复区分。\n- 自带分流规则的订阅不受影响，仍按其原有规则执行。\n\n## 三、新增「远程控制」\n\n- 工具页新增远程控制入口：使用 QFRemote 账号登录后，即可在应用内查看与远程操作您的设备。\n- 账号的激活状态自动同步：在 QFRemote 已激活的账号无需重复激活；未激活或已过期的，将引导前往购买页面。\n- 个人中心基础功能同步提供：可查看账号与套餐信息、修改密码、退出登录。\n\n## 结语\n\n感谢您的支持与反馈。如在使用中遇到任何问题，欢迎通过应用内智能客服、意见反馈或官方论坛与我们联系。"
     },
     "windows": {
-      "downloadUrl": "https://github.com/a718983610-sys/FlClash/releases/download/v2.0.2/QFClash-Windows-v2.0.2.exe",
+      "downloadUrl": "https://github.com/a718983610-sys/FlClash/releases/download/v2.0.3/QFClash-Windows-v2.0.3.exe",
       "googleClientId": "340614194006-m77lgrsv2ne7dn921lkascgg3ehvvvjf.apps.googleusercontent.com",
-      "notes": "发布日期：2026-10-26\n\n## 前言\n\nQFClash v2.0.2 为常规更新，安卓与 Windows 双平台同步发布。本次更新修复规则模式下分组与节点选择异常的问题，并修复订阅名称显示问题。\n\n## 一、规则模式修复\n\n- 修复部分订阅在规则模式下分组为空、无法选择节点、无法正常连接的问题；切换到规则模式后，分组与节点完整显示，可正常选择与使用。\n- 全局模式与直连模式不受影响，三种模式之间可正常切换。\n\n## 二、订阅名称显示修复\n\n- 修复通过链接导入或刷新订阅后，订阅名称未按服务提供的名称显示的问题；现在将正确显示订阅服务提供的名称。\n- 已手动修改过的订阅名称不受影响，不会被自动改动。\n\n## 结语\n\n感谢您的支持与反馈。如在使用中遇到任何问题，欢迎通过应用内智能客服、意见反馈或官方论坛与我们联系。"
+      "notes": "发布日期：2026-10-26\n\n## 前言\n\nQFClash v2.0.3 为常规更新，安卓与 Windows 双平台同步发布。本次更新修复升级后订阅丢失的问题，优化规则模式下的分流效果，并新增「远程控制」功能。\n\n## 一、升级后订阅保留修复\n\n- 修复更新到新版本后，已添加的订阅与当前选择丢失、需要重新导入的问题；今后升级将完整保留订阅与选择状态。\n- 用户手动删除订阅的行为不受影响。\n\n## 二、规则模式分流优化\n\n- 优化规则模式的分流规则：国内网站与局域网络流量直接连接，境外流量经所选节点转发，规则模式与全局模式的实际效果恢复区分。\n- 自带分流规则的订阅不受影响，仍按其原有规则执行。\n\n## 三、新增「远程控制」\n\n- 工具页新增远程控制入口：使用 QFRemote 账号登录后，即可在应用内查看与远程操作您的设备。\n- 账号的激活状态自动同步：在 QFRemote 已激活的账号无需重复激活；未激活或已过期的，将引导前往购买页面。\n- 个人中心基础功能同步提供：可查看账号与套餐信息、修改密码、退出登录。\n\n## 结语\n\n感谢您的支持与反馈。如在使用中遇到任何问题，欢迎通过应用内智能客服、意见反馈或官方论坛与我们联系。"
     }
   },
+  "qfRemoteWebBaseUrl": "https://bookmarks-hunting-rendering-atlas.trycloudflare.com",
   "retiredBelowVersion": "0.0.0",
   "serverBaseUrl": "https://54.248.9.192:80",
   "serverBaseUrlFallback": "https://effectively-cube-flood-analyzed.trycloudflare.com"
