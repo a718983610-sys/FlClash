@@ -828,7 +828,14 @@ class _QfOwnerUserPageState extends State<QfOwnerUserPage> {
                 ),
                 trailing: o['payoutAddressMasked'] != null
                     ? TextButton(
-                        onPressed: () => _viewPayout((o['id'] as num).toInt()),
+                        onPressed: () {
+                          final orderId = qfIdValue(o['id']);
+                          if (orderId == null) {
+                            qfToast(context, '订单数据异常，暂时无法查看。');
+                            return;
+                          }
+                          _viewPayout(orderId);
+                        },
                         child: const Text('查看完整'),
                       )
                     : null,

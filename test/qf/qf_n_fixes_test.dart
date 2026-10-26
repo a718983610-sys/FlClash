@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:fl_clash/qf/qf_api.dart';
 import 'package:fl_clash/qf/qf_data_migration.dart';
+import 'package:fl_clash/qf/qf_pages.dart';
 import 'package:fl_clash/qf/qf_session.dart';
 import 'package:fl_clash/qf/qf_signal.dart';
 import 'package:fl_clash/qf/qf_social.dart';
@@ -491,6 +492,19 @@ void main() {
       await session.beat();
       expect(stub.guestHeartbeatBodies.last['seq'], 10);
       expect(stub.guestHeartbeatBodies.last['trafficBytes'], 600);
+    });
+  });
+
+  group('N-08 safe id extraction', () {
+    test('numbers and numeric strings convert, anything else is null', () {
+      expect(qfIdValue(42), 42);
+      expect(qfIdValue(42.9), 42);
+      expect(qfIdValue(' 17 '), 17);
+      expect(qfIdValue(null), isNull);
+      expect(qfIdValue('x17'), isNull);
+      expect(qfIdValue(const {'id': 1}), isNull);
+      expect(qfRowId(const {'id': '23'}), 23);
+      expect(qfRowId(const {'name': 'no id'}), isNull);
     });
   });
 

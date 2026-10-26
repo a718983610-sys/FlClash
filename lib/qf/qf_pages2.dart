@@ -239,8 +239,13 @@ class _QfSecurityPageState extends State<QfSecurityPage> {
       },
     );
     if (confirmed != true) return;
+    final deviceId = qfIdValue(device['id']);
+    if (deviceId == null) {
+      if (mounted) qfToast(context, '设备数据异常，请刷新后重试。');
+      return;
+    }
     try {
-      await widget.session.securityUntrustDevice((device['id'] as num).toInt());
+      await widget.session.securityUntrustDevice(deviceId);
       if (mounted) qfToast(context, QfCopy.deviceUntrustedDone);
       await _load();
     } on QfApiException catch (e) {
@@ -249,10 +254,15 @@ class _QfSecurityPageState extends State<QfSecurityPage> {
   }
 
   Future<void> _logoutDevice(Map<dynamic, dynamic> device) async {
+    final deviceId = qfIdValue(device['id']);
+    if (deviceId == null) {
+      if (mounted) qfToast(context, '设备数据异常，请刷新后重试。');
+      return;
+    }
     try {
       await widget.session.authed(
         'POST',
-        '/security/devices/${(device['id'] as num).toInt()}/logout',
+        '/security/devices/$deviceId/logout',
         body: {},
       );
       if (mounted) qfToast(context, '该设备已经退出登录');
@@ -332,8 +342,12 @@ class _QfSecurityPageState extends State<QfSecurityPage> {
       actionLabel: '删除',
     );
     if (proof == null || !mounted) return;
+    final id = qfIdValue(item['id']);
+    if (id == null) {
+      if (mounted) qfToast(context, '通行密钥数据异常，暂时无法删除。');
+      return;
+    }
     try {
-      final id = (item['id'] as num).toInt();
       final reauthToken = proof['reauthToken'];
       if (reauthToken != null) {
         await widget.session.authed(

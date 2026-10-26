@@ -772,11 +772,16 @@ class _QfRecoveryStatusPageState extends State<QfRecoveryStatusPage> {
       qfToast(context, '两次输入的密码不一致，请重新输入。');
       return;
     }
+    final appealId = qfIdValue(status['appealId']);
+    if (appealId == null) {
+      qfToast(context, '申诉数据异常，请刷新后重试。');
+      return;
+    }
     setState(() => _resetBusy = true);
     try {
       final data = await QfRecoveryApi.reset(
         widget.session.serverBaseUrl,
-        appealId: (status['appealId'] as num).toInt(),
+        appealId: appealId,
         resetGrant: (status['resetGrant'] ?? '').toString(),
         newPassword: _newPassword.text,
       );
