@@ -5,9 +5,15 @@
 class Feature {
   const Feature({
     this.sidebarBlur = const bool.fromEnvironment('FEATURE_SIDEBAR_BLUR'),
+    this.bootSkeleton = const bool.fromEnvironment('FEATURE_BOOT_SKELETON'),
   });
 
   final bool sidebarBlur;
+
+  /// Paints the static boot skeleton as the first frame and swaps the real
+  /// app in when the startup chain lands. Off until a real device has
+  /// measured the TTID it exists to cut (testbed A).
+  final bool bootSkeleton;
 }
 
 Feature feature = const Feature();

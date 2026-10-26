@@ -9,6 +9,7 @@ import 'package:rust_api/rust_api.dart';
 import 'package:shared_preferences_platform_interface/shared_preferences_platform_interface.dart';
 
 import 'application.dart';
+import 'boot_shell.dart';
 import 'bootstrap.dart';
 import 'qf/qf_data_migration.dart';
 import 'common/app_data.dart';
@@ -21,7 +22,6 @@ void main(List<String> args) {
     () async {
       WidgetsFlutterBinding.ensureInitialized();
       FlClashHttpOverrides.beginTrustCoreRoots();
-      await qfMigrateLegacyDataDirIfNeeded();
       if (Platform.isWindows || Platform.isLinux) {
         SharedPreferencesStorePlatform.instance = AtomicFilePreferencesStore(
           appPath.sharedPreferencesPath,
@@ -38,27 +38,38 @@ void main(List<String> args) {
           );
         });
       };
+      final gate = feature.bootSkeleton ? BootGate() : null;
+      if (gate != null) {
+        runApp(BootShell(gate: gate));
+      }
       try {
+        await qfMigrateLegacyDataDirIfNeeded();
         await RustLib.init();
         final version = await system.init();
         final container = await bootstrap.init(version);
         HttpOverrides.global = FlClashHttpOverrides(container);
         request.attach(container.read);
-        runApp(
-          UncontrolledProviderScope(
-            container: container,
-            child: const Application(),
-          ),
+        final app = UncontrolledProviderScope(
+          container: container,
+          child: const Application(),
         );
+        if (gate != null) {
+          gate.show(app);
+        } else {
+          runApp(app);
+        }
       } catch (e, s) {
-        runApp(
-          InitErrorApp(
-            error: e,
-            stack: s,
-            onClearData: clearAppData,
-            onExit: _exitAfterInitFailure,
-          ),
+        final errorApp = InitErrorApp(
+          error: e,
+          stack: s,
+          onClearData: clearAppData,
+          onExit: _exitAfterInitFailure,
         );
+        if (gate != null) {
+          gate.show(errorApp);
+        } else {
+          runApp(errorApp);
+        }
         unawaited(window?.showInitFailure(onExit: _exitAfterInitFailure));
       }
     },
