@@ -101,6 +101,7 @@ class BootRecord {
   final int failureCount;
   final int? lastFailedProfileId;
   final int handledExitAt;
+  final int appVersion;
 
   const BootRecord({
     this.stage,
@@ -109,6 +110,7 @@ class BootRecord {
     this.failureCount = 0,
     this.lastFailedProfileId,
     this.handledExitAt = 0,
+    this.appVersion = 0,
   });
 
   static BootRecord? fromJson(Object? json) {
@@ -129,6 +131,7 @@ class BootRecord {
       handledExitAt: json['handledExitAt'] is int
           ? json['handledExitAt'] as int
           : 0,
+      appVersion: json['appVersion'] is int ? json['appVersion'] as int : 0,
     );
   }
 
@@ -139,6 +142,7 @@ class BootRecord {
     'failureCount': failureCount,
     'lastFailedProfileId': lastFailedProfileId,
     'handledExitAt': handledExitAt,
+    'appVersion': appVersion,
   };
 
   @override
@@ -150,7 +154,8 @@ class BootRecord {
           other.startedAt == startedAt &&
           other.failureCount == failureCount &&
           other.lastFailedProfileId == lastFailedProfileId &&
-          other.handledExitAt == handledExitAt;
+          other.handledExitAt == handledExitAt &&
+          other.appVersion == appVersion;
 
   @override
   int get hashCode => Object.hash(
@@ -160,12 +165,13 @@ class BootRecord {
     failureCount,
     lastFailedProfileId,
     handledExitAt,
+    appVersion,
   );
 
   @override
   String toString() =>
       'BootRecord(${stage?.name ?? 'closed'}, profile: $profileId, '
-      'failures: $failureCount)';
+      'failures: $failureCount, build: $appVersion)';
 }
 
 enum BootRecovery { none, skipAutoSetup, clearProfile }
@@ -197,10 +203,23 @@ class BootDecision {
 BootDecision resolveBootDecision({
   required BootRecord? record,
   required AppExitInfo? exitInfo,
+  int currentAppVersion = 0,
+  int? lastUpdateAt,
 }) {
   if (record == null || record.stage != BootStage.starting) {
     return const BootDecision();
   }
+  // An interrupted launch belonging to another build is not evidence
+  // against this one: stamped records match by build number, unstamped
+  // ones by having started before this build was installed.
+  final fromAnotherBuild =
+      (record.appVersion != 0 &&
+          currentAppVersion != 0 &&
+          record.appVersion != currentAppVersion) ||
+      (record.appVersion == 0 &&
+          lastUpdateAt != null &&
+          record.startedAt < lastUpdateAt);
+  if (fromAnotherBuild) return const BootDecision();
   final matchesLastRun =
       exitInfo != null &&
       exitInfo.timestamp > record.handledExitAt &&

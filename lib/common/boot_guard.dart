@@ -31,13 +31,22 @@ class BootGuard {
 
   BootDecision get decision => _decision;
 
-  Future<BootDecision> evaluate({required int? profileId}) async {
+  Future<BootDecision> evaluate({
+    required int? profileId,
+    int appVersion = 0,
+    int? lastUpdateAt,
+  }) async {
     if (!_supported) {
       return _decision;
     }
     final record = await _readRecord();
     final exitInfo = await _readExitInfo();
-    final decision = resolveBootDecision(record: record, exitInfo: exitInfo);
+    final decision = resolveBootDecision(
+      record: record,
+      exitInfo: exitInfo,
+      currentAppVersion: appVersion,
+      lastUpdateAt: lastUpdateAt,
+    );
     if (decision.isDegraded) {
       commonPrint.log(
         'Previous launch did not finish: $decision',
@@ -58,6 +67,7 @@ class BootGuard {
           record?.handledExitAt ?? 0,
           exitInfo?.timestamp ?? 0,
         ),
+        appVersion: appVersion,
       ),
     );
     _decision = decision;
@@ -80,6 +90,7 @@ class BootGuard {
         failureCount: _decision.isDegraded ? record.failureCount : 0,
         lastFailedProfileId: record.lastFailedProfileId,
         handledExitAt: record.handledExitAt,
+        appVersion: record.appVersion,
       ),
     );
   }
@@ -98,6 +109,7 @@ class BootGuard {
         startedAt: record.startedAt,
         lastFailedProfileId: record.lastFailedProfileId,
         handledExitAt: record.handledExitAt,
+        appVersion: record.appVersion,
       ),
     );
   }

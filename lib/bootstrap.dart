@@ -113,8 +113,19 @@ class Bootstrap {
       } catch (_) {}
     }());
     var config = await migration.run();
+    final bootFacts = await packageInfo
+        .then<(int, int?)>(
+          (info) => (
+            int.tryParse(info.buildNumber) ?? 0,
+            info.updateTime?.millisecondsSinceEpoch,
+          ),
+          onError: (_) => (0, null),
+        )
+        .timeout(const Duration(seconds: 2), onTimeout: () => (0, null));
     _bootDecision = await bootGuard.evaluate(
       profileId: config.currentProfileId,
+      appVersion: bootFacts.$1,
+      lastUpdateAt: bootFacts.$2,
     );
     if (_bootDecision.recovery == BootRecovery.clearProfile) {
       config = config.copyWith(currentProfileId: null);

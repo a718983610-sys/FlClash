@@ -9,6 +9,7 @@ BootRecord _starting({
   int failureCount = 0,
   int? profileId = 7,
   int handledExitAt = 0,
+  int appVersion = 0,
 }) {
   return BootRecord(
     stage: BootStage.starting,
@@ -16,6 +17,7 @@ BootRecord _starting({
     startedAt: _startedAt,
     failureCount: failureCount,
     handledExitAt: handledExitAt,
+    appVersion: appVersion,
   );
 }
 
@@ -76,6 +78,7 @@ void main() {
         failureCount: 2,
         lastFailedProfileId: 9,
         handledExitAt: 34,
+        appVersion: 2026106309,
       );
 
       expect(BootRecord.fromJson(json.decode(json.encode(record))), record);
@@ -173,6 +176,53 @@ void main() {
 
       expect(decision.recovery, BootRecovery.skipAutoSetup);
       expect(decision.exitReason, isNull);
+    });
+
+    test('an interrupted launch from an older build is not counted', () {
+      final decision = resolveBootDecision(
+        record: _starting(failureCount: 1, appVersion: 2026106309),
+        exitInfo: _exit(AppExitReason.crashNative),
+        currentAppVersion: 2026106310,
+      );
+
+      expect(decision.recovery, BootRecovery.none);
+      expect(decision.failureCount, 0);
+      expect(decision.failedProfileId, isNull);
+    });
+
+    test('an interrupted launch from this same build still counts', () {
+      final decision = resolveBootDecision(
+        record: _starting(failureCount: 1, appVersion: 2026106310),
+        exitInfo: _exit(AppExitReason.crashNative),
+        currentAppVersion: 2026106310,
+      );
+
+      expect(decision.recovery, BootRecovery.clearProfile);
+      expect(decision.failureCount, 2);
+    });
+
+    test('an unstamped record started before the update landed is stale', () {
+      final decision = resolveBootDecision(
+        record: _starting(failureCount: 1),
+        exitInfo: _exit(AppExitReason.crashNative),
+        currentAppVersion: 2026106310,
+        lastUpdateAt: _startedAt + 100,
+      );
+
+      expect(decision.recovery, BootRecovery.none);
+      expect(decision.failureCount, 0);
+    });
+
+    test('an unstamped record started after the update still counts', () {
+      final decision = resolveBootDecision(
+        record: _starting(failureCount: 1),
+        exitInfo: _exit(AppExitReason.crashNative),
+        currentAppVersion: 2026106310,
+        lastUpdateAt: _startedAt - 100,
+      );
+
+      expect(decision.recovery, BootRecovery.clearProfile);
+      expect(decision.failureCount, 2);
     });
   });
 }

@@ -109,6 +109,32 @@ void main() {
     expect(store.record?.handledExitAt, 4000);
   });
 
+  test('a boot record from an older build is replaced, not punished', () async {
+    final store = _RecordStore()
+      ..record = const BootRecord(
+        stage: BootStage.starting,
+        profileId: 7,
+        startedAt: 1000,
+        failureCount: 4,
+        appVersion: 2026106309,
+      );
+    final guard = _guard(
+      store,
+      exitInfo: const AppExitInfo(
+        reason: AppExitReason.crashNative,
+        timestamp: 1500,
+      ),
+    );
+
+    final decision = await guard.evaluate(profileId: 7, appVersion: 2026106310);
+
+    expect(decision.recovery, BootRecovery.none);
+    expect(store.record?.appVersion, 2026106310);
+    expect(store.record?.failureCount, 0);
+    expect(store.record?.stage, BootStage.starting);
+    expect(store.record?.profileId, 7);
+  });
+
   test('a completed launch resets the failure count', () async {
     final store = _RecordStore();
     final guard = _guard(store);
