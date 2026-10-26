@@ -1433,8 +1433,8 @@ void main() {
       );
     }
 
-    test('a bare base profile is wrapped in a synthesized group with a '
-        'MATCH rule', () async {
+    test('a bare base profile is wrapped in a synthesized group with the '
+        'default split rules', () async {
       final (:overlay, :applied) = await applyBareProfile(baseRules: 0);
       expect(applied, isTrue);
       final groups = overlay['proxy-groups'] as YamlList;
@@ -1443,8 +1443,13 @@ void main() {
       expect(group['name'], '节点选择');
       expect(group['type'], 'select');
       expect(group['proxies'], ['n1', 'n2', 'DIRECT']);
-      expect(overlay['rules'], ['MATCH,节点选择']);
-      expect(globalState.lastConfigCounts, (groups: 1, proxies: 2, rules: 1));
+      expect(overlay['rules'], [
+        'GEOIP,LAN,DIRECT,no-resolve',
+        'GEOSITE,CN,DIRECT',
+        'GEOIP,CN,DIRECT,no-resolve',
+        'MATCH,节点选择',
+      ]);
+      expect(globalState.lastConfigCounts, (groups: 1, proxies: 2, rules: 4));
     });
 
     test('a bare base profile with its own rules gets the group but no '
