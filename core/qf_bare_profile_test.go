@@ -51,7 +51,8 @@ func qfBareLinkListBody() string {
 }
 
 // The overlay the host build emits for a bare profile: the synthesized
-// group plus its MATCH rule, nothing else profile-shaped.
+// group plus the default split rules ending in its MATCH rule, nothing
+// else profile-shaped.
 func qfBareSynthOverlay() string {
 	members := []string{qfBareTokyoSS, qfBareTokyoHy2, qfBareTaipeiSS, qfBareTaipeiHy2}
 	var b strings.Builder
@@ -61,7 +62,11 @@ func qfBareSynthOverlay() string {
 		b.WriteString("      - \"" + name + "\"\n")
 	}
 	b.WriteString("      - DIRECT\n")
-	b.WriteString("rules:\n  - MATCH," + qfBareGroupName + "\n")
+	b.WriteString("rules:\n" +
+		"  - GEOIP,LAN,DIRECT,no-resolve\n" +
+		"  - GEOSITE,CN,DIRECT\n" +
+		"  - GEOIP,CN,DIRECT,no-resolve\n" +
+		"  - MATCH," + qfBareGroupName + "\n")
 	return b.String()
 }
 
@@ -71,6 +76,15 @@ func qfBareSetupHome(t *testing.T) string {
 	previous := constant.Path.HomeDir()
 	constant.SetHomeDir(home)
 	t.Cleanup(func() { constant.SetHomeDir(previous) })
+	// Mirror production: CoreController.initGeo deploys the bundled
+	// geodata into the home directory before the core starts, and the
+	// split rules' GEOIP entries are built from it at load.
+	for _, name := range []string{"GEOIP.dat", "GEOSITE.dat", "GEOIP.metadb", "ASN.mmdb"} {
+		src := filepath.Join("..", "assets", "data", name)
+		if data, err := os.ReadFile(src); err == nil {
+			_ = os.WriteFile(filepath.Join(home, name), data, 0o644)
+		}
+	}
 	return home
 }
 
@@ -143,8 +157,8 @@ func TestQfBareLinkListProfileWithSynthesizedOverlay(t *testing.T) {
 	qfBareApply(t, home, profilePath, qfBareSynthOverlay(),
 		map[string]string{qfBareGroupName: qfBareTaipeiSS})
 	report := handleGetLoadReport()
-	if report.Proxies != 4 || report.Groups != 1 || report.Rules != 1 {
-		t.Fatalf("load report = %d proxies %d groups %d rules, want 4/1/1",
+	if report.Proxies != 4 || report.Groups != 1 || report.Rules != 4 {
+		t.Fatalf("load report = %d proxies %d groups %d rules, want 4/1/4",
 			report.Proxies, report.Groups, report.Rules)
 	}
 	view := qfBareGroupView(t, qfBareGroupName)
@@ -212,7 +226,11 @@ func TestQfBareProxiesOnlyYamlWithSynthesizedOverlay(t *testing.T) {
 	overlay := "mode: rule\nmixed-port: 7890\n" +
 		"proxy-groups:\n  - name: " + qfBareGroupName + "\n    type: select\n" +
 		"    proxies: [node-a, node-b, DIRECT]\n" +
-		"rules:\n  - MATCH," + qfBareGroupName + "\n"
+		"rules:\n" +
+		"  - GEOIP,LAN,DIRECT,no-resolve\n" +
+		"  - GEOSITE,CN,DIRECT\n" +
+		"  - GEOIP,CN,DIRECT,no-resolve\n" +
+		"  - MATCH," + qfBareGroupName + "\n"
 	cfg, err := loadConfigWithBase(
 		&SetupBase{Path: profilePath, Overlay: overlay},
 		filepath.Join(home, "config.yaml"),
@@ -233,7 +251,9 @@ func TestQfBareProxiesOnlyYamlWithSynthesizedOverlay(t *testing.T) {
 
 // The current merged subscription shape pulled from the Tokyo host on
 // 2026-10-26 (group members DIRECT and REJECT first, Hy2 without sni),
-// credentials replaced with valid fakes.
+// credentials replaced with valid fakes. The rules block mirrors the
+// host file after the 2026-10-26 split-rules patch (before it, the file
+// carried only the MATCH line).
 const qfMergedShape = `
 mixed-port: 7890
 allow-lan: false
@@ -277,6 +297,9 @@ proxy-groups:
       - "🇹🇼台北（SS协议首选）"
       - "🇹🇼台北（Hy2协议备用）"
 rules:
+  - GEOIP,LAN,DIRECT,no-resolve
+  - GEOSITE,CN,DIRECT
+  - GEOIP,CN,DIRECT,no-resolve
   - MATCH,AWS组
 `
 

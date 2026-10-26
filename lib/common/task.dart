@@ -118,6 +118,19 @@ Map<String, dynamic> bareProfileGroup(List<String> proxyNames) {
   };
 }
 
+/// The default split for a bare profile, so rule mode is not global mode
+/// with extra steps: LAN and domestic traffic stays direct (GEOIP,LAN is
+/// resolved in-core; the CN entries match the geodata shipped in the app),
+/// and only the rest falls through to the synthesized group.
+List<String> bareProfileRules(String groupName) {
+  return [
+    'GEOIP,LAN,DIRECT,no-resolve',
+    'GEOSITE,CN,DIRECT',
+    'GEOIP,CN,DIRECT,no-resolve',
+    'MATCH,$groupName',
+  ];
+}
+
 Map<String, dynamic>? _synthesizedGroupFor(
   MakeRealProfileState data,
   Map<dynamic, dynamic> rawConfig,
@@ -414,7 +427,7 @@ Future<RealProfile> _makeRealProfileTask(MakeRealProfileState data) async {
         ? data.synthesizedGroupNeedsMatch
         : true;
     if (rules.isEmpty && mayMatch) {
-      rules = ['MATCH,${synthesizedGroup['name']}'];
+      rules = bareProfileRules('${synthesizedGroup['name']}');
     }
   }
   rawConfig['rules'] = rules;

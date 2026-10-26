@@ -250,7 +250,7 @@ void main() {
   }
 
   test('makeRealProfileTask wraps a bare profile in a synthesized group '
-      'with a MATCH rule', () async {
+      'with the default split rules', () async {
     final result = await makeRealProfileTask(
       bareState({
         'proxies': [
@@ -266,8 +266,13 @@ void main() {
     expect(group['name'], '节点选择');
     expect(group['type'], 'select');
     expect(group['proxies'], ['n1', 'n2', 'DIRECT']);
-    expect(config['rules'], ['MATCH,节点选择']);
-    expect(result.counts, (groups: 1, proxies: 2, rules: 1));
+    expect(config['rules'], [
+      'GEOIP,LAN,DIRECT,no-resolve',
+      'GEOSITE,CN,DIRECT',
+      'GEOIP,CN,DIRECT,no-resolve',
+      'MATCH,节点选择',
+    ]);
+    expect(result.counts, (groups: 1, proxies: 2, rules: 4));
   });
 
   test(
@@ -324,8 +329,13 @@ void main() {
     );
     final config = loadYaml(result.yaml) as YamlMap;
     expect(config['proxy-groups'], hasLength(1));
-    expect(config['rules'], ['MATCH,节点选择']);
-    expect(result.counts, (groups: 1, proxies: 0, rules: 1));
+    expect(config['rules'], [
+      'GEOIP,LAN,DIRECT,no-resolve',
+      'GEOSITE,CN,DIRECT',
+      'GEOIP,CN,DIRECT,no-resolve',
+      'MATCH,节点选择',
+    ]);
+    expect(result.counts, (groups: 1, proxies: 0, rules: 4));
   });
 
   test('makeRealProfileTask withholds the MATCH when the carried group '

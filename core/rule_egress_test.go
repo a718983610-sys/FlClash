@@ -567,3 +567,202 @@ rules:
 		t.Errorf("node hits = %d, want 1; node saw %v", got, node.seenTargets())
 	}
 }
+
+// ---- bare-profile split rules -------------------------------------------
+
+// probeVia makes a single attempt and reports the outcome instead of
+// failing the test: for targets nothing can answer (a public IP, an
+// unroutable LAN address), the routing decision itself is the evidence,
+// read off the fake node's hit counter — a direct decision never
+// touches the node.
+func probeVia(mixedPort int, target string) (int, string) {
+	proxyURL, err := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", mixedPort))
+	if err != nil {
+		return 0, ""
+	}
+	client := &http.Client{
+		Timeout:   6 * time.Second,
+		Transport: &http.Transport{Proxy: http.ProxyURL(proxyURL)},
+	}
+	resp, err := client.Get(target)
+	if err != nil {
+		return 0, ""
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, string(body)
+}
+
+func bareSplitConfig(mixed, dnsPort, nodePort int, rules string) string {
+	return fmt.Sprintf(`
+mixed-port: %d
+allow-lan: false
+bind-address: 127.0.0.1
+mode: rule
+log-level: warning
+dns:
+  enable: true
+  enhanced-mode: fake-ip
+  fake-ip-range: 198.18.0.1/16
+  nameserver: ["tcp://127.0.0.1:%d"]
+proxies:
+  - {name: node-a, type: socks5, server: 127.0.0.1, port: %d}
+proxy-groups:
+  - {name: "节点选择", type: select, proxies: [node-a, DIRECT]}
+rules:
+%s
+`, mixed, dnsPort, nodePort, rules)
+}
+
+const bareSplitRules = `  - GEOIP,LAN,DIRECT,no-resolve
+  - GEOSITE,CN,DIRECT
+  - GEOIP,CN,DIRECT,no-resolve
+  - MATCH,节点选择`
+
+// The 2.0.2 bare-profile shape, kept as the red control: a lone MATCH
+// rule sends domestic and LAN traffic through the node exactly as if
+// the mode were global.
+func TestRuleModeBareMatchOnlySendsDomesticViaNode(t *testing.T) {
+	node, nodePort := startFakeNode(t)
+	startTarget(t, "127.0.0.1:18111", "CN-OK")
+	dnsPort := freeUDPPort(t)
+	startTestDNS(t, dnsPort, map[string]net.IP{
+		"www.baidu.com": net.ParseIP("127.0.0.1"),
+	})
+	mixed := freeTCPPort(t)
+	applyYaml(t, bareSplitConfig(mixed, dnsPort, nodePort, "  - MATCH,节点选择"), nil)
+
+	if _, body := probeVia(mixed, "http://127.0.0.1:18111/"); body != "CN-OK" {
+		t.Errorf("lan fetch via MATCH-only = %q, want CN-OK (through the node)", body)
+	}
+	if got := node.hits.Load(); got != 1 {
+		t.Fatalf("node hits after lan fetch = %d, want 1 (LAN went via proxy)", got)
+	}
+	_, _ = probeVia(mixed, "http://www.baidu.com:18111/")
+	if got := node.hits.Load(); got != 2 {
+		t.Errorf("node hits after cn domain fetch = %d, want 2 (domestic went via proxy); node saw %v",
+			got, node.seenTargets())
+	}
+}
+
+// The split the host build now emits for a bare profile, running on the
+// geodata the app bundles: domestic and LAN traffic goes direct,
+// everything else lands on the group.
+func TestRuleModeBareSplitRoutesDomesticDirect(t *testing.T) {
+	node, nodePort := startFakeNode(t)
+	startTarget(t, "127.0.0.1:18111", "CN-OK")
+	startTarget(t, "127.0.0.2:18112", "FR-OK")
+	dnsPort := freeUDPPort(t)
+	startTestDNS(t, dnsPort, map[string]net.IP{
+		"www.baidu.com": net.ParseIP("127.0.0.1"),
+		"foreign.test":  net.ParseIP("127.0.0.2"),
+	})
+	mixed := freeTCPPort(t)
+	applyYaml(t, bareSplitConfig(mixed, dnsPort, nodePort, bareSplitRules), nil)
+
+	if code, body := fetchVia(t, mixed, "http://www.baidu.com:18111/"); code != 200 || body != "CN-OK" {
+		t.Errorf("cn domain fetch = %d %q, want 200 CN-OK (direct)", code, body)
+	}
+	if code, body := fetchVia(t, mixed, "http://127.0.0.1:18111/"); code != 200 || body != "CN-OK" {
+		t.Errorf("lan fetch = %d %q, want 200 CN-OK (direct)", code, body)
+	}
+	if got := node.hits.Load(); got != 0 {
+		t.Fatalf("node hits after domestic fetches = %d, want 0; node saw %v", got, node.seenTargets())
+	}
+	if code, body := fetchVia(t, mixed, "http://foreign.test:18112/"); code != 200 || body != "FR-OK" {
+		t.Errorf("foreign fetch = %d %q, want 200 FR-OK (via node)", code, body)
+	}
+	if got := node.hits.Load(); got != 1 {
+		t.Fatalf("node hits after foreign fetch = %d, want 1; node saw %v", got, node.seenTargets())
+	}
+	// IP-literal decisions: the bodies are unreachable by construction,
+	// so the hit counter carries the verdict.
+	_, _ = probeVia(mixed, "http://192.168.99.99:18119/")
+	_, _ = probeVia(mixed, "http://223.5.5.5:18119/")
+	if got := node.hits.Load(); got != 1 {
+		t.Errorf("node hits after LAN/CN IP probes = %d, want 1 (both direct); node saw %v",
+			got, node.seenTargets())
+	}
+	_, _ = probeVia(mixed, "http://8.8.8.8:18119/")
+	if got := node.hits.Load(); got != 2 {
+		t.Errorf("node hits after foreign IP probe = %d, want 2 (via node); node saw %v",
+			got, node.seenTargets())
+	}
+	// A rule/global round trip must not pollute the split: in global
+	// mode the domestic fetch rides the node, back in rule mode it is
+	// direct again.
+	globalMode := tunnel.Global
+	if err := updateConfig(&UpdateParams{Mode: &globalMode}); err != nil {
+		t.Fatalf("updateConfig -> global: %v", err)
+	}
+	if res := handleChangeProxy(&ChangeProxyParams{
+		GroupName: "GLOBAL",
+		ProxyName: "node-a",
+	}); !res.Changed {
+		t.Fatalf("changeProxy GLOBAL -> node-a in global mode: %+v", res)
+	}
+	_, _ = probeVia(mixed, "http://www.baidu.com:18111/")
+	if got := node.hits.Load(); got != 3 {
+		t.Fatalf("node hits in global mode = %d, want 3 (domestic via node)", got)
+	}
+	ruleMode := tunnel.Rule
+	if err := updateConfig(&UpdateParams{Mode: &ruleMode}); err != nil {
+		t.Fatalf("updateConfig -> rule: %v", err)
+	}
+	if code, body := fetchVia(t, mixed, "http://www.baidu.com:18111/"); code != 200 || body != "CN-OK" {
+		t.Errorf("cn domain fetch after round trip = %d %q, want 200 CN-OK (direct)", code, body)
+	}
+	if got := node.hits.Load(); got != 3 {
+		t.Errorf("node hits after round trip = %d, want 3 (split intact); node saw %v",
+			got, node.seenTargets())
+	}
+}
+
+// The same split with no geodata in the home directory and downloads
+// pinned to a dead address: the CN rules must go inert and domestic
+// traffic must fall through to the group. This is why the geodata the
+// app ships (and deploys into the home directory at core init) is
+// load-bearing for the split rather than decoration.
+func TestRuleModeBareSplitWithoutGeodataFallsThrough(t *testing.T) {
+	node, nodePort := startFakeNode(t)
+	startTarget(t, "127.0.0.1:18111", "CN-OK")
+	dnsPort := freeUDPPort(t)
+	startTestDNS(t, dnsPort, map[string]net.IP{
+		"www.baidu.com": net.ParseIP("127.0.0.1"),
+	})
+	mixed := freeTCPPort(t)
+	home := t.TempDir()
+	previous := constant.Path.HomeDir()
+	constant.SetHomeDir(home)
+	t.Cleanup(func() { constant.SetHomeDir(previous) })
+	yaml := bareSplitConfig(mixed, dnsPort, nodePort, bareSplitRules) + `
+geo-auto-update: false
+geox-url:
+  geoip: "http://127.0.0.1:1/geoip.dat"
+  geosite: "http://127.0.0.1:1/geosite.dat"
+  mmdb: "http://127.0.0.1:1/geoip.metadb"
+  asn: "http://127.0.0.1:1/asn.mmdb"
+`
+	if err := os.WriteFile(filepath.Join(home, "config.yaml"), []byte(yaml), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	if err := applyConfig(defaultSetupParams()); err != nil {
+		t.Fatalf("applyConfig without geodata: %v", err)
+	}
+	handleStartListener()
+	t.Cleanup(func() {
+		home := t.TempDir()
+		constant.SetHomeDir(home)
+		if err := os.WriteFile(filepath.Join(home, "config.yaml"), nil, 0o600); err == nil {
+			_ = applyConfig(defaultSetupParams())
+		}
+		handleStopListener()
+		settleMessageBatcher()
+	})
+
+	_, _ = probeVia(mixed, "http://www.baidu.com:18111/")
+	if got := node.hits.Load(); got != 1 {
+		t.Errorf("node hits without geodata = %d, want 1 (CN rules inert, fell to MATCH); node saw %v",
+			got, node.seenTargets())
+	}
+}
