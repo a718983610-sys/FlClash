@@ -529,7 +529,7 @@ class _QfrWebViewPageState extends State<QfrWebViewPage> {
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        const CircularProgressIndicator(),
+                        const CommonCircleLoading.page(),
                         const SizedBox(height: 16),
                         const Text('正在加载…'),
                         if (_ready && _progress > 0)
