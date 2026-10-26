@@ -1,7 +1,6 @@
 import 'package:fl_clash/qf/qf_owner.dart';
 import 'package:fl_clash/qf/qf_session.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:material_ui/material_ui.dart';
 
 import '../helpers/test_app.dart';
 
