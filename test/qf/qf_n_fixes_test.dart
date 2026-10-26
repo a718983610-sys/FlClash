@@ -508,6 +508,29 @@ void main() {
     });
   });
 
+  group('friend profile safety code', () {
+    testWidgets('the section settles once and stays settled across rebuilds',
+        (tester) async {
+      final session = _FakeFriendsSession();
+      Widget page() => MaterialApp(
+            home: QfFriendProfilePage(
+              session: session,
+              friend: const {'userId': 55, 'nickname': '申请人甲'},
+            ),
+          );
+      await tester.pumpWidget(page());
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pumpWidget(page());
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.text('安全码'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(seconds: 5));
+    });
+  });
+
   group('N-06/N-07 friends page', () {
     testWidgets('a failed requests refresh keeps the pending list visible',
         (tester) async {

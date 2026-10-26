@@ -1902,41 +1902,76 @@ class QfFriendProfilePage extends StatelessWidget {
             '如果对方更换设备或重装，安全码会变化，请重新核对。',
           ),
           const SizedBox(height: 12),
-          FutureBuilder(
-            future: QfSignalManager.safetyFingerprint(session, peerId),
-            builder: (context, snapshot) {
-              final fingerprint = snapshot.data;
-              if (fingerprint == null) {
-                return const Text('安全码暂时不可用（对方尚未启用聊天加密或暂无会话）');
-              }
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  SelectableText(
-                    fingerprint.displayableFingerprint.getDisplayText(),
-                    style: AppTextStyle.custom(context, size: 16, leading: 21),
-                  ),
-                  const SizedBox(height: 16),
-                  Center(
-                    child: QrImageView(
-                      data:
-                          'qfclash-safety:${base64Encode(fingerprint.scannableFingerprint.fingerprints)}',
-                      version: QrVersions.auto,
-                      size: 180,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  OutlinedButton.icon(
-                    onPressed: () => _verifyByScan(context),
-                    icon: const GlyphIcon(AppGlyphs.qrCode),
-                    label: const Text('扫码核对'),
-                  ),
-                ],
-              );
-            },
+          _QfSafetyCodeSection(
+            session: session,
+            peerId: peerId,
+            onVerifyByScan: _verifyByScan,
           ),
         ],
       ),
+    );
+  }
+}
+
+/// The safety-code block of the friend profile page. The fingerprint
+/// derivation loads the signal store and runs its 5200 iterations, so it
+/// is started once per page instead of again on every rebuild, which
+/// also kept flashing the unavailable fallback while it recomputed.
+class _QfSafetyCodeSection extends StatefulWidget {
+  final QfSessionController session;
+  final int peerId;
+  final Future<void> Function(BuildContext context) onVerifyByScan;
+
+  const _QfSafetyCodeSection({
+    required this.session,
+    required this.peerId,
+    required this.onVerifyByScan,
+  });
+
+  @override
+  State<_QfSafetyCodeSection> createState() => _QfSafetyCodeSectionState();
+}
+
+class _QfSafetyCodeSectionState extends State<_QfSafetyCodeSection> {
+  late final _fingerprint = QfSignalManager.safetyFingerprint(
+    widget.session,
+    widget.peerId,
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder(
+      future: _fingerprint,
+      builder: (context, snapshot) {
+        final fingerprint = snapshot.data;
+        if (fingerprint == null) {
+          return const Text('安全码暂时不可用（对方尚未启用聊天加密或暂无会话）');
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            SelectableText(
+              fingerprint.displayableFingerprint.getDisplayText(),
+              style: AppTextStyle.custom(context, size: 16, leading: 21),
+            ),
+            const SizedBox(height: 16),
+            Center(
+              child: QrImageView(
+                data:
+                    'qfclash-safety:${base64Encode(fingerprint.scannableFingerprint.fingerprints)}',
+                version: QrVersions.auto,
+                size: 180,
+              ),
+            ),
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              onPressed: () => widget.onVerifyByScan(context),
+              icon: const GlyphIcon(AppGlyphs.qrCode),
+              label: const Text('扫码核对'),
+            ),
+          ],
+        );
+      },
     );
   }
 }
