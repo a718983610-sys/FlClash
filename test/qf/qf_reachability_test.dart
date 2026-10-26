@@ -76,6 +76,7 @@ void main() {
       expect(QfEndpoints.rotationFor('http://a.example/auth/login'), [
         'http://a.example/auth/login',
         'http://b.example/auth/login',
+        '${QfConfig.directServerBaseUrl}/auth/login',
         '${QfConfig.fallbackServerBaseUrl}/auth/login',
       ]);
       // The order is global, not per-URL: a URL built on the fallback
@@ -83,6 +84,7 @@ void main() {
       expect(QfEndpoints.rotationFor('http://b.example/auth/login'), [
         'http://a.example/auth/login',
         'http://b.example/auth/login',
+        '${QfConfig.directServerBaseUrl}/auth/login',
         '${QfConfig.fallbackServerBaseUrl}/auth/login',
       ]);
     });
@@ -104,6 +106,7 @@ void main() {
       expect(QfEndpoints.rotationFor('http://a.example/auth/login'), [
         'http://b.example/auth/login',
         'http://a.example/auth/login',
+        '${QfConfig.directServerBaseUrl}/auth/login',
         '${QfConfig.fallbackServerBaseUrl}/auth/login',
       ]);
     });
@@ -189,6 +192,103 @@ void main() {
         ),
       );
       expect(backup.hits, 0);
+    });
+
+    test('a login POST rotates past a dead first base', () async {
+      final backup = _HitServer(payload: {'ok': true, 'via': 'backup'});
+      await backup.start();
+      addTearDown(backup.stop);
+      QfEndpoints.apply(
+        primaryUrl: 'http://127.0.0.1:1',
+        backupUrl: backup.base,
+      );
+      final data = await QfHttp.send(
+        'POST',
+        'http://127.0.0.1:1/auth/login',
+        body: {'email': 'a@b.c', 'password': 'secret'},
+      );
+      expect(data['via'], 'backup');
+      expect(backup.hits, 1);
+      expect(QfEndpoints.lastGood, backup.base);
+    });
+
+    test('a guest register POST rotates past a dead first base', () async {
+      final backup = _HitServer(payload: {'ok': true, 'via': 'backup'});
+      await backup.start();
+      addTearDown(backup.stop);
+      QfEndpoints.apply(
+        primaryUrl: 'http://127.0.0.1:1',
+        backupUrl: backup.base,
+      );
+      final data = await QfHttp.send(
+        'POST',
+        'http://127.0.0.1:1/guest/register',
+        body: {'deviceHash': 'abc'},
+      );
+      expect(data['via'], 'backup');
+      expect(backup.hits, 1);
+    });
+
+    test('an ordinary write POST still gets a single attempt', () async {
+      final backup = _HitServer();
+      await backup.start();
+      addTearDown(backup.stop);
+      QfEndpoints.apply(
+        primaryUrl: 'http://127.0.0.1:1',
+        backupUrl: backup.base,
+      );
+      await expectLater(
+        QfHttp.send(
+          'POST',
+          'http://127.0.0.1:1/camps',
+          body: {'name': 'x'},
+        ),
+        throwsA(
+          isA<QfApiException>().having((e) => e.code, 'code', 'NETWORK'),
+        ),
+      );
+      expect(backup.hits, 0);
+    });
+
+    test(
+      'the built-in direct base serves when manifest bases are dead',
+      () async {
+        final direct = _HitServer(payload: {'ok': true, 'via': 'direct'});
+        await direct.start();
+        addTearDown(direct.stop);
+        QfEndpoints.builtinDirect = direct.base;
+        QfEndpoints.builtinFallback = 'http://127.0.0.1:2';
+        QfEndpoints.apply(
+          primaryUrl: 'http://127.0.0.1:1',
+          backupUrl: 'http://127.0.0.1:3',
+        );
+        final data = await QfHttp.send(
+          'POST',
+          'http://127.0.0.1:1/auth/login',
+          body: {'email': 'a@b.c', 'password': 'secret'},
+        );
+        expect(data['via'], 'direct');
+        expect(direct.hits, 1);
+      },
+    );
+
+    test('a dead remembered base does not block the rotation', () async {
+      final backup = _HitServer(payload: {'ok': true, 'via': 'backup'});
+      await backup.start();
+      addTearDown(backup.stop);
+      QfEndpoints.apply(
+        primaryUrl: 'http://127.0.0.1:1',
+        backupUrl: backup.base,
+      );
+      QfEndpoints.noteSuccess('http://127.0.0.1:1/auth/login');
+      expect(QfEndpoints.lastGood, 'http://127.0.0.1:1');
+      final data = await QfHttp.send(
+        'POST',
+        'http://127.0.0.1:1/auth/login',
+        body: {'email': 'a@b.c', 'password': 'secret'},
+      );
+      expect(data['via'], 'backup');
+      expect(QfEndpoints.lastGood, backup.base);
     });
 
     test(

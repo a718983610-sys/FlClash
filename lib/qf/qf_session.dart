@@ -801,7 +801,9 @@ class QfSessionController extends ChangeNotifier {
         QfEndpoints.noteSuccess(candidates[i]);
         return data;
       } on QfApiException catch (e) {
-        if (!e.isNetworkFailure || i == candidates.length - 1) rethrow;
+        if (!e.isNetworkFailure) rethrow;
+        QfEndpoints.noteNetworkFailure(candidates[i]);
+        if (i == candidates.length - 1) rethrow;
       }
     }
     throw const QfApiException(0, 'NETWORK', '网络连接失败，请检查网络后重试');

@@ -4,6 +4,9 @@ class QfConfig {
       'https://raw.githubusercontent.com/$repository/main/qfclash-release.json';
   static const String fallbackServerBaseUrl =
       'https://qfclash-account.a718983610.workers.dev';
+  // Built-in direct-IP entrypoint: the door that stays reachable on
+  // domestic networks with no proxy and no manifest ever fetched.
+  static const String directServerBaseUrl = 'https://54.248.9.192:80';
   // The official website: the update panel's escape hatch when a
   // force/retire decision has no downloadable package (C-11), so the
   // blocking page is never a dead end.

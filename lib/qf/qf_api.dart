@@ -53,15 +53,18 @@ String qfGuestErrorMessage(Object error) {
 
 /// The account-server entrypoints, in try order: the base that last
 /// succeeded (persisted across launches), the manifest's serverBaseUrl,
-/// the manifest's serverBaseUrlFallback, and the built-in workers.dev
-/// host. Domestic networks often cannot reach workers.dev directly, so
-/// no single one of these may be the only door.
+/// the manifest's serverBaseUrlFallback, the built-in direct-IP host,
+/// and the built-in workers.dev host. Domestic networks often cannot
+/// reach workers.dev directly, so no single one of these may be the
+/// only door.
 class QfEndpoints {
   static const String _lastGoodKey = 'qf_endpoints_last_good';
 
   static String primary = QfConfig.fallbackServerBaseUrl;
   static String fallback = '';
   static String lastGood = '';
+  static String builtinDirect = QfConfig.directServerBaseUrl;
+  static String builtinFallback = QfConfig.fallbackServerBaseUrl;
   static bool _loaded = false;
 
   static String _clean(String url) => url.trim().replaceAll(RegExp(r'/+$'), '');
@@ -86,7 +89,8 @@ class QfEndpoints {
       lastGood,
       primary,
       fallback,
-      QfConfig.fallbackServerBaseUrl,
+      builtinDirect,
+      builtinFallback,
     ]) {
       final cleaned = _clean(base);
       if (cleaned.isNotEmpty && seen.add(cleaned)) ordered.add(cleaned);
@@ -118,6 +122,20 @@ class QfEndpoints {
     }
   }
 
+  // A remembered base that now fails at the network layer must not
+  // stay pinned at the head of the queue across launches.
+  static void noteNetworkFailure(String url) {
+    if (lastGood.isEmpty) return;
+    for (final base in orderedBases()) {
+      if (!url.startsWith(base)) continue;
+      if (base == lastGood) {
+        lastGood = '';
+        unawaited(_clearLastGood());
+      }
+      return;
+    }
+  }
+
   static Future<void> loadPersisted() async {
     if (_loaded) return;
     _loaded = true;
@@ -135,10 +153,19 @@ class QfEndpoints {
     } catch (_) {}
   }
 
+  static Future<void> _clearLastGood() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_lastGoodKey);
+    } catch (_) {}
+  }
+
   static void resetForTest() {
     primary = QfConfig.fallbackServerBaseUrl;
     fallback = '';
     lastGood = '';
+    builtinDirect = QfConfig.directServerBaseUrl;
+    builtinFallback = QfConfig.fallbackServerBaseUrl;
     _loaded = false;
   }
 }
@@ -168,6 +195,22 @@ class QfHttp {
     }
   }
 
+  // Entry POSTs (/auth/, /guest/) rotate across bases like reads do:
+  // when the first base fails at the network layer the request never
+  // reached a server, so replaying it on the next base cannot submit
+  // the same write twice. Ordinary writes keep the one-attempt rule
+  // that isRetryable guards.
+  static bool rotatesAcrossBases(
+    String method,
+    String url,
+    Map<String, dynamic>? body,
+  ) {
+    if (isRetryable(method, body)) return true;
+    if (method.toUpperCase() != 'POST') return false;
+    final path = Uri.tryParse(url)?.path ?? '';
+    return path.startsWith('/auth/') || path.startsWith('/guest/');
+  }
+
   static Future<Map<String, dynamic>> send(
     String method,
     String url, {
@@ -180,9 +223,9 @@ class QfHttp {
     // own (connect, headers, body stall), and the rotation as a whole
     // must not stretch account requests without limit either (C-01).
     final deadline = DateTime.now().add(const Duration(seconds: 90));
-    final retryable = isRetryable(method, body);
+    final rotates = rotatesAcrossBases(method, url, body);
     final bases = QfEndpoints.rotationFor(url);
-    final candidates = retryable ? bases : bases.take(1);
+    final candidates = rotates ? bases : bases.take(1);
     for (final candidate in candidates) {
       if (DateTime.now().isAfter(deadline)) break;
       QfProxySource? force;
@@ -201,7 +244,8 @@ class QfHttp {
         } on QfApiException catch (e) {
           if (!e.isNetworkFailure) rethrow;
           lastNetworkError = e;
-          if (!retryable || force != null) break;
+          QfEndpoints.noteNetworkFailure(candidate);
+          if (!rotates || force != null) break;
           // One cross-path retry per endpoint: a request that died on the
           // proxied path gets a direct attempt and vice versa, so a core
           // that is up but has no working outbound cannot blackhole
