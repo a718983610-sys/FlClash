@@ -23,6 +23,9 @@ const _allowed = {
   // `App` is the process-wide Android plugin; the notifier relays keyboard
   // state from the platform channel for the whole run.
   'lib/plugins/app.dart#floatingKeyboard',
+  // `BootGate` is created once in main() and holds the running app's root
+  // for the whole process; nothing outlives it that could do the disposing.
+  'lib/boot_shell.dart#app',
 };
 
 final _declaration = RegExp(
