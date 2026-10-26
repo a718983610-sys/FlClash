@@ -25,18 +25,22 @@ import 'card.dart';
 /// survives a restart.
 class QfSubscriptionTreeState {
   const QfSubscriptionTreeState({
+    this.rootExpanded = true,
     this.expandedProfiles = const {},
     this.expandedGroups = const {},
   });
 
+  final bool rootExpanded;
   final Set<int> expandedProfiles;
   final Set<String> expandedGroups;
 
   QfSubscriptionTreeState copyWith({
+    bool? rootExpanded,
     Set<int>? expandedProfiles,
     Set<String>? expandedGroups,
   }) {
     return QfSubscriptionTreeState(
+      rootExpanded: rootExpanded ?? this.rootExpanded,
       expandedProfiles: expandedProfiles ?? this.expandedProfiles,
       expandedGroups: expandedGroups ?? this.expandedGroups,
     );
@@ -64,6 +68,7 @@ class QfSubscriptionTreeNotifier extends Notifier<QfSubscriptionTreeState> {
         final decoded = json.decode(raw);
         if (decoded is Map) {
           state = QfSubscriptionTreeState(
+            rootExpanded: decoded['root'] != false,
             expandedProfiles: {
               for (final item in decoded['profiles'] as List? ?? const [])
                 if (item is num) item.toInt(),
@@ -79,6 +84,11 @@ class QfSubscriptionTreeNotifier extends Notifier<QfSubscriptionTreeState> {
       // A broken stored value must never block the dashboard.
     }
     _restored = true;
+  }
+
+  void toggleRoot() {
+    state = state.copyWith(rootExpanded: !state.rootExpanded);
+    unawaited(_save());
   }
 
   void toggleProfile(int profileId) {
@@ -106,6 +116,7 @@ class QfSubscriptionTreeNotifier extends Notifier<QfSubscriptionTreeState> {
       await prefs.setString(
         _prefsKey,
         json.encode({
+          'root': state.rootExpanded,
           'profiles': state.expandedProfiles.toList(),
           'groups': state.expandedGroups.toList(),
         }),
@@ -166,8 +177,8 @@ final _profileFileGroupsProvider =
     );
 
 /// The main screen's node tree, directly under the connection card:
-/// 「我的订阅」(one per profile) → its groups → its nodes, with profile
-/// and node management kept in the same place.
+/// one 「我的订阅」root → each profile as its own row → its groups →
+/// its nodes, with profile and node management kept in the same place.
 class SubscriptionTreeCard extends ConsumerWidget {
   const SubscriptionTreeCard({super.key});
 
@@ -175,19 +186,28 @@ class SubscriptionTreeCard extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final profiles = ref.watch(profilesProvider);
     final currentProfileId = ref.watch(currentProfileIdProvider);
+    final rootExpanded = ref.watch(
+      qfSubscriptionTreeProvider.select((state) => state.rootExpanded),
+    );
     return DashboardCard(
       padding: const EdgeInsets.symmetric(vertical: 8),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          _RootHeader(
+            expanded: rootExpanded,
+            onTap: () =>
+                ref.read(qfSubscriptionTreeProvider.notifier).toggleRoot(),
+          ),
           // No "you have not imported a subscription yet" reminder:
           // the owner removed it outright (2026-10-25) — with no
           // profiles the card simply offers the add actions below.
-          for (final profile in profiles)
-            _BigGroupSection(
-              profile: profile,
-              isCurrent: profile.id == currentProfileId,
-            ),
+          if (rootExpanded)
+            for (final profile in profiles)
+              _ProfileSection(
+                profile: profile,
+                isCurrent: profile.id == currentProfileId,
+              ),
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 4, 12, 4),
             child: Row(
@@ -240,8 +260,40 @@ Future<void> _showAddNodeDialog(BuildContext context, WidgetRef ref) async {
   await ref.read(profilesActionProvider.notifier).addProfileFromLink(link);
 }
 
-class _BigGroupSection extends ConsumerWidget {
-  const _BigGroupSection({required this.profile, required this.isCurrent});
+class _RootHeader extends StatelessWidget {
+  const _RootHeader({required this.expanded, required this.onTap});
+
+  final bool expanded;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 10, 12, 10),
+        child: Row(
+          children: [
+            Transform.rotate(
+              angle: expanded ? 0 : -math.pi / 2,
+              child: const GlyphIcon(AppGlyphs.chevronDown, size: 18),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                '我的订阅',
+                style: AppTextStyle.body.of(context, emphasized: true),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ProfileSection extends ConsumerWidget {
+  const _ProfileSection({required this.profile, required this.isCurrent});
 
   final Profile profile;
   final bool isCurrent;
@@ -284,31 +336,20 @@ class _BigGroupSection extends ConsumerWidget {
               .read(qfSubscriptionTreeProvider.notifier)
               .toggleProfile(profile.id),
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 10, 12, 10),
+            padding: const EdgeInsets.fromLTRB(40, 8, 12, 8),
             child: Row(
               children: [
                 Transform.rotate(
                   angle: expanded ? 0 : -math.pi / 2,
-                  child: const GlyphIcon(AppGlyphs.chevronDown, size: 18),
+                  child: const GlyphIcon(AppGlyphs.chevronDown, size: 16),
                 ),
                 const SizedBox(width: 8),
                 Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        '我的订阅',
-                        style: AppTextStyle.body.of(context, emphasized: true),
-                      ),
-                      Text(
-                        profile.realLabel,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: AppTextStyle.caption1
-                            .of(context)
-                            .copyWith(color: colorScheme.onSurfaceVariant),
-                      ),
-                    ],
+                  child: Text(
+                    profile.realLabel,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppTextStyle.body.of(context, emphasized: true),
                   ),
                 ),
                 if (isCurrent)
@@ -365,7 +406,7 @@ class _RuntimeGroups extends ConsumerWidget {
     final groups = ref.watch(currentGroupsStateProvider).value;
     if (groups.isEmpty) {
       return Padding(
-        padding: const EdgeInsets.fromLTRB(48, 4, 20, 12),
+        padding: const EdgeInsets.fromLTRB(72, 4, 20, 12),
         child: Text(
           '暂无分组，请先导入并启用一份订阅。',
           style: AppTextStyle.subheadline.of(context),
@@ -477,7 +518,7 @@ class _NoGroupsHint extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(48, 4, 20, 12),
+      padding: const EdgeInsets.fromLTRB(72, 4, 20, 12),
       child: Text(
         '暂无分组，请先导入并启用一份订阅。',
         style: AppTextStyle.subheadline.of(context),
@@ -495,7 +536,7 @@ class _SwitchHint extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(48, 2, 20, 10),
+      padding: const EdgeInsets.fromLTRB(72, 2, 20, 10),
       child: Row(
         children: [
           Expanded(
@@ -625,7 +666,7 @@ class _GroupHeader extends StatelessWidget {
     return InkWell(
       onTap: onTap,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(40, 8, 20, 8),
+        padding: const EdgeInsets.fromLTRB(64, 8, 20, 8),
         child: Row(
           children: [
             Transform.rotate(
@@ -678,7 +719,7 @@ class _NodeRow extends StatelessWidget {
     return InkWell(
       onTap: onTap,
       child: Padding(
-        padding: EdgeInsets.fromLTRB(64, 9, onInfo == null ? 20 : 8, 9),
+        padding: EdgeInsets.fromLTRB(88, 9, onInfo == null ? 20 : 8, 9),
         child: Row(
           children: [
             SizedBox(
