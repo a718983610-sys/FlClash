@@ -1,9 +1,10 @@
 import 'dart:async';
 
+import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/qf/qf_config.dart';
 import 'package:fl_clash/qf/qf_remote.dart';
 import 'package:fl_clash/widgets/widgets.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
 // Tools page's QFRemote module (2.0.3): native sign-in and profile
@@ -248,51 +249,62 @@ class _QfRemoteViewState extends State<QfRemoteView> {
   }
 
   Widget _buildLogin(BuildContext context) {
-    return Center(
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.all(24),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 420),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(
-                QfCopy.remoteLoginTitle,
-                textAlign: TextAlign.center,
-                style: AppTextStyle.title3.of(context, emphasized: true),
-              ),
-              const SizedBox(height: 8),
-              const Text(QfCopy.remoteLoginHint, textAlign: TextAlign.center),
-              const SizedBox(height: 24),
-              TextField(
-                controller: _usernameController,
-                decoration: const InputDecoration(
-                  labelText: QfCopy.remoteUsernameLabel,
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _passwordController,
-                obscureText: true,
-                onSubmitted: (_) => unawaited(_login()),
-                decoration: const InputDecoration(
-                  labelText: QfCopy.remotePasswordLabel,
-                ),
-              ),
-              if (_notice != null) ...[
-                const SizedBox(height: 16),
+    // The app bar floats over the body on Android; without clearing it
+    // the centered form slides under the bar and overlaps its title.
+    final topClearance =
+        SupportPlatform.currentPlatform == SupportPlatform.Android
+        ? context.appBarInset
+        : 0.0;
+    return Padding(
+      padding: EdgeInsets.only(top: topClearance),
+      child: Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 420),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
                 Text(
-                  _notice!,
+                  QfCopy.remoteLoginTitle,
                   textAlign: TextAlign.center,
-                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                  style: AppTextStyle.title3.of(context, emphasized: true),
+                ),
+                const SizedBox(height: 8),
+                const Text(QfCopy.remoteLoginHint, textAlign: TextAlign.center),
+                const SizedBox(height: 24),
+                TextField(
+                  controller: _usernameController,
+                  decoration: const InputDecoration(
+                    labelText: QfCopy.remoteUsernameLabel,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _passwordController,
+                  obscureText: true,
+                  onSubmitted: (_) => unawaited(_login()),
+                  decoration: const InputDecoration(
+                    labelText: QfCopy.remotePasswordLabel,
+                  ),
+                ),
+                if (_notice != null) ...[
+                  const SizedBox(height: 16),
+                  Text(
+                    _notice!,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 24),
+                FilledButton(
+                  onPressed: _busy ? null : () => unawaited(_login()),
+                  child: Text(_busy ? '正在登录……' : QfCopy.remoteLoginAction),
                 ),
               ],
-              const SizedBox(height: 24),
-              FilledButton(
-                onPressed: _busy ? null : () => unawaited(_login()),
-                child: Text(_busy ? '正在登录……' : QfCopy.remoteLoginAction),
-              ),
-            ],
+            ),
           ),
         ),
       ),
@@ -305,8 +317,12 @@ class _QfRemoteViewState extends State<QfRemoteView> {
     if (profile == null) {
       return const Center(child: CommonCircleLoading.page());
     }
+    final topClearance =
+        SupportPlatform.currentPlatform == SupportPlatform.Android
+        ? context.appBarInset
+        : 0.0;
     return ListView(
-      padding: const EdgeInsets.all(16),
+      padding: EdgeInsets.fromLTRB(16, 16 + topClearance, 16, 16),
       children: [
         if (_notice != null) ...[
           Text(
@@ -400,11 +416,51 @@ class _QfrWebViewPageState extends State<QfrWebViewPage> {
   var _progress = 0;
   String? _error;
   var _ready = false;
+  Timer? _watchdog;
 
   @override
   void initState() {
     super.initState();
+    _armWatchdog();
     unawaited(_seedCookies());
+  }
+
+  @override
+  void dispose() {
+    _watchdog?.cancel();
+    super.dispose();
+  }
+
+  // A stalled load (dead tunnel, dropped packets) fires no error
+  // callback at all; without a deadline the page would sit on a silent
+  // blank area forever. 25s without finishing swaps in the retry panel.
+  void _armWatchdog() {
+    _watchdog?.cancel();
+    _watchdog = Timer(const Duration(seconds: 25), () {
+      if (mounted && _error == null && (!_ready || _progress < 100)) {
+        setState(() => _error = '加载超时，网络可能不稳定，请检查网络后重试。');
+      }
+    });
+  }
+
+  void _loadFinished() {
+    _watchdog?.cancel();
+    if (mounted && _progress < 100) setState(() => _progress = 100);
+  }
+
+  void _retry() {
+    setState(() {
+      _error = null;
+      _progress = 0;
+    });
+    _armWatchdog();
+    if (!_ready) {
+      unawaited(_seedCookies());
+      return;
+    }
+    unawaited(
+      _controller?.loadUrl(urlRequest: URLRequest(url: WebUri(widget.url))),
+    );
   }
 
   Future<void> _seedCookies() async {
@@ -421,57 +477,95 @@ class _QfrWebViewPageState extends State<QfrWebViewPage> {
 
   @override
   Widget build(BuildContext context) {
+    // Keep the web content below the floating app bar: the page gets
+    // its own bounded area and its own loading / error surface, so the
+    // native header and the web page can never paint over each other.
+    final topClearance =
+        SupportPlatform.currentPlatform == SupportPlatform.Android
+        ? context.appBarInset
+        : 0.0;
+    final surface = Theme.of(context).colorScheme.surface;
     return CommonScaffold(
       title: widget.title,
-      body: Stack(
-        children: [
-          if (_ready)
-            InAppWebView(
-              initialUrlRequest: URLRequest(url: WebUri(widget.url)),
-              initialSettings: InAppWebViewSettings(
-                javaScriptEnabled: true,
-                domStorageEnabled: true,
-                databaseEnabled: true,
-                supportZoom: false,
-                mediaPlaybackRequiresUserGesture: false,
+      body: Padding(
+        padding: EdgeInsets.only(top: topClearance),
+        child: Stack(
+          children: [
+            if (_ready)
+              InAppWebView(
+                initialUrlRequest: URLRequest(url: WebUri(widget.url)),
+                initialSettings: InAppWebViewSettings(
+                  javaScriptEnabled: true,
+                  domStorageEnabled: true,
+                  databaseEnabled: true,
+                  supportZoom: false,
+                  mediaPlaybackRequiresUserGesture: false,
+                ),
+                onWebViewCreated: (controller) => _controller = controller,
+                onProgressChanged: (_, progress) {
+                  if (!mounted) return;
+                  setState(() => _progress = progress);
+                  if (progress >= 100) _loadFinished();
+                },
+                onLoadStop: (_, _) => _loadFinished(),
+                onReceivedError: (_, request, error) {
+                  if ((request.isForMainFrame ?? true) && mounted) {
+                    setState(() => _error = QfCopy.remoteNetworkFailed);
+                  }
+                },
+                onReceivedHttpError: (_, request, response) {
+                  if ((request.isForMainFrame ?? true) &&
+                      mounted &&
+                      (response.statusCode ?? 0) >= 400) {
+                    setState(() => _error = '页面加载失败，请稍后重试。');
+                  }
+                },
               ),
-              onWebViewCreated: (controller) => _controller = controller,
-              onProgressChanged: (_, progress) {
-                if (mounted) setState(() => _progress = progress);
-              },
-              onReceivedError: (_, request, error) {
-                if ((request.isForMainFrame ?? true) && mounted) {
-                  setState(() => _error = QfCopy.remoteNetworkFailed);
-                }
-              },
-            ),
-          if (!_ready || _progress < 100)
-            const Align(
-              alignment: Alignment.topCenter,
-              child: LinearProgressIndicator(),
-            ),
-          if (_error != null)
-            Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(_error!),
-                  const SizedBox(height: 12),
-                  FilledButton(
-                    onPressed: () {
-                      setState(() => _error = null);
-                      unawaited(
-                        _controller?.loadUrl(
-                          urlRequest: URLRequest(url: WebUri(widget.url)),
-                        ),
-                      );
-                    },
-                    child: const Text('重试'),
+            if (_error == null && (!_ready || _progress < 100))
+              Positioned.fill(
+                child: ColoredBox(
+                  color: surface,
+                  child: Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const CircularProgressIndicator(),
+                        const SizedBox(height: 16),
+                        const Text('正在加载…'),
+                        if (_ready && _progress > 0)
+                          Text(
+                            '$_progress%',
+                            style: AppTextStyle.caption1.of(context),
+                          ),
+                      ],
+                    ),
                   ),
-                ],
+                ),
               ),
-            ),
-        ],
+            if (_error != null)
+              Positioned.fill(
+                child: ColoredBox(
+                  color: surface,
+                  child: Center(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 32),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(_error!, textAlign: TextAlign.center),
+                          const SizedBox(height: 12),
+                          FilledButton(
+                            onPressed: _retry,
+                            child: const Text('重试'),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
