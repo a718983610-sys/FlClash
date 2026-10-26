@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
+import 'package:fl_clash/common/feature.dart';
 import 'package:fl_clash/ui/context.dart';
 import 'package:fl_clash/ui/shape.dart';
 import 'package:flutter/foundation.dart';

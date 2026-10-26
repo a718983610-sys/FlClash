@@ -4,6 +4,15 @@ part of 'liquid_glass.dart';
 // pixels; at one, where g1455 records its regular finish, text under dark glass
 // shows blocks. g1455 measured no divisor past _maxDivisor.
 const double _captureFrost = 2;
+
+/// The frost the capture divisor aims for: 1.5 when the frost boost is on
+/// (testbed B measured the regular panes' scroll frames a quarter cheaper
+/// there), the shipped 2 otherwise; tests pin a value through
+/// [LiquidGlassHost.debugCaptureFrostOverride].
+double get _effectiveCaptureFrost =>
+    LiquidGlassHost.debugCaptureFrostOverride ??
+    (feature.glassFrostBoost ? 1.5 : _captureFrost);
+
 const int _maxDivisor = 8;
 const double _maxCaptureSide = 2048;
 // The blur of a downscaled capture read linearly, in its own pixels.
@@ -56,6 +65,9 @@ class LiquidGlassHost extends StatelessWidget {
 
   @visibleForTesting
   static bool? debugCarryBandsOverride;
+
+  @visibleForTesting
+  static double? debugCaptureFrostOverride;
 
   @override
   Widget build(BuildContext context) {
@@ -444,7 +456,7 @@ class _LiquidGlassHostLayer extends ContainerLayer {
         _maxDivisor,
         math.max(
           1,
-          (blur * stretch * devicePixelRatio / _captureFrost).floor(),
+          (blur * stretch * devicePixelRatio / _effectiveCaptureFrost).floor(),
         ),
       ),
       (longest / _maxCaptureSide).ceil(),
