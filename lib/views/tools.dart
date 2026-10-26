@@ -16,6 +16,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'config/advanced.dart';
 import 'config/custom_resources.dart';
 import 'developer.dart';
+import 'qf_remote_view.dart';
 import 'disclaimer.dart';
 import 'theme.dart';
 
@@ -40,6 +41,7 @@ class _ToolViewState extends ConsumerState<ToolsView> {
     return generateSection(
       title: context.appLocalizations.other,
       items: [
+        const _QfRemoteItem(),
         const _DisclaimerItem(),
         if (enableDeveloperMode) const _DeveloperItem(),
         const _InfoItem(),
@@ -251,6 +253,19 @@ class _InfoItem extends StatelessWidget {
       leading: const GlyphIcon(AppGlyphs.info),
       title: Text(context.appLocalizations.about),
       widget: const AboutView(),
+    );
+  }
+}
+
+class _QfRemoteItem extends StatelessWidget {
+  const _QfRemoteItem();
+
+  @override
+  Widget build(BuildContext context) {
+    return ListItem.open(
+      leading: const GlyphIcon(AppGlyphs.devices),
+      title: const Text('远程控制'),
+      widget: const QfRemoteView(),
     );
   }
 }

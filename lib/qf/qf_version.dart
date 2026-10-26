@@ -59,6 +59,7 @@ class QfReleaseManifest {
   final String serverBaseUrl;
   final String serverBaseUrlFallback;
   final String googleClientId;
+  final String qfRemoteWebBaseUrl;
   final Map<String, QfPlatformRelease> platforms;
 
   const QfReleaseManifest({
@@ -70,6 +71,7 @@ class QfReleaseManifest {
     required this.serverBaseUrl,
     this.serverBaseUrlFallback = '',
     required this.googleClientId,
+    this.qfRemoteWebBaseUrl = '',
     required this.platforms,
   });
 
@@ -94,6 +96,7 @@ class QfReleaseManifest {
       serverBaseUrl: (json['serverBaseUrl'] ?? '').toString(),
       serverBaseUrlFallback: (json['serverBaseUrlFallback'] ?? '').toString(),
       googleClientId: (json['googleClientId'] ?? '').toString(),
+      qfRemoteWebBaseUrl: (json['qfRemoteWebBaseUrl'] ?? '').toString(),
       platforms: platforms,
     );
   }
@@ -108,6 +111,7 @@ class QfReleaseManifest {
       'serverBaseUrl': serverBaseUrl,
       'serverBaseUrlFallback': serverBaseUrlFallback,
       'googleClientId': googleClientId,
+      'qfRemoteWebBaseUrl': qfRemoteWebBaseUrl,
       'platforms': platforms.map((key, value) => MapEntry(key, value.toJson())),
     };
   }
@@ -122,6 +126,7 @@ class QfReleaseManifest {
       serverBaseUrl: serverBaseUrl,
       serverBaseUrlFallback: serverBaseUrlFallback,
       googleClientId: googleClientId,
+      qfRemoteWebBaseUrl: qfRemoteWebBaseUrl,
       platforms: platforms,
     );
   }

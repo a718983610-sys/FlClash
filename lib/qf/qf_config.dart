@@ -9,6 +9,11 @@ class QfConfig {
   // blocking page is never a dead end.
   static const String officialWebsiteUrl =
       'https://a718983610-sys.github.io/qfclash-website/';
+  // QFRemote web console entry for the tools page's remote-control
+  // module. The tunnel host can change, so a fetched release manifest
+  // overrides this built-in value (qfRemoteWebBaseUrl).
+  static const String builtinQfRemoteWebBaseUrl =
+      'https://bookmarks-hunting-rendering-atlas.trycloudflare.com';
   // Google OAuth client IDs are public identifiers (they ship in every
   // client and in the public release manifest), not secrets. Built in so
   // Google sign-in works on a cold start with no manifest ever fetched;
@@ -159,8 +164,10 @@ class QfCopy {
   static const String googleNotConfiguredHint = '谷歌登录尚未完成配置，请改用邮箱或账户 ID 登录。';
   static const String googleNeedsNetwork =
       '谷歌登录需要能访问谷歌的网络环境。当前网络无法访问谷歌时，请开启代理后重试，或改用账户密码登录。';
-  static const String googleFailedWithNetworkHint = '谷歌登录失败。$googleNeedsNetwork';
-  static const String googleTimeoutWithNetworkHint = '谷歌登录等待超时。$googleNeedsNetwork';
+  static const String googleFailedWithNetworkHint =
+      '谷歌登录失败。$googleNeedsNetwork';
+  static const String googleTimeoutWithNetworkHint =
+      '谷歌登录等待超时。$googleNeedsNetwork';
   static const String googleUnreachable = '无法连接谷歌服务器。$googleNeedsNetwork';
   static const String googleConfigNetworkHint =
       '暂时无法连接谷歌登录服务，请检查网络后重试，或改用邮箱或账户 ID 登录。';
@@ -168,4 +175,31 @@ class QfCopy {
   static const String attachmentsTitle = '我的附件';
   static const String attachmentsEmpty = '暂无附件';
   static const String attachmentsDeleteHint = '删除后文件将进入 7 天待删除期，期满后彻底清除。';
+  static const String remoteTitle = '远程控制';
+  static const String remoteLoginTitle = '登录 QFRemote';
+  static const String remoteLoginHint =
+      '使用您的 QFRemote 账号登录。还没有账号？请先在 QFRemote 软件或网页版注册。';
+  static const String remoteUsernameLabel = 'QFRemote 账号';
+  static const String remotePasswordLabel = '密码';
+  static const String remoteLoginAction = '登录';
+  static const String remoteLoginFailed = '账号或密码不正确，请核对后重试。';
+  static const String remoteFrozen = '该账号今日密码输入错误已超过 5 次，今日不能再试，可以前往申诉。';
+  static const String remoteNetworkFailed = '网络连接失败，请检查网络后重试。';
+  static const String remoteOpenConsole = '打开远程控制台';
+  static const String remoteOpenPurchase = '购买密钥';
+  static const String remoteNeedKey =
+      '您的 QFRemote 账号还没有可用的密钥（未激活或已过期），购买后即可使用远程控制。';
+  static const String remoteBanned = '该账号当前无法使用远程控制。';
+  static const String remoteProfileTitle = '个人中心';
+  static const String remotePlanLabel = '当前套餐';
+  static const String remoteKeyLabel = '密钥';
+  static const String remoteStatusLabel = '状态';
+  static const String remoteChangePassword = '修改密码';
+  static const String remoteCurrentPassword = '当前密码';
+  static const String remoteNewPassword = '新密码';
+  static const String remoteConfirmPassword = '再次输入新密码';
+  static const String remoteChangePasswordOk = '密码已修改，下次请使用新密码登录。';
+  static const String remoteChangePasswordFailed = '修改未成功，请确认当前密码是否正确，或稍后再试。';
+  static const String remoteLogout = '退出登录';
+  static const String remoteSessionExpired = '登录已过期，请重新登录。';
 }
