@@ -1,18 +1,18 @@
 {
   "googleClientId": "340614194006-7a7anda3p473qjlhr67k6hn3o6aaqu9o.apps.googleusercontent.com",
-  "latestVersion": "2.0.5",
+  "latestVersion": "2.0.6",
   "maintenance": false,
-  "minUsableVersion": "2.0.5",
+  "minUsableVersion": "2.0.6",
   "platforms": {
     "android": {
-      "downloadUrl": "https://github.com/a718983610-sys/FlClash/releases/download/v2.0.5/QFClash-Android-v2.0.5.apk",
+      "downloadUrl": "https://github.com/a718983610-sys/FlClash/releases/download/v2.0.6/QFClash-Android-v2.0.6.apk",
       "googleClientId": "340614194006-80vi66ee45a447nvudpqc93vp7u0mo31.apps.googleusercontent.com",
-      "notes": "发布日期：2026-10-27\n\n## 前言\n\nQFClash v2.0.5 为强制更新，安卓与 Windows 双平台同步发布。本次更新提升登录在不同网络环境下的成功率。\n\n## 一、登录成功率提升\n\n- 登录、注册与访客进入时会自动尝试多个账户连接入口：某个入口在当前网络下不可用时，自动切换到下一个入口继续，不再因单个入口不通而无法登录。\n- 未开启代理的网络环境下，登录与注册的可用性同步提升。\n\n## 结语\n\n感谢您的支持与反馈。如在使用中遇到任何问题，欢迎通过应用内智能客服、意见反馈或官方论坛与我们联系。"
+      "notes": "发布日期：2026-10-27\n\n## 前言\n\nQFClash v2.0.6 为强制更新，安卓与 Windows 双平台同步发布。本次更新修复更新提示出现时可能断开当前连接的问题。\n\n## 一、连接稳定性修复\n\n- 修复更新提示出现时可能断开当前连接的问题：弹出更新提示时将只提示您完成更新，不再中断正在使用的连接。\n\n## 结语\n\n感谢您的支持与反馈。如在使用中遇到任何问题，欢迎通过应用内智能客服、意见反馈或官方论坛与我们联系。"
     },
     "windows": {
-      "downloadUrl": "https://github.com/a718983610-sys/FlClash/releases/download/v2.0.5/QFClash-Windows-v2.0.5.exe",
+      "downloadUrl": "https://github.com/a718983610-sys/FlClash/releases/download/v2.0.6/QFClash-Windows-v2.0.6.exe",
       "googleClientId": "340614194006-m77lgrsv2ne7dn921lkascgg3ehvvvjf.apps.googleusercontent.com",
-      "notes": "发布日期：2026-10-27\n\n## 前言\n\nQFClash v2.0.5 为强制更新，安卓与 Windows 双平台同步发布。本次更新提升登录在不同网络环境下的成功率。\n\n## 一、登录成功率提升\n\n- 登录、注册与访客进入时会自动尝试多个账户连接入口：某个入口在当前网络下不可用时，自动切换到下一个入口继续，不再因单个入口不通而无法登录。\n- 未开启代理的网络环境下，登录与注册的可用性同步提升。\n\n## 结语\n\n感谢您的支持与反馈。如在使用中遇到任何问题，欢迎通过应用内智能客服、意见反馈或官方论坛与我们联系。"
+      "notes": "发布日期：2026-10-27\n\n## 前言\n\nQFClash v2.0.6 为强制更新，安卓与 Windows 双平台同步发布。本次更新修复更新提示出现时可能断开当前连接的问题。\n\n## 一、连接稳定性修复\n\n- 修复更新提示出现时可能断开当前连接的问题：弹出更新提示时将只提示您完成更新，不再中断正在使用的连接。\n\n## 结语\n\n感谢您的支持与反馈。如在使用中遇到任何问题，欢迎通过应用内智能客服、意见反馈或官方论坛与我们联系。"
     }
   },
   "qfRemoteWebBaseUrl": "https://bookmarks-hunting-rendering-atlas.trycloudflare.com",
