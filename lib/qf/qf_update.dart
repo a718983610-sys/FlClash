@@ -502,8 +502,13 @@ class QfUpdateService {
     return QfInstallOutcome.failed;
   }
 
-  static bool shouldAttemptSilent(QfUpdateCheck check, {bool? isAndroid}) {
-    return check.manifestFresh &&
+  static bool shouldAttemptSilent(
+    QfUpdateCheck check, {
+    bool? isAndroid,
+    bool coreRunning = false,
+  }) {
+    return !coreRunning &&
+        check.manifestFresh &&
         check.decision == QfUpdateDecision.minor &&
         (check.manifest?.silentUpdate ?? false) &&
         (isAndroid ?? _isAndroid);

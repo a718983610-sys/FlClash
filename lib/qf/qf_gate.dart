@@ -240,18 +240,24 @@ class _QfSessionGateState extends ConsumerState<QfSessionGate> {
     final previous = _check?.decision ?? QfUpdateDecision.none;
     if (check.decision == previous) return;
     setState(() => _check = check);
-    if (check.decision == QfUpdateDecision.maintenance ||
-        check.decision == QfUpdateDecision.retired ||
-        check.decision == QfUpdateDecision.force) {
-      await _stopCore();
-    }
+    // The wall blocks the UI only; a live connection is never torn down
+    // over an update decision (stopping is reserved for quota/session
+    // events), so there is deliberately no _stopCore() here.
     if (check.decision == QfUpdateDecision.minor) {
       await _handleMinorCheck(check);
     }
   }
 
+  bool get _coreRunning {
+    try {
+      return _session.isRunningFn?.call() ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
   Future<void> _handleMinorCheck(QfUpdateCheck check) async {
-    if (QfUpdateService.shouldAttemptSilent(check)) {
+    if (QfUpdateService.shouldAttemptSilent(check, coreRunning: _coreRunning)) {
       unawaited(_runSilentUpdate(check));
       return;
     }
@@ -284,7 +290,16 @@ class _QfSessionGateState extends ConsumerState<QfSessionGate> {
             expectedSha256: check.sha256,
             expectedSizeBytes: check.sizeBytes,
           );
-          final outcome = await QfUpdateService.installSilentFirst(file);
+          // The core may have started while the package downloaded; an
+          // install replaces this process, so re-check before installing
+          // and let the dialog path take it when a connection is live.
+          var outcome = QfSilentFirstOutcome.failed;
+          if (QfUpdateService.shouldAttemptSilent(
+            check,
+            coreRunning: _coreRunning,
+          )) {
+            outcome = await QfUpdateService.installSilentFirst(file);
+          }
           settled =
               outcome == QfSilentFirstOutcome.installed ||
               outcome == QfSilentFirstOutcome.launched;

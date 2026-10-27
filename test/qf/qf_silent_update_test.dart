@@ -91,6 +91,25 @@ void main() {
         isFalse,
       );
     });
+
+    test('a running core defers the attempt to the dialog path', () {
+      expect(
+        QfUpdateService.shouldAttemptSilent(
+          _check(),
+          isAndroid: true,
+          coreRunning: true,
+        ),
+        isFalse,
+      );
+      expect(
+        QfUpdateService.shouldAttemptSilent(
+          _check(),
+          isAndroid: true,
+          coreRunning: false,
+        ),
+        isTrue,
+      );
+    });
   });
 
   group('one automatic attempt per version', () {
