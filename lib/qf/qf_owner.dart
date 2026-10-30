@@ -935,7 +935,8 @@ class _QfOwnerUserPageState extends State<QfOwnerUserPage> {
     final connDevices = (conn['devices'] as List?) ?? [];
     final traffic = connDevices.fold<int>(
       0,
-      (s, x) => s + (((x as Map)['trafficBytes'] as num?)?.toInt() ?? 0),
+      (s, x) =>
+          s + ((((x as Map?) ?? const {})['trafficBytes'] as num?)?.toInt() ?? 0),
     );
     final passkey = (devicesData['passkeyStatus'] as Map?) ?? const {};
     return ListView(
