@@ -1,18 +1,18 @@
 {
   "googleClientId": "340614194006-7a7anda3p473qjlhr67k6hn3o6aaqu9o.apps.googleusercontent.com",
-  "latestVersion": "2.0.6",
+  "latestVersion": "2.0.7",
   "maintenance": false,
   "minUsableVersion": "2.0.6",
   "platforms": {
     "android": {
-      "downloadUrl": "https://github.com/a718983610-sys/FlClash/releases/download/v2.0.6/QFClash-Android-v2.0.6.apk",
+      "downloadUrl": "https://github.com/a718983610-sys/FlClash/releases/download/v2.0.7/QFClash-Android-v2.0.7.apk",
       "googleClientId": "340614194006-80vi66ee45a447nvudpqc93vp7u0mo31.apps.googleusercontent.com",
-      "notes": "发布日期：2026-10-27\n\n## 前言\n\nQFClash v2.0.6 为强制更新，安卓与 Windows 双平台同步发布。本次更新修复更新提示出现时可能断开当前连接的问题。\n\n## 一、连接稳定性修复\n\n- 修复更新提示出现时可能断开当前连接的问题：弹出更新提示时将只提示您完成更新，不再中断正在使用的连接。\n\n## 结语\n\n感谢您的支持与反馈。如在使用中遇到任何问题，欢迎通过应用内智能客服、意见反馈或官方论坛与我们联系。"
+      "notes": "发布日期：2026-10-30\n\n## 前言\n\nQFClash v2.0.7 为常规小更新，安卓与 Windows 双平台同步发布。本次更新以修复与体验优化为主，不强制更新。\n\n## 一、修复与优化\n\n- 修复了部分页面在数据异常时可能出现报错的问题：相关操作现在会给出明确提示，不再中途报错。\n- 好友资料页加载优化：安全码只计算一次，重复打开与刷新不再反复重算。\n- 远控页加载动画统一为应用内标准样式。\n- 启动与玻璃效果的底层准备已随本版带入，但对应开关默认关闭，当前使用体验不变，待真机验证通过后再开启。\n\n## 结语\n\n感谢您的支持与反馈。如在使用中遇到任何问题，欢迎通过应用内智能客服、意见反馈或官方论坛与我们联系。"
     },
     "windows": {
-      "downloadUrl": "https://github.com/a718983610-sys/FlClash/releases/download/v2.0.6/QFClash-Windows-v2.0.6.exe",
+      "downloadUrl": "https://github.com/a718983610-sys/FlClash/releases/download/v2.0.7/QFClash-Windows-v2.0.7.exe",
       "googleClientId": "340614194006-m77lgrsv2ne7dn921lkascgg3ehvvvjf.apps.googleusercontent.com",
-      "notes": "发布日期：2026-10-27\n\n## 前言\n\nQFClash v2.0.6 为强制更新，安卓与 Windows 双平台同步发布。本次更新修复更新提示出现时可能断开当前连接的问题。\n\n## 一、连接稳定性修复\n\n- 修复更新提示出现时可能断开当前连接的问题：弹出更新提示时将只提示您完成更新，不再中断正在使用的连接。\n\n## 结语\n\n感谢您的支持与反馈。如在使用中遇到任何问题，欢迎通过应用内智能客服、意见反馈或官方论坛与我们联系。"
+      "notes": "发布日期：2026-10-30\n\n## 前言\n\nQFClash v2.0.7 为常规小更新，安卓与 Windows 双平台同步发布。本次更新以修复与体验优化为主，不强制更新。\n\n## 一、修复与优化\n\n- 修复了部分页面在数据异常时可能出现报错的问题：相关操作现在会给出明确提示，不再中途报错。\n- 好友资料页加载优化：安全码只计算一次，重复打开与刷新不再反复重算。\n- 远控页加载动画统一为应用内标准样式。\n- 启动与玻璃效果的底层准备已随本版带入，但对应开关默认关闭，当前使用体验不变，待真机验证通过后再开启。\n\n## 结语\n\n感谢您的支持与反馈。如在使用中遇到任何问题，欢迎通过应用内智能客服、意见反馈或官方论坛与我们联系。"
     }
   },
   "qfRemoteWebBaseUrl": "https://bookmarks-hunting-rendering-atlas.trycloudflare.com",
