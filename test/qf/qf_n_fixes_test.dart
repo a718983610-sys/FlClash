@@ -500,6 +500,8 @@ void main() {
       expect(qfIdValue(42), 42);
       expect(qfIdValue(42.9), 42);
       expect(qfIdValue(' 17 '), 17);
+      expect(qfIdValue(0), 0);
+      expect(qfIdValue(''), isNull);
       expect(qfIdValue(null), isNull);
       expect(qfIdValue('x17'), isNull);
       expect(qfIdValue(const {'id': 1}), isNull);
